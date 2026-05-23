@@ -5,7 +5,7 @@ import { useRouter, usePathname } from 'next/navigation';
 
 const PUBLIC_ROUTES = ['/login', '/register'];
 const ADMIN_ROUTES = ['/admin'];
-const PETUGAS_ROUTES = ['/dashboard', '/inspeksi', '/riwayat', '/profile'];
+const PETUGAS_ROUTES = ['/inspeksi'];
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -31,11 +31,11 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
       }
     } else if (isPublic) {
       // Already logged in — redirect away from login
-      router.replace(role === 'admin' ? '/admin' : '/dashboard');
+      router.replace(role === 'admin' ? '/admin' : '/inspeksi');
       return;
     } else if (isAdminRoute && role !== 'admin') {
       // Petugas trying to access admin
-      router.replace('/dashboard');
+      router.replace('/inspeksi');
       return;
     } else if (isPetugasRoute && role === 'admin') {
       // Admin trying to access petugas routes

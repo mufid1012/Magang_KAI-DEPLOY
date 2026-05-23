@@ -63,9 +63,7 @@ PROJECT PPJ KAI - PROTOTYPE/
 │   ├── src/
 │   │   ├── app/
 │   │   │   ├── login/           # Halaman login
-│   │   │   ├── dashboard/       # Dashboard petugas
-│   │   │   ├── inspeksi/[id]/   # Tracking & inspeksi
-│   │   │   ├── riwayat/         # Riwayat inspeksi
+│   │   │   ├── inspeksi/        # Tracking & inspeksi
 │   │   │   └── admin/           # Dashboard admin
 │   │   ├── components/
 │   │   │   └── map/             # DynamicMap, AdminMap

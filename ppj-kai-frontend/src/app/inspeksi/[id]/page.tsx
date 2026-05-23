@@ -397,7 +397,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
 
       {/* TopAppBar */}
       <header className="top-0 z-50 sticky shadow-sm flex justify-between items-center w-full px-container-padding h-16 bg-surface/80 backdrop-blur-md">
-        <Link href="/dashboard" className="flex items-center justify-center w-10 h-10 rounded-full hover:bg-surface-container-high transition-colors active:scale-95 duration-150 text-primary">
+        <Link href="/inspeksi" className="flex items-center justify-center w-10 h-10 rounded-full hover:bg-surface-container-high transition-colors active:scale-95 duration-150 text-primary">
           <span className="material-symbols-outlined">arrow_back</span>
         </Link>
         <h1 className="font-h3 text-h3 text-primary font-bold tracking-tight">
@@ -845,10 +845,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
       {/* Bottom Nav */}
       {status === 'pending' && (
         <nav className="fixed bottom-0 w-full z-50 pb-safe bg-surface/80 backdrop-blur-md shadow-[0px_-4px_20px_rgba(0,0,0,0.05)] flex justify-around items-center h-20 px-2 md:hidden">
-          <Link href="/dashboard" className="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1.5 w-16"><span className="material-symbols-outlined">dashboard</span><span className="font-label-sm text-label-sm mt-1">Home</span></Link>
-          <Link href={`/inspeksi/${params.id}`} className="flex flex-col items-center justify-center bg-primary-container text-on-primary-container rounded-xl px-4 py-1.5 w-20 shadow-sm"><span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>map</span><span className="font-label-sm text-label-sm mt-1">Track</span></Link>
-          <Link href="/riwayat" className="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1.5 w-16"><span className="material-symbols-outlined">history</span><span className="font-label-sm text-label-sm mt-1">History</span></Link>
-          <Link href="/profile" className="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1.5 w-16"><span className="material-symbols-outlined">person</span><span className="font-label-sm text-label-sm mt-1">Profile</span></Link>
+          <Link href="/inspeksi" className="flex flex-col items-center justify-center bg-primary-container text-on-primary-container rounded-xl px-4 py-1.5 w-20 shadow-sm"><span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>map</span><span className="font-label-sm text-label-sm mt-1">Track</span></Link>
         </nav>
       )}
     </div>

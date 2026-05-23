@@ -104,11 +104,8 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
             <p className="font-body-md text-on-surface-variant">Tugas ID #{params.id} tidak tersedia untuk akun Anda.</p>
           </div>
           <div className="flex gap-md">
-            <a href="/riwayat" className="px-md py-sm bg-primary text-on-primary rounded-xl font-label-sm flex items-center gap-xs">
-              <span className="material-symbols-outlined text-[16px]">history</span> Riwayat
-            </a>
-            <a href="/dashboard" className="px-md py-sm border border-outline text-on-surface rounded-xl font-label-sm flex items-center gap-xs">
-              <span className="material-symbols-outlined text-[16px]">home</span> Dashboard
+            <a href="/inspeksi" className="px-md py-sm bg-primary text-on-primary rounded-xl font-label-sm flex items-center gap-xs">
+              <span className="material-symbols-outlined text-[16px]">map</span> Kembali ke Tugas
             </a>
           </div>
         </div>
@@ -124,7 +121,7 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
       {/* Header */}
       <header className="bg-surface/80 backdrop-blur-md shadow-sm top-0 z-50 sticky flex justify-between items-center w-full px-container-padding h-16">
         <div className="flex items-center gap-md">
-          <Link href="/riwayat" className="material-symbols-outlined text-primary hover:text-primary-container transition-colors">
+          <Link href="/inspeksi" className="material-symbols-outlined text-primary hover:text-primary-container transition-colors">
             arrow_back
           </Link>
           <h1 className="font-h2 text-h2 font-bold text-primary">Detail Inspeksi</h1>
@@ -228,9 +225,9 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
       {/* Bottom Action */}
       <div className="fixed bottom-0 left-0 right-0 bg-surface/90 backdrop-blur-xl px-container-padding py-md shadow-[0px_-8px_24px_rgba(0,0,0,0.05)] z-40 border-t border-outline-variant/10">
         <div className="max-w-xl mx-auto">
-          <Link href="/dashboard" className="w-full bg-primary text-on-primary font-h3 text-h3 py-md rounded-xl shadow-lg active:scale-[0.98] transition-all flex items-center justify-center gap-md">
-            Kembali ke Dashboard
-            <span className="material-symbols-outlined">home</span>
+          <Link href="/inspeksi" className="w-full bg-primary text-on-primary font-h3 text-h3 py-md rounded-xl shadow-lg active:scale-[0.98] transition-all flex items-center justify-center gap-md">
+            Kembali ke Daftar Tugas
+            <span className="material-symbols-outlined">map</span>
           </Link>
           <p className="text-center font-label-sm text-on-surface-variant mt-sm">ID Tugas: #PPJ-{String(tugas.id).padStart(6, '0')}</p>
         </div>

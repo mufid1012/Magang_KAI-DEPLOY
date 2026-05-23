@@ -55,7 +55,7 @@ export default function LoginPage() {
         localStorage.setItem('token', res.data.token);
         localStorage.setItem('user', JSON.stringify(res.data.user));
         const role = res.data.user?.role;
-        router.push(role === 'admin' ? '/admin' : '/dashboard');
+        router.push(role === 'admin' ? '/admin' : '/inspeksi');
       }
     } catch (err: any) {
       setError(err.response?.data?.message || 'Gagal login. Periksa NIPP dan Password.');

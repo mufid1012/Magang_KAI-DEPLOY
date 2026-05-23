@@ -104,40 +104,12 @@ export default function InspeksiIndexPage() {
               <span className="material-symbols-outlined text-[56px] text-outline">railway_alert</span>
             </div>
 
-            <h2 className="font-h2 text-h2 font-bold text-on-surface mb-sm">Belum Ada Tugas</h2>
+            <h2 className="font-h2 text-h2 font-bold text-on-surface mb-sm">Tugas Belum Tersedia</h2>
             <p className="font-body-md text-on-surface-variant mb-xl leading-relaxed">
               Saat ini Anda belum memiliki tugas inspeksi yang ditugaskan. Hubungi admin atau tunggu penugasan baru.
             </p>
-
-            <Link
-              href="/dashboard"
-              className="flex items-center gap-sm bg-primary text-on-primary font-label-sm text-label-sm uppercase tracking-wider px-lg py-3 rounded-xl shadow-md hover:bg-surface-tint active:scale-[0.97] transition-all"
-            >
-              <span className="material-symbols-outlined text-[18px]">home</span>
-              Kembali ke Dashboard
-            </Link>
           </div>
         </main>
-
-        {/* Bottom Nav */}
-        <nav className="fixed bottom-0 w-full z-50 pb-safe bg-surface/80 backdrop-blur-md shadow-[0px_-4px_20px_rgba(0,0,0,0.05)] flex justify-around items-center h-20 px-2">
-          <Link href="/dashboard" className="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1.5 w-16">
-            <span className="material-symbols-outlined">dashboard</span>
-            <span className="font-label-sm text-label-sm mt-1">Home</span>
-          </Link>
-          <div className="flex flex-col items-center justify-center bg-primary-container text-on-primary-container rounded-xl px-4 py-1.5 w-20 shadow-sm">
-            <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>map</span>
-            <span className="font-label-sm text-label-sm mt-1">Track</span>
-          </div>
-          <Link href="/riwayat" className="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1.5 w-16">
-            <span className="material-symbols-outlined">history</span>
-            <span className="font-label-sm text-label-sm mt-1">History</span>
-          </Link>
-          <Link href="/profile" className="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1.5 w-16">
-            <span className="material-symbols-outlined">person</span>
-            <span className="font-label-sm text-label-sm mt-1">Profile</span>
-          </Link>
-        </nav>
       </div>
     );
   }
@@ -215,26 +187,6 @@ export default function InspeksiIndexPage() {
           })}
         </div>
       </main>
-
-      {/* Bottom Nav */}
-      <nav className="fixed bottom-0 w-full z-50 pb-safe bg-surface/80 backdrop-blur-md shadow-[0px_-4px_20px_rgba(0,0,0,0.05)] flex justify-around items-center h-20 px-2">
-        <Link href="/dashboard" className="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1.5 w-16">
-          <span className="material-symbols-outlined">dashboard</span>
-          <span className="font-label-sm text-label-sm mt-1">Home</span>
-        </Link>
-        <div className="flex flex-col items-center justify-center bg-primary-container text-on-primary-container rounded-xl px-4 py-1.5 w-20 shadow-sm">
-          <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>map</span>
-          <span className="font-label-sm text-label-sm mt-1">Track</span>
-        </div>
-        <Link href="/riwayat" className="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1.5 w-16">
-          <span className="material-symbols-outlined">history</span>
-          <span className="font-label-sm text-label-sm mt-1">History</span>
-        </Link>
-        <Link href="/profile" className="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1.5 w-16">
-          <span className="material-symbols-outlined">person</span>
-          <span className="font-label-sm text-label-sm mt-1">Profile</span>
-        </Link>
-      </nav>
     </div>
   );
 }

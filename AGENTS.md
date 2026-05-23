@@ -56,13 +56,11 @@ src/
 ├── app/
 │   ├── layout.tsx              # Root layout, Google Fonts (Outfit), Material Symbols
 │   ├── page.tsx                # Landing/splash → redirect ke /login
-│   ├── login/page.tsx          # Login form (NIPP + password)
-│   ├── dashboard/page.tsx      # Dashboard petugas: task list, stats, header "Dashboard"
-│   ├── inspeksi/page.tsx       # ⭐ Task selector: empty state / pilih tugas, header "Lacak"
-│   ├── inspeksi/[id]/page.tsx  # ⭐ HALAMAN TERBESAR (~640 baris). Tracking GPS + peta + geofencing + kamera + emergency
+│   ├── login/page.tsx          # Login form (NIPP + password) → redirect ke /inspeksi (petugas) atau /admin
+│   ├── register/page.tsx       # Register form → redirect ke /inspeksi (petugas) atau /admin
+│   ├── inspeksi/page.tsx       # ⭐ Halaman utama petugas: task selector / empty state "Tugas Belum Tersedia"
+│   ├── inspeksi/[id]/page.tsx  # ⭐ HALAMAN TERBESAR (~850 baris). Tracking GPS + peta + geofencing + kamera + emergency
 │   ├── inspeksi/[id]/selesai/page.tsx # Halaman ringkasan setelah inspeksi selesai
-│   ├── riwayat/page.tsx        # Riwayat inspeksi petugas, header "Riwayat Inspeksi"
-│   ├── profile/page.tsx        # Halaman profil petugas: info, edit modal, logout, header "Profil"
 │   ├── admin/page.tsx          # ⭐ Dashboard admin: sidebar + peta + modal CRUD tugas
 │   └── globals.css             # Design tokens Material Design 3 (warna, spacing, typography)
 ├── components/
@@ -70,10 +68,10 @@ src/
 │   │   ├── DynamicMap.tsx      # Peta petugas: GPS dot, track path, route A→B (Overpass + Dijkstra)
 │   │   └── AdminMap.tsx        # Peta admin: task routes, emergency markers, pick mode (snap ke rel), warna per petugas
 │   ├── common/
-│   │   ├── AuthGuard.tsx       # Redirect ke /login jika belum auth
+│   │   ├── AuthGuard.tsx       # Redirect ke /login jika belum auth, petugas route hanya /inspeksi
 │   │   └── OfflineSyncProvider.tsx # PWA offline queue
 │   └── layout/
-│       └── BottomNav.tsx       # ⭐ Shared bottom navigation bar (dipakai di semua halaman petugas)
+│       └── BottomNav.tsx       # Bottom navigation bar (hanya item Track → /inspeksi)
 ├── lib/
 │   ├── api.ts                  # Axios instance, base URL localhost:5001/api, auto-attach JWT
 │   ├── railway.ts              # ⭐ Overpass API fetch (3 endpoint failover) + Dijkstra pathfinding + snapToRailwayPoint
@@ -198,25 +196,24 @@ laporan (Laporan)
 - **Hanya cache hasil non-empty** — jika fetch gagal (return `[]`), akan retry di render berikutnya
 - Cache persist selama komponen mounted
 
-### 4. Task Selection Flow (`/inspeksi`)
-- Petugas klik "Track" di bottom nav → masuk `/inspeksi` (task selector)
-- **0 tugas aktif** → tampilkan empty state "Belum Ada Tugas" dengan pesan informatif
+### 4. Task Selection Flow (`/inspeksi`) — Halaman Utama Petugas
+- **Ini adalah satu-satunya halaman petugas** (dashboard, riwayat, profile sudah dihapus)
+- Setelah login, petugas langsung masuk ke `/inspeksi`
+- **0 tugas aktif** → tampilkan empty state "Tugas Belum Tersedia" dengan pesan informatif
 - **Ada tugas `in_progress`** → auto-redirect ke `/inspeksi/:id`
 - **Ada tugas `pending`** → tampilkan daftar pilihan tugas (jalur, jarak, tanggal)
-- Filter: hanya tampilkan `pending` dan `in_progress` (completed/cancelled masuk riwayat)
+- Filter: hanya tampilkan `pending` dan `in_progress`
 
-### 5. BottomNav Shared Component
-- Komponen `BottomNav.tsx` dipakai di SEMUA halaman petugas (dashboard, inspeksi, riwayat, profile)
-- **Jangan inline bottom nav** — selalu pakai `<BottomNav />`
-- Track link mengarah ke `/inspeksi` (task selector), BUKAN langsung ke `/inspeksi/:id`
-- Tampil di semua ukuran layar (mobile + desktop) — **tidak ada `md:hidden`**
+### 5. BottomNav Component
+- Komponen `BottomNav.tsx` hanya berisi item **Track** → `/inspeksi`
 - Active state berdasarkan `usePathname()` match
+- Halaman `inspeksi/[id]/page.tsx` masih menggunakan inline bottom nav (hanya Track)
 
 ### 6. Header Konsisten
-- Semua halaman petugas menggunakan header centered dengan style yang sama:
+- Halaman petugas menggunakan header centered dengan style yang sama:
   - `bg-surface/80 backdrop-blur-md shadow-sm sticky top-0 z-50 flex items-center justify-center`
   - Font: `font-h2 text-h2 font-bold text-primary tracking-tight`
-- Mapping: Dashboard → "Dashboard", Track → "Lacak", History → "Riwayat Inspeksi", Profile → "Profil"
+- Mapping: `/inspeksi` → "Lacak", `/inspeksi/[id]` → judul tugas / "Inspeksi Berlangsung", `/inspeksi/[id]/selesai` → "Detail Inspeksi"
 - **Jangan tambah tombol/avatar di header** — hanya teks centered
 
 ### 7. Geofencing
@@ -243,14 +240,11 @@ laporan (Laporan)
 - Map container: `isolation: isolate` untuk membuat stacking context terpisah
 - **Jangan turunkan z-index modal di bawah 9999**
 
-### 11. Halaman Profile (`/profile`)
-- Fetch data dari `GET /api/auth/me`, bukan hardcode
-- Edit profile via modal → `PATCH /api/auth/profile`
-- Field editable: `nama`, `foto`, `phone`, `password`
-- NIPP dan role **read-only**, tidak boleh diubah user
-- Foto upload: FileReader → base64, maks 2MB
-- Logout: hapus `token` + `user` dari localStorage → redirect `/login`
-- Setelah save, update juga localStorage agar sync dengan halaman lain
+### 11. Halaman Petugas Tersimpan
+- Halaman **dashboard**, **riwayat**, dan **profile** telah **DIHAPUS** dari frontend petugas
+- Petugas hanya memiliki flow: Login → `/inspeksi` (task selector) → `/inspeksi/:id` (tracking) → `/inspeksi/:id/selesai` (ringkasan)
+- Semua navigasi back/redirect mengarah ke `/inspeksi`, BUKAN `/dashboard`
+- AuthGuard `PETUGAS_ROUTES` hanya berisi `['/inspeksi']`
 
 ---
 
@@ -310,16 +304,17 @@ npm run dev    # → localhost:3000
 1. **JANGAN baca `package-lock.json`** — file ini 1943 baris dan tidak berguna untuk context
 2. **JANGAN baca `node_modules/`** — gunakan `package.json` untuk cek dependency
 3. **JANGAN baca `tsconfig.json`** kecuali ada error TypeScript config
-4. **File terbesar**: `inspeksi/[id]/page.tsx` (~640 baris) dan `admin/page.tsx` (~687 baris) — baca per section, jangan sekaligus
+4. **File terbesar**: `inspeksi/[id]/page.tsx` (~850 baris) dan `admin/page.tsx` (~687 baris) — baca per section, jangan sekaligus
 5. **Prisma schema** = sumber kebenaran untuk struktur database
 6. **`globals.css`** = semua design tokens (warna, spacing, typography, font sizes)
 7. Selalu cek `lib/api.ts` untuk base URL dan interceptor sebelum debug API calls
 8. Railway logic ada SEMUA di `lib/railway.ts` — satu file, satu concern. Termasuk `fetchRailwayGeometry()` dan `snapToRailwayPoint()`.
 9. **Jangan duplikasi `petugasColor()`** — sudah ada di AdminMap.tsx dan admin/page.tsx, idealnya dipindah ke utils jika perlu di tempat lain
-10. **Profile page** (`/profile`) — data diambil dari API, bukan hardcode. NIPP dan role selalu read-only di edit modal.
+10. **Halaman petugas HANYA `/inspeksi`** — dashboard, riwayat, dan profile sudah DIHAPUS. JANGAN buat halaman baru untuk petugas di luar flow inspeksi.
 11. **managerId pattern** — Semua data admin di-scope via `managerId`. Seeder HARUS buat admin dulu, lalu petugas dengan `managerId: admin.id`. Tanpa ini, dashboard admin kosong total.
 12. **JWT payload** hanya berisi `{ id, role }` — TIDAK ada `nipp`. Jangan akses `req.user.nipp` dari JWT decoded.
-13. **BottomNav** — Selalu pakai komponen `<BottomNav />` dari `components/layout/BottomNav.tsx`. JANGAN inline bottom nav di halaman.
+13. **BottomNav** — Hanya berisi item Track (`/inspeksi`). Komponen dari `components/layout/BottomNav.tsx`.
 14. **Header halaman petugas** — Selalu centered, hanya teks, style seragam. Lihat bagian "Header Konsisten" di atas.
 15. **Overpass API** — JANGAN hardcode 1 endpoint. Selalu pakai `fetchOverpass()` dari `railway.ts` yang punya failover 3 mirror.
 16. **Geometry cache** — AdminMap cache geometry di `useRef`. Jangan cache hasil kosong agar bisa retry.
+17. **Semua redirect petugas** → `/inspeksi`. JANGAN redirect ke `/dashboard` (sudah tidak ada).
