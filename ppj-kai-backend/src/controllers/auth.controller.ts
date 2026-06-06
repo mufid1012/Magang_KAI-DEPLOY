@@ -73,7 +73,7 @@ export const register = async (req: Request, res: Response) => {
         nipp,
         nama,
         password: hashedPassword,
-        role: role || 'petugas',
+        role: role || 'ppj',
         foto: foto || null,
       },
     });
@@ -120,6 +120,9 @@ export const getMe = async (req: Request, res: Response) => {
         workArea: true,
         phone: true,
         isActive: true,
+        wilayahAssignments: {
+          include: { wilayah: true },
+        },
       },
     });
 

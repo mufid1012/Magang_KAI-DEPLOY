@@ -7,6 +7,7 @@ import tugasRoutes from './routes/tugas.routes';
 import trackingRoutes from './routes/tracking.routes';
 import laporanRoutes from './routes/laporan.routes';
 import adminRoutes from './routes/admin.routes';
+import guestRoutes from './routes/guest.routes';
 
 dotenv.config();
 
@@ -29,6 +30,7 @@ app.use('/api/tugas', tugasRoutes);
 app.use('/api/tracking', trackingRoutes);
 app.use('/api/laporan', laporanRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/guest', guestRoutes);
 
 // Test DB Connection
 app.get('/api/health', async (req: Request, res: Response) => {

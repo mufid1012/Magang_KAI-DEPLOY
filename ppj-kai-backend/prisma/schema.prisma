@@ -13,7 +13,7 @@ model User {
   nama           String     @db.VarChar(100)
   password       String     @db.VarChar(255)
   foto           String?    @db.Text
-  role           String     @default("petugas") @db.VarChar(20) // admin | petugas
+  role           String     @default("ppj") @db.VarChar(20) // admin | qc | kupt | guest | ppj
   jabatan        String?    @db.VarChar(100) // e.g. "Track Inspector"
   division       String?    @db.VarChar(100) // e.g. "DAOP 1 Jakarta"
   workArea       String?    @map("work_area") @db.VarChar(100) // e.g. "Sektor 4 (GMR-JAKK)"
@@ -21,6 +21,7 @@ model User {
   isActive       Boolean    @default(true) @map("is_active")
   managerId      Int?       @map("manager_id") // ID of the admin who manages this petugas
   tugasPpj       TugasPpj[]
+  wilayahAssignments UserWilayah[]
   createdAt      DateTime   @default(now()) @map("created_at")
   updatedAt      DateTime   @updatedAt @map("updated_at")
 
@@ -84,4 +85,25 @@ model Laporan {
   createdAt   DateTime @default(now()) @map("created_at")
 
   @@map("laporan")
+}
+
+model Wilayah {
+  id        Int             @id @default(autoincrement())
+  kode      String          @unique @db.VarChar(20)   // "JR 6.1"
+  nama      String          @db.VarChar(100)           // "Jenar"
+  stations  String          @db.Text                   // JSON array: '["Sta. Jenar"]'
+  users     UserWilayah[]
+
+  @@map("wilayah")
+}
+
+model UserWilayah {
+  id         Int      @id @default(autoincrement())
+  userId     Int      @map("user_id")
+  wilayahId  Int      @map("wilayah_id")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wilayah    Wilayah  @relation(fields: [wilayahId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, wilayahId])
+  @@map("user_wilayah")
 }
