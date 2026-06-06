@@ -52,6 +52,8 @@ export default function InspeksiIndexPage() {
   const [tasks, setTasks] = useState<Tugas[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const handleLogout = () => { localStorage.clear(); router.push('/login'); };
+
   useEffect(() => {
     const fetchTasks = async () => {
       try {
@@ -93,8 +95,12 @@ export default function InspeksiIndexPage() {
     return (
       <div className="bg-background text-on-surface min-h-screen font-body-lg antialiased flex flex-col">
         {/* Header */}
-        <header className="bg-surface/80 backdrop-blur-md shadow-sm sticky top-0 z-50 flex items-center justify-center w-full px-container-padding h-16">
+        <header className="bg-surface/80 backdrop-blur-md shadow-sm sticky top-0 z-50 flex items-center justify-between w-full px-container-padding h-16">
+          <div className="w-10"></div>
           <h1 className="font-h2 text-h2 font-bold text-primary tracking-tight">Lacak</h1>
+          <button onClick={handleLogout} className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-error hover:bg-error-container/20 transition-colors" title="Logout">
+            <span className="material-symbols-outlined text-[22px]">logout</span>
+          </button>
         </header>
 
         <main className="flex-1 flex flex-col items-center justify-center px-container-padding">
@@ -118,8 +124,12 @@ export default function InspeksiIndexPage() {
   return (
     <div className="bg-background text-on-surface min-h-screen font-body-lg antialiased">
       {/* Header */}
-      <header className="bg-surface/80 backdrop-blur-md shadow-sm sticky top-0 z-50 flex items-center justify-center w-full px-container-padding h-16">
+      <header className="bg-surface/80 backdrop-blur-md shadow-sm sticky top-0 z-50 flex items-center justify-between w-full px-container-padding h-16">
+        <div className="w-10"></div>
         <h1 className="font-h2 text-h2 font-bold text-primary tracking-tight">Lacak</h1>
+        <button onClick={handleLogout} className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-error hover:bg-error-container/20 transition-colors" title="Logout">
+          <span className="material-symbols-outlined text-[22px]">logout</span>
+        </button>
       </header>
 
       <main className="max-w-xl mx-auto px-container-padding pt-md pb-32">

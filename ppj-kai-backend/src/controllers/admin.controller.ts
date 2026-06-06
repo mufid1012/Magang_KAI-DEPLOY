@@ -141,7 +141,7 @@ export const getAllTugas = async (req: AuthRequest, res: Response) => {
 export const createTugas = async (req: AuthRequest, res: Response) => {
   try {
     const adminId = req.user!.id;
-    const { jalur, tanggal, startPointLat, startPointLong, endPointLat, endPointLong, startPointName, endPointName, assignedTo } = req.body;
+    const { jalur, tanggal, startPointLat, startPointLong, endPointLat, endPointLong, startPointName, endPointName, jamMulai, jamSelesai, assignedTo } = req.body;
 
     if (!jalur || !tanggal || !startPointLat || !startPointLong || !endPointLat || !endPointLong || !assignedTo) {
       return res.status(400).json({ success: false, message: 'Field wajib tidak lengkap' });
@@ -164,6 +164,8 @@ export const createTugas = async (req: AuthRequest, res: Response) => {
         endPointLong: parseFloat(endPointLong),
         startPointName: startPointName || '',
         endPointName: endPointName || '',
+        jamMulai: jamMulai || null,
+        jamSelesai: jamSelesai || null,
         assignedTo: parseInt(assignedTo),
         status: 'pending',
       },
@@ -190,7 +192,16 @@ export const deleteTugas = async (req: AuthRequest, res: Response) => {
     
     if (!tugas) return res.status(403).json({ success: false, message: 'Tugas tidak ditemukan atau tidak diizinkan' });
 
-    await prisma.tugasPpj.delete({ where: { id: parseInt(id) } });
+    // Cascade delete: laporan → tracking → tugas (within a transaction)
+    const tugasId = parseInt(id);
+    await prisma.$transaction([
+      // 1. Delete all laporan belonging to any tracking of this tugas
+      prisma.laporan.deleteMany({ where: { tracking: { tugasId } } }),
+      // 2. Delete all tracking sessions of this tugas
+      prisma.tracking.deleteMany({ where: { tugasId } }),
+      // 3. Delete the tugas itself
+      prisma.tugasPpj.delete({ where: { id: tugasId } }),
+    ]);
     return res.json({ success: true, message: 'Tugas dihapus' });
   } catch (error) {
     console.error('Delete tugas error:', error);

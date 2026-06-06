@@ -41,6 +41,8 @@ model TugasPpj {
   endPointLong   Float      @map("end_point_long")
   startPointName String?    @map("start_point_name") @db.VarChar(200)
   endPointName   String?    @map("end_point_name") @db.VarChar(200)
+  jamMulai       String?    @map("jam_mulai") @db.VarChar(10) // e.g. "08:00"
+  jamSelesai     String?    @map("jam_selesai") @db.VarChar(10) // e.g. "16:00"
   assignedTo     Int        @map("assigned_to")
   status         String     @default("pending") @db.VarChar(20) // pending | in_progress | completed | cancelled
   user           User       @relation(fields: [assignedTo], references: [id])

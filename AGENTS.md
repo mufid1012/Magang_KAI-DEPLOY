@@ -58,15 +58,15 @@ src/
 │   ├── page.tsx                # Landing/splash → redirect ke /login
 │   ├── login/page.tsx          # Login form (NIPP + password) → redirect ke /inspeksi (petugas) atau /admin
 │   ├── register/page.tsx       # Register form → redirect ke /inspeksi (petugas) atau /admin
-│   ├── inspeksi/page.tsx       # ⭐ Halaman utama petugas: task selector / empty state "Tugas Belum Tersedia"
+│   ├── inspeksi/page.tsx       # ⭐ Halaman utama petugas: task selector / empty state "Tugas Belum Tersedia" + logout button
 │   ├── inspeksi/[id]/page.tsx  # ⭐ HALAMAN TERBESAR (~850 baris). Tracking GPS + peta + geofencing + kamera + emergency
 │   ├── inspeksi/[id]/selesai/page.tsx # Halaman ringkasan setelah inspeksi selesai
-│   ├── admin/page.tsx          # ⭐ Dashboard admin: sidebar + peta + modal CRUD tugas
+│   ├── admin/page.tsx          # ⭐ Dashboard admin: 2-menu sidebar (Penugasan PPJ + Live View), station dropdown, modal CRUD tugas
 │   └── globals.css             # Design tokens Material Design 3 (warna, spacing, typography)
 ├── components/
 │   ├── map/
 │   │   ├── DynamicMap.tsx      # Peta petugas: GPS dot, track path, route A→B (Overpass + Dijkstra)
-│   │   └── AdminMap.tsx        # Peta admin: task routes, emergency markers, pick mode (snap ke rel), warna per petugas
+│   │   └── AdminMap.tsx        # Peta admin: task routes, emergency markers, warna per petugas (read-only, tanpa pick mode)
 │   ├── common/
 │   │   ├── AuthGuard.tsx       # Redirect ke /login jika belum auth, petugas route hanya /inspeksi
 │   │   └── OfflineSyncProvider.tsx # PWA offline queue
@@ -109,6 +109,8 @@ tugas_ppj (TugasPpj)
 ├── start_point_lat/long: Float
 ├── end_point_lat/long: Float
 ├── start_point_name/end_point_name: String? (200)
+├── jam_mulai: String? (10) — e.g. "08:00"
+├── jam_selesai: String? (10) — e.g. "16:00"
 ├── assigned_to: Int (FK → users.id)
 ├── status: String (20) → "pending" | "in_progress" | "completed" | "cancelled"
 └── 1:N → tracking
@@ -163,7 +165,7 @@ laporan (Laporan)
 - `POST /api/admin/petugas/add` → `{ nipps: string[] }` → assign petugas ke admin ini (set managerId)
 - `POST /api/admin/petugas/remove` → `{ id: number }` → lepas petugas dari kelolaan admin (set managerId = null)
 - `GET /api/admin/tugas` → list tugas milik petugas kelolaan admin + tracking + laporan
-- `POST /api/admin/tugas` → buat tugas baru (hanya bisa assign ke petugas kelolaan sendiri)
+- `POST /api/admin/tugas` → buat tugas baru (hanya bisa assign ke petugas kelolaan sendiri). Termasuk `jamMulai` dan `jamSelesai` opsional.
 - `DELETE /api/admin/tugas/:id` → hapus tugas (hanya milik petugas kelolaan sendiri)
 - `GET /api/admin/emergency` → list laporan darurat dari petugas kelolaan admin + koordinat
 
@@ -181,14 +183,34 @@ laporan (Laporan)
 - Jika endpoint pertama gagal/timeout → otomatis coba mirror berikutnya
 - AbortController timeout 15 detik per request
 - `fetchRailwayGeometry()` — untuk route polyline antar 2 titik
-- `snapToRailwayPoint()` — untuk snap koordinat klik ke rel terdekat (radius 1000m)
+- `snapToRailwayPoint()` — untuk snap koordinat klik ke rel terdekat (radius 1000m), dipakai di DynamicMap (petugas)
 
-### 2. Railway Snap (AdminMap)
-- Saat admin klik peta dalam pick mode → `snapToRailwayPoint()` dari `railway.ts`
-- Cari node/way dengan tag `railway` terdekat dalam radius **1000 meter**
-- Snap koordinat ke titik di rel, return nama rel dari OSM tags
-- **Fallback**: jika Overpass API gagal total → gunakan koordinat raw dengan nama "Titik Manual"
-- Tidak pernah block user — selalu bisa menempatkan titik
+### 2. Station Dropdown (Admin — Pengganti Map-Click)
+- Admin **tidak lagi** klik peta untuk menentukan titik — menggunakan **dropdown stasiun**
+- Data 15 stasiun hardcoded di konstanta `STATIONS` di `admin/page.tsx`
+- Setiap stasiun berisi `{ name, lat, lng }` — koordinat preset
+- Saat admin pilih stasiun awal + akhir → otomatis isi `startPointLat/Long`, `endPointLat/Long`, `startPointName`, `endPointName`
+- **Auto-fill jalur**: `"Sta. X → Sta. Y"` — admin bisa edit manual
+- AdminMap **TIDAK punya** pick mode, onMapClick, atau snap lagi — hanya display
+
+**Daftar Stasiun:**
+| Stasiun | Lat | Lng |
+|---------|-----|-----|
+| Sta. Maguwo | -7.785040 | 110.436899 |
+| Sta. Lempuyangan | -7.789961 | 110.375275 |
+| Sta. Yogyakarta | -7.788870 | 110.363213 |
+| Sta. Patukan | -7.790771 | 110.325332 |
+| Sta. Wojo | -7.862278 | 110.041092 |
+| Sta. Jenar | -7.802037 | 110.000797 |
+| Sta. Wates | -7.859248 | 110.158247 |
+| Sta. Brambanan | -7.756641 | 110.500415 |
+| Sta. Klaten | -7.712576 | 110.602980 |
+| Sta. Delanggu | -7.622398 | 110.706588 |
+| Sta. Solo Balapan | -7.557184 | 110.819394 |
+| Sta. Wonogiri | -7.815882 | 110.921733 |
+| Sta. Sumberlawang | -7.327810 | 110.863565 |
+| Sta. Palur | -7.568030 | 110.875387 |
+| Sta. Sragen | -7.429623 | 111.016701 |
 
 ### 3. Geometry Cache (AdminMap)
 - Railway geometry di-cache dalam `useRef<Map>` keyed by koordinat start-end
@@ -196,7 +218,15 @@ laporan (Laporan)
 - **Hanya cache hasil non-empty** — jika fetch gagal (return `[]`), akan retry di render berikutnya
 - Cache persist selama komponen mounted
 
-### 4. Task Selection Flow (`/inspeksi`) — Halaman Utama Petugas
+### 4. Admin Page — 2-Menu Sidebar
+- Halaman admin memiliki **sidebar vertikal** (~72px) dengan 2 menu:
+  - **Tugas** (icon `assignment`) → `activeMenu = 'penugasan'` → Kelola petugas + buat/hapus tugas + lihat insiden. **Tanpa peta.**
+  - **Live** (icon `map`) → `activeMenu = 'liveview'` → Full-screen peta (AdminMap) dengan task routes + emergency markers + live sync indicator
+- State: `activeMenu: 'penugasan' | 'liveview'` (default `'penugasan'`)
+- Saat di Penugasan, sidebar kanan berisi KPI stats + 3 tab (Petugas / Penugasan / Insiden) + panel detail tugas
+- Saat di Live View, seluruh area menampilkan AdminMap
+
+### 5. Task Selection Flow (`/inspeksi`) — Halaman Utama Petugas
 - **Ini adalah satu-satunya halaman petugas** (dashboard, riwayat, profile sudah dihapus)
 - Setelah login, petugas langsung masuk ke `/inspeksi`
 - **0 tugas aktif** → tampilkan empty state "Tugas Belum Tersedia" dengan pesan informatif
@@ -204,43 +234,43 @@ laporan (Laporan)
 - **Ada tugas `pending`** → tampilkan daftar pilihan tugas (jalur, jarak, tanggal)
 - Filter: hanya tampilkan `pending` dan `in_progress`
 
-### 5. BottomNav Component
+### 6. BottomNav Component
 - Komponen `BottomNav.tsx` hanya berisi item **Track** → `/inspeksi`
 - Active state berdasarkan `usePathname()` match
 - Halaman `inspeksi/[id]/page.tsx` masih menggunakan inline bottom nav (hanya Track)
 
-### 6. Header Konsisten
+### 7. Header Konsisten
 - Halaman petugas menggunakan header centered dengan style yang sama:
   - `bg-surface/80 backdrop-blur-md shadow-sm sticky top-0 z-50 flex items-center justify-center`
   - Font: `font-h2 text-h2 font-bold text-primary tracking-tight`
 - Mapping: `/inspeksi` → "Lacak", `/inspeksi/[id]` → judul tugas / "Inspeksi Berlangsung", `/inspeksi/[id]/selesai` → "Detail Inspeksi"
 - **Jangan tambah tombol/avatar di header** — hanya teks centered
 
-### 7. Geofencing
+### 8. Geofencing
 - Radius: **500 meter** (konstanta `GEOFENCE_RADIUS` di `inspeksi/[id]/page.tsx`)
 - Haversine distance antara GPS user dan `startPointLat/Long` tugas
 - Tombol start disabled sampai user masuk radius
 - **Mode Testing**: toggle di localhost yang bypass geofencing
 
-### 8. Session Persistence
+### 9. Session Persistence
 - Saat start tracking → simpan `{ trackingId, startedAt, trackPath }` ke `localStorage`
 - Saat GPS update → update `trackPath` di localStorage (setiap 5 titik)
 - Saat reload → cek `tugas.status === 'in_progress'` → GET `/tracking/active/:id` → restore
 - **Backend `startTime` adalah sumber kebenaran untuk timer**, bukan localStorage
 - Saat stop → `localStorage.removeItem()`
 
-### 9. Warna Per Petugas
+### 10. Warna Per Petugas
 - Hash deterministik dari NIPP → HSL hue (golden angle × 137°)
 - Fungsi `petugasColor(nipp)` ada di `AdminMap.tsx` dan `admin/page.tsx`
 - Sama NIPP = sama warna, selalu konsisten
 
-### 10. Z-Index Strategy (Leaflet vs Modal)
+### 11. Z-Index Strategy (Leaflet vs Modal)
 - Leaflet internal layers: z-index 200–700
 - Modal overlay: `z-[9999]`
 - Map container: `isolation: isolate` untuk membuat stacking context terpisah
 - **Jangan turunkan z-index modal di bawah 9999**
 
-### 11. Halaman Petugas Tersimpan
+### 12. Halaman Petugas Tersimpan
 - Halaman **dashboard**, **riwayat**, dan **profile** telah **DIHAPUS** dari frontend petugas
 - Petugas hanya memiliki flow: Login → `/inspeksi` (task selector) → `/inspeksi/:id` (tracking) → `/inspeksi/:id/selesai` (ringkasan)
 - Semua navigasi back/redirect mengarah ke `/inspeksi`, BUKAN `/dashboard`
@@ -304,7 +334,7 @@ npm run dev    # → localhost:3000
 1. **JANGAN baca `package-lock.json`** — file ini 1943 baris dan tidak berguna untuk context
 2. **JANGAN baca `node_modules/`** — gunakan `package.json` untuk cek dependency
 3. **JANGAN baca `tsconfig.json`** kecuali ada error TypeScript config
-4. **File terbesar**: `inspeksi/[id]/page.tsx` (~850 baris) dan `admin/page.tsx` (~687 baris) — baca per section, jangan sekaligus
+4. **File terbesar**: `inspeksi/[id]/page.tsx` (~850 baris) dan `admin/page.tsx` (~580 baris) — baca per section, jangan sekaligus
 5. **Prisma schema** = sumber kebenaran untuk struktur database
 6. **`globals.css`** = semua design tokens (warna, spacing, typography, font sizes)
 7. Selalu cek `lib/api.ts` untuk base URL dan interceptor sebelum debug API calls
@@ -318,3 +348,6 @@ npm run dev    # → localhost:3000
 15. **Overpass API** — JANGAN hardcode 1 endpoint. Selalu pakai `fetchOverpass()` dari `railway.ts` yang punya failover 3 mirror.
 16. **Geometry cache** — AdminMap cache geometry di `useRef`. Jangan cache hasil kosong agar bisa retry.
 17. **Semua redirect petugas** → `/inspeksi`. JANGAN redirect ke `/dashboard` (sudah tidak ada).
+18. **Admin sidebar** — 2 menu: Tugas (penugasan) dan Live (live view peta). State `activeMenu`. JANGAN tambah menu baru tanpa alasan.
+19. **Station dropdown** — Koordinat stasiun hardcoded di `STATIONS` array di `admin/page.tsx`. JANGAN pakai map-click untuk pilih lokasi tugas. Jika perlu tambah stasiun, edit `STATIONS` constant.
+20. **AdminMap read-only** — AdminMap TIDAK punya `pickMode`, `onMapClick`, `tempStart`, `tempEnd`. Hanya display task routes + emergency. JANGAN tambah click handler ke AdminMap.
