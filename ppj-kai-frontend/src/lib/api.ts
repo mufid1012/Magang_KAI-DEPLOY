@@ -30,8 +30,10 @@ api.interceptors.response.use(
       if (typeof window !== 'undefined') {
         localStorage.removeItem('token');
         localStorage.removeItem('user');
-        // Jangan redirect langsung di sini agar tidak infinite loop, 
-        // tapi kembalikan error ke komponen untuk ditangani
+        // Redirect ke login jika bukan sudah di halaman login
+        if (!window.location.pathname.startsWith('/login')) {
+          window.location.replace('/login');
+        }
       }
     }
     return Promise.reject(error);
