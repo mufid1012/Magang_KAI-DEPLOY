@@ -162,6 +162,51 @@ export default function AdminPage() {
 
   const handleLogout = () => { localStorage.removeItem('token'); localStorage.removeItem('user'); router.replace('/login'); };
 
+  // Account management handlers (admin only)
+  const handleOpenCreateUser = () => {
+    setEditingUser(null);
+    setUserForm({ nipp: '', nama: '', password: '', role: 'ppj', wilayahIds: [] });
+    setShowUserModal(true);
+  };
+  const handleOpenEditUser = (u: ManagedUser) => {
+    setEditingUser(u);
+    setUserForm({
+      nipp: u.nipp, nama: u.nama, password: '', role: u.role,
+      wilayahIds: u.wilayahAssignments.map(wa => wa.wilayah.id),
+    });
+    setShowUserModal(true);
+  };
+  const handleSaveUser = async () => {
+    if (!userForm.nipp || !userForm.nama || !userForm.role) { alert('Lengkapi semua field!'); return; }
+    if (!editingUser && !userForm.password) { alert('Password wajib diisi untuk akun baru!'); return; }
+    try {
+      setSavingUser(true);
+      if (editingUser) {
+        await api.patch(`/admin/users/${editingUser.id}`, {
+          nama: userForm.nama, role: userForm.role, wilayahIds: userForm.wilayahIds,
+          ...(userForm.password ? { password: userForm.password } : {}),
+        });
+      } else {
+        await api.post('/admin/users', userForm);
+      }
+      setShowUserModal(false);
+      fetchUsers();
+    } catch (e: any) { alert(e.response?.data?.message || 'Gagal menyimpan akun.'); }
+    finally { setSavingUser(false); }
+  };
+  const handleToggleUserActive = async (u: ManagedUser) => {
+    const action = u.isActive ? 'Nonaktifkan' : 'Aktifkan';
+    if (!confirm(`${action} akun ${u.nama}?`)) return;
+    try {
+      if (u.isActive) {
+        await api.delete(`/admin/users/${u.id}`);
+      } else {
+        await api.patch(`/admin/users/${u.id}`, { isActive: true });
+      }
+      fetchUsers();
+    } catch (e: any) { alert(e.response?.data?.message || 'Gagal.'); }
+  };
+
   // Station dropdown handlers
   const handleStartStationChange = (stationName: string) => {
     const station = STATIONS.find(s => s.name === stationName);

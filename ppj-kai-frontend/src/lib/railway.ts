@@ -72,7 +72,7 @@ function buildGraph(elements: any[]): Graph {
 function findComponents(graph: Graph): Map<NodeId, number> {
   const componentOf = new Map<NodeId, number>();
   let idx = 0;
-  for (const nodeId of graph.coords.keys()) {
+  for (const nodeId of Array.from(graph.coords.keys())) {
     if (componentOf.has(nodeId)) continue;
     const queue = [nodeId];
     componentOf.set(nodeId, idx);
@@ -155,7 +155,7 @@ function dijkstra(graph: Graph, startId: NodeId, endId: NodeId): [number, number
   const prev = new Map<NodeId, NodeId | null>();
   const visited = new Set<NodeId>();
 
-  for (const id of graph.coords.keys()) dist.set(id, Infinity);
+  for (const id of Array.from(graph.coords.keys())) dist.set(id, Infinity);
   dist.set(startId, 0);
   prev.set(startId, null);
 
