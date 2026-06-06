@@ -2,7 +2,7 @@
   "name": "KAI RailTrack PPJ",
   "short_name": "RailTrack",
   "description": "Aplikasi Pelaporan dan Pemeriksaan Jalur Kereta Api Indonesia",
-  "start_url": "/dashboard",
+  "start_url": "/inspeksi",
   "display": "standalone",
   "background_color": "#005bac",
   "theme_color": "#005bac",

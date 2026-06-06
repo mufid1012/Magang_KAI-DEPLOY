@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import OfflineSyncProvider from "../components/common/OfflineSyncProvider";
@@ -10,8 +10,14 @@ export const metadata: Metadata = {
   title: "RailTrack PPJ - Portal KAI",
   description: "Aplikasi Pelaporan dan Pemeriksaan Jalur Kereta Api Indonesia",
   manifest: "/manifest.json",
+};
+
+export const viewport: Viewport = {
   themeColor: "#005bac",
-  viewport: "minimum-scale=1, initial-scale=1, width=device-width, shrink-to-fit=no, viewport-fit=cover",
+  minimumScale: 1,
+  initialScale: 1,
+  width: "device-width",
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

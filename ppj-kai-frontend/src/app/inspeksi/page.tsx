@@ -52,7 +52,15 @@ export default function InspeksiIndexPage() {
   const [tasks, setTasks] = useState<Tugas[]>([]);
   const [loading, setLoading] = useState(true);
 
+<<<<<<< HEAD
   const handleLogout = () => { localStorage.clear(); router.push('/login'); };
+=======
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    router.replace('/login');
+  };
+>>>>>>> 91726e93bf7f4e52cae39ad16df7c06c6064ec4a
 
   useEffect(() => {
     const fetchTasks = async () => {
@@ -95,10 +103,16 @@ export default function InspeksiIndexPage() {
     return (
       <div className="bg-background text-on-surface min-h-screen font-body-lg antialiased flex flex-col">
         {/* Header */}
+<<<<<<< HEAD
         <header className="bg-surface/80 backdrop-blur-md shadow-sm sticky top-0 z-50 flex items-center justify-between w-full px-container-padding h-16">
           <div className="w-10"></div>
           <h1 className="font-h2 text-h2 font-bold text-primary tracking-tight">Lacak</h1>
           <button onClick={handleLogout} className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-error hover:bg-error-container/20 transition-colors" title="Logout">
+=======
+        <header className="bg-surface/80 backdrop-blur-md shadow-sm sticky top-0 z-50 flex items-center justify-center w-full px-container-padding h-16 relative">
+          <h1 className="font-h2 text-h2 font-bold text-primary tracking-tight">Lacak</h1>
+          <button onClick={handleLogout} className="absolute right-4 top-1/2 -translate-y-1/2 p-2 text-on-surface-variant hover:text-error transition-colors rounded-full hover:bg-error-container/30" title="Logout">
+>>>>>>> 91726e93bf7f4e52cae39ad16df7c06c6064ec4a
             <span className="material-symbols-outlined text-[22px]">logout</span>
           </button>
         </header>
@@ -124,10 +138,16 @@ export default function InspeksiIndexPage() {
   return (
     <div className="bg-background text-on-surface min-h-screen font-body-lg antialiased">
       {/* Header */}
+<<<<<<< HEAD
       <header className="bg-surface/80 backdrop-blur-md shadow-sm sticky top-0 z-50 flex items-center justify-between w-full px-container-padding h-16">
         <div className="w-10"></div>
         <h1 className="font-h2 text-h2 font-bold text-primary tracking-tight">Lacak</h1>
         <button onClick={handleLogout} className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-error hover:bg-error-container/20 transition-colors" title="Logout">
+=======
+      <header className="bg-surface/80 backdrop-blur-md shadow-sm sticky top-0 z-50 flex items-center justify-center w-full px-container-padding h-16 relative">
+        <h1 className="font-h2 text-h2 font-bold text-primary tracking-tight">Lacak</h1>
+        <button onClick={handleLogout} className="absolute right-4 top-1/2 -translate-y-1/2 p-2 text-on-surface-variant hover:text-error transition-colors rounded-full hover:bg-error-container/30" title="Logout">
+>>>>>>> 91726e93bf7f4e52cae39ad16df7c06c6064ec4a
           <span className="material-symbols-outlined text-[22px]">logout</span>
         </button>
       </header>

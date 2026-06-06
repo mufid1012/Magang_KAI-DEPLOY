@@ -107,7 +107,7 @@ export default function AdminPage() {
     return () => clearInterval(interval);
   }, [fetchAll]);
 
-  const handleLogout = () => { localStorage.clear(); router.push('/login'); };
+  const handleLogout = () => { localStorage.removeItem('token'); localStorage.removeItem('user'); router.replace('/login'); };
 
   // Station dropdown handlers
   const handleStartStationChange = (stationName: string) => {
