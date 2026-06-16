@@ -5,9 +5,17 @@ import { useRouter, usePathname } from 'next/navigation';
 
 const PUBLIC_ROUTES = ['/login', '/register', '/guest'];
 const ADMIN_ROUTES = ['/admin'];
+const QC_ROUTES = ['/qc'];
 const PPJ_ROUTES = ['/inspeksi'];
 
-const ADMIN_LIKE_ROLES = ['admin', 'qc', 'kupt'];
+const ADMIN_KUPT_ROLES = ['admin', 'kupt'];
+
+/** Return the home route for a given role */
+function homeForRole(role: string): string {
+  if (role === 'qc') return '/qc';
+  if (ADMIN_KUPT_ROLES.includes(role)) return '/admin';
+  return '/inspeksi';
+}
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -23,6 +31,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 
     const isPublic = PUBLIC_ROUTES.some(r => pathname === r || pathname.startsWith(r + '/'));
     const isAdminRoute = ADMIN_ROUTES.some(r => pathname.startsWith(r));
+    const isQcRoute = QC_ROUTES.some(r => pathname.startsWith(r));
     const isPpjRoute = PPJ_ROUTES.some(r => pathname.startsWith(r));
     const isGuestRoute = pathname === '/guest' || pathname.startsWith('/guest/');
 
@@ -39,16 +48,20 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         return;
       }
     } else if (pathname === '/login' || pathname === '/register') {
-      // Already logged in — redirect away from login/register
-      router.replace(ADMIN_LIKE_ROLES.includes(role) ? '/admin' : '/inspeksi');
+      // Already logged in — redirect away from login/register to role-specific home
+      router.replace(homeForRole(role));
       return;
-    } else if (isAdminRoute && !ADMIN_LIKE_ROLES.includes(role)) {
-      // PPJ trying to access admin → redirect to inspeksi
-      router.replace('/inspeksi');
+    } else if (isAdminRoute && !ADMIN_KUPT_ROLES.includes(role)) {
+      // Non-admin/kupt trying to access /admin → redirect to their home
+      router.replace(homeForRole(role));
       return;
-    } else if (isPpjRoute && ADMIN_LIKE_ROLES.includes(role)) {
-      // Admin-like trying to access PPJ routes → redirect to admin
-      router.replace('/admin');
+    } else if (isQcRoute && role !== 'qc') {
+      // Non-QC trying to access /qc → redirect to their home
+      router.replace(homeForRole(role));
+      return;
+    } else if (isPpjRoute && role !== 'ppj') {
+      // Non-PPJ trying to access /inspeksi → redirect to their home
+      router.replace(homeForRole(role));
       return;
     }
 

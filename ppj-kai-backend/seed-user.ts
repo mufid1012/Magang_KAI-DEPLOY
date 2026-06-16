@@ -20,6 +20,7 @@ const WILAYAH_DATA = [
   { kode: 'JR 6.10', nama: 'Sumberlawang', stations: JSON.stringify(['Sta. Sumberlawang']) },
   { kode: 'JR 6.11', nama: 'Palur',        stations: JSON.stringify(['Sta. Palur']) },
   { kode: 'JR 6.12', nama: 'Sragen',       stations: JSON.stringify(['Sta. Sragen']) },
+  { kode: 'JR 6.13', nama: 'Palur',        stations: JSON.stringify(['Sta. Palur']) },
 ];
 
 async function main() {
@@ -86,7 +87,7 @@ async function main() {
   const qcUsers = [
     { nipp: 'QC-A001', nama: 'QC Region A', wilayahKodes: ['JR 6.1', 'JR 6.2', 'JR 6.3', 'JR 6.4'] },
     { nipp: 'QC-B001', nama: 'QC Region B', wilayahKodes: ['JR 6.5', 'JR 6.6', 'JR 6.7', 'JR 6.8'] },
-    { nipp: 'QC-C001', nama: 'QC Region C', wilayahKodes: ['JR 6.9', 'JR 6.10', 'JR 6.11', 'JR 6.12'] },
+    { nipp: 'QC-C001', nama: 'QC Region C', wilayahKodes: ['JR 6.9', 'JR 6.10', 'JR 6.11', 'JR 6.12', 'JR 6.13'] },
   ];
 
   for (const qc of qcUsers) {
