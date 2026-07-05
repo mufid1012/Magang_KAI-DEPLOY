@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import api from '../../lib/api';
 import { useRouter } from 'next/navigation';
@@ -106,6 +106,25 @@ export default function AdminPage() {
   
   // History state
   const [selectedPetugasHistory, setSelectedPetugasHistory] = useState<Petugas | null>(null);
+
+  // ── Import Excel state ──
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPreview, setImportPreview] = useState<any[] | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ imported: number; errors: number; errorDetails: { row: number; message: string }[] } | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Template state ──
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [templateView, setTemplateView] = useState<'list' | 'create' | 'apply'>('list');
+  const [templateForm, setTemplateForm] = useState({ nama: '', items: [{ assignedTo: '', startPointName: '', endPointName: '', jamMulai: '', jamSelesai: '' }] });
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [applyingTemplate, setApplyingTemplate] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<any | null>(null);
+  const [applyDates, setApplyDates] = useState({ startDate: '', endDate: '' });
 
   const fetchAvailablePetugas = async () => {
     try {
@@ -297,6 +316,105 @@ export default function AdminPage() {
     } catch (e: any) {
       alert(e.response?.data?.message || 'Gagal menghapus petugas.');
     }
+  };
+
+  // ── Import Excel handlers ──
+  const handleDownloadTemplate = async () => {
+    try {
+      const res = await api.get('/admin/tugas/template-excel', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url; a.download = 'template_jadwal_ppj.xlsx'; a.click();
+      window.URL.revokeObjectURL(url);
+    } catch { alert('Gagal mengunduh template.'); }
+  };
+
+  const handleFileSelect = (file: File) => {
+    if (!file.name.endsWith('.xlsx')) { alert('Hanya file .xlsx yang diizinkan'); return; }
+    setImportFile(file);
+    setImportResult(null);
+    // Read preview using FileReader
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const XLSX = await import('xlsx');
+        const wb = XLSX.read(e.target?.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        setImportPreview((data as any[][]).slice(0, 11)); // header + max 10 rows
+      } catch { setImportPreview(null); }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleImportExcel = async () => {
+    if (!importFile) return;
+    try {
+      setImporting(true);
+      const formData = new FormData();
+      formData.append('file', importFile);
+      const res = await api.post('/admin/tugas/import-excel', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      setImportResult(res.data.data);
+      if (res.data.data.imported > 0) fetchAll();
+    } catch (e: any) {
+      alert(e.response?.data?.message || 'Gagal import file.');
+    } finally { setImporting(false); }
+  };
+
+  const handleCloseImport = () => {
+    setShowImportModal(false); setImportFile(null); setImportPreview(null); setImportResult(null); setDragOver(false);
+  };
+
+  // ── Template handlers ──
+  const fetchTemplates = async () => {
+    try {
+      const res = await api.get('/admin/templates');
+      setTemplates(res.data.data);
+    } catch { console.error('Failed to fetch templates'); }
+  };
+
+  const handleCreateTemplate = async () => {
+    if (!templateForm.nama.trim()) { alert('Nama template wajib diisi'); return; }
+    const validItems = templateForm.items.filter(i => i.assignedTo && i.startPointName && i.endPointName);
+    if (validItems.length === 0) { alert('Minimal 1 item rute yang lengkap'); return; }
+    try {
+      setSavingTemplate(true);
+      await api.post('/admin/templates', { nama: templateForm.nama, items: validItems });
+      setTemplateView('list');
+      setTemplateForm({ nama: '', items: [{ assignedTo: '', startPointName: '', endPointName: '', jamMulai: '', jamSelesai: '' }] });
+      fetchTemplates();
+    } catch (e: any) { alert(e.response?.data?.message || 'Gagal menyimpan template.'); }
+    finally { setSavingTemplate(false); }
+  };
+
+  const handleDeleteTemplate = async (id: number) => {
+    if (!confirm('Hapus template ini?')) return;
+    try { await api.delete(`/admin/templates/${id}`); fetchTemplates(); }
+    catch { alert('Gagal menghapus template.'); }
+  };
+
+  const handleApplyTemplate = async () => {
+    if (!selectedTemplate || !applyDates.startDate || !applyDates.endDate) { alert('Pilih template dan rentang tanggal'); return; }
+    try {
+      setApplyingTemplate(true);
+      const res = await api.post(`/admin/templates/${selectedTemplate.id}/apply`, applyDates);
+      alert(res.data.message);
+      setTemplateView('list'); setSelectedTemplate(null); setApplyDates({ startDate: '', endDate: '' });
+      fetchAll();
+    } catch (e: any) { alert(e.response?.data?.message || 'Gagal menerapkan template.'); }
+    finally { setApplyingTemplate(false); }
+  };
+
+  const handleAddTemplateItem = () => {
+    setTemplateForm(f => ({ ...f, items: [...f.items, { assignedTo: '', startPointName: '', endPointName: '', jamMulai: '', jamSelesai: '' }] }));
+  };
+
+  const handleRemoveTemplateItem = (idx: number) => {
+    setTemplateForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
+  };
+
+  const handleTemplateItemChange = (idx: number, field: string, value: string) => {
+    setTemplateForm(f => ({ ...f, items: f.items.map((item, i) => i === idx ? { ...item, [field]: value } : item) }));
   };
 
   const mapEmergencies = emergencies.map(e => ({ id: e.id, latitude: e.latitude, longitude: e.longitude, jenisTemuan: e.jenisTemuan, deskripsi: e.deskripsi, foto: e.foto, createdAt: e.createdAt, petugasNama: e.tracking?.tugas?.user?.nama, jalur: e.tracking?.tugas?.jalur }));
@@ -514,10 +632,18 @@ export default function AdminPage() {
                 
                 {/* Action Buttons (Docked) — only for admin/kupt */}
                 {canWrite && activeTab === 'tasks' && (
-                  <div className="p-3 border-t border-slate-200 bg-slate-50 shrink-0">
+                  <div className="p-3 border-t border-slate-200 bg-slate-50 shrink-0 space-y-2">
                     <button onClick={() => setShowTaskModal(true)} className="w-full py-2.5 bg-primary text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-primary/90 shadow-sm transition-all active:scale-[0.98]">
                       <span className="material-symbols-outlined text-[18px]">add</span> Tugaskan Pemeriksa
                     </button>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button onClick={() => { setShowImportModal(true); setImportFile(null); setImportPreview(null); setImportResult(null); }} className="py-2 bg-white border border-emerald-500 text-emerald-600 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-emerald-50 shadow-sm transition-all active:scale-[0.98]">
+                        <span className="material-symbols-outlined text-[16px]">upload_file</span> Import Excel
+                      </button>
+                      <button onClick={() => { setShowTemplateModal(true); setTemplateView('list'); fetchTemplates(); }} className="py-2 bg-white border border-indigo-500 text-indigo-600 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-indigo-50 shadow-sm transition-all active:scale-[0.98]">
+                        <span className="material-symbols-outlined text-[16px]">bookmark</span> Template
+                      </button>
+                    </div>
                   </div>
                 )}
                 {canWrite && activeTab === 'map' && (
@@ -1152,6 +1278,333 @@ export default function AdminPage() {
                   })
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ IMPORT EXCEL MODAL ═══ */}
+      {showImportModal && (
+        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-emerald-700 px-6 py-4 flex items-center justify-between shrink-0">
+              <h3 className="text-base font-bold text-white flex items-center gap-3 tracking-wide">
+                <span className="material-symbols-outlined text-[20px]">upload_file</span> IMPORT JADWAL DARI EXCEL
+              </h3>
+              <button onClick={handleCloseImport} className="text-white/70 hover:text-white transition-colors"><span className="material-symbols-outlined">close</span></button>
+            </div>
+            <div className="overflow-y-auto p-6 space-y-5 flex-1 bg-slate-50/50">
+              {/* Download Template */}
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-bold text-emerald-800">Template Excel</p>
+                  <p className="text-xs text-emerald-600 mt-0.5">Unduh template untuk memastikan format file yang benar</p>
+                </div>
+                <button onClick={handleDownloadTemplate} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 hover:bg-emerald-700 shadow-sm transition-all active:scale-[0.98]">
+                  <span className="material-symbols-outlined text-[16px]">download</span> Download
+                </button>
+              </div>
+
+              {/* Drop Zone */}
+              {!importResult && (
+                <div
+                  onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleFileSelect(f); }}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
+                    dragOver ? 'border-emerald-500 bg-emerald-50' : importFile ? 'border-emerald-400 bg-emerald-50/50' : 'border-slate-300 bg-white hover:border-emerald-400 hover:bg-emerald-50/30'
+                  }`}
+                >
+                  <input ref={fileInputRef} type="file" accept=".xlsx" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); }} />
+                  <span className={`material-symbols-outlined text-4xl mb-3 block ${importFile ? 'text-emerald-500' : 'text-slate-300'}`}>{importFile ? 'check_circle' : 'cloud_upload'}</span>
+                  {importFile ? (
+                    <>
+                      <p className="text-sm font-bold text-emerald-700">{importFile.name}</p>
+                      <p className="text-xs text-emerald-600 mt-1">{(importFile.size / 1024).toFixed(1)} KB — Klik untuk ganti file</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-bold text-slate-600">Drag & drop file Excel di sini</p>
+                      <p className="text-xs text-slate-400 mt-1">atau klik untuk pilih file (.xlsx)</p>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Preview Table */}
+              {importPreview && !importResult && (
+                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                    <p className="text-xs font-bold text-slate-700 uppercase tracking-wider">Preview Data</p>
+                    <p className="text-[10px] text-slate-500">Menampilkan maks. 10 baris pertama</p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-slate-50">
+                          {importPreview[0]?.map((h: string, i: number) => (
+                            <th key={i} className="px-3 py-2 text-left font-bold text-slate-600 border-b border-slate-200 whitespace-nowrap">{String(h)}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importPreview.slice(1).map((row: any[], rIdx: number) => (
+                          <tr key={rIdx} className="hover:bg-slate-50">
+                            {row.map((cell: any, cIdx: number) => (
+                              <td key={cIdx} className="px-3 py-1.5 border-b border-slate-100 text-slate-700 whitespace-nowrap">{String(cell)}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Import Result */}
+              {importResult && (
+                <div className="space-y-4">
+                  <div className={`rounded-xl p-4 border ${importResult.imported > 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'}`}>
+                    <div className="flex items-center gap-3">
+                      <span className={`material-symbols-outlined text-3xl ${importResult.imported > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{importResult.imported > 0 ? 'check_circle' : 'error'}</span>
+                      <div>
+                        <p className={`font-bold text-sm ${importResult.imported > 0 ? 'text-emerald-800' : 'text-rose-800'}`}>{importResult.imported} tugas berhasil diimport</p>
+                        {importResult.errors > 0 && <p className="text-xs text-rose-600 mt-0.5">{importResult.errors} baris bermasalah</p>}
+                      </div>
+                    </div>
+                  </div>
+                  {importResult.errorDetails?.length > 0 && (
+                    <div className="bg-white rounded-xl border border-rose-200 overflow-hidden">
+                      <div className="px-4 py-2.5 bg-rose-50 border-b border-rose-200">
+                        <p className="text-xs font-bold text-rose-700 uppercase tracking-wider">Detail Error</p>
+                      </div>
+                      <div className="max-h-48 overflow-y-auto">
+                        {importResult.errorDetails.map((err, i) => (
+                          <div key={i} className="px-4 py-2 border-b border-rose-100 flex gap-3 items-start text-xs">
+                            <span className="bg-rose-100 text-rose-700 px-2 py-0.5 rounded font-bold shrink-0">Baris {err.row}</span>
+                            <span className="text-rose-600">{err.message}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-5 border-t border-slate-200 flex gap-3 shrink-0 bg-white">
+              <button onClick={handleCloseImport} className="flex-1 py-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50 transition-colors uppercase tracking-wider">{importResult ? 'Tutup' : 'Batal'}</button>
+              {!importResult && (
+                <button onClick={handleImportExcel} disabled={!importFile || importing} className="flex-[2] py-3 rounded-xl bg-emerald-600 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-emerald-200 hover:bg-emerald-700 disabled:opacity-60 transition-all active:scale-[0.98] uppercase tracking-wider">
+                  <span className="material-symbols-outlined text-[18px]">publish</span>
+                  {importing ? 'Mengimport...' : 'Import Semua'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ TEMPLATE PENUGASAN MODAL ═══ */}
+      {showTemplateModal && (
+        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-indigo-700 px-6 py-4 flex items-center justify-between shrink-0">
+              <h3 className="text-base font-bold text-white flex items-center gap-3 tracking-wide">
+                <span className="material-symbols-outlined text-[20px]">bookmark</span>
+                {templateView === 'list' ? 'TEMPLATE PENUGASAN' : templateView === 'create' ? 'BUAT TEMPLATE BARU' : 'TERAPKAN TEMPLATE'}
+              </h3>
+              <button onClick={() => setShowTemplateModal(false)} className="text-white/70 hover:text-white transition-colors"><span className="material-symbols-outlined">close</span></button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 bg-slate-50/50">
+              {/* ─── LIST VIEW ─── */}
+              {templateView === 'list' && (
+                <div className="p-6 space-y-4">
+                  {templates.length === 0 ? (
+                    <div className="text-center py-12">
+                      <span className="material-symbols-outlined text-slate-200 text-5xl mb-3 block">bookmark_border</span>
+                      <p className="text-slate-500 text-sm font-medium">Belum ada template penugasan.</p>
+                      <p className="text-slate-400 text-xs mt-1">Buat template untuk mempercepat pembuatan jadwal.</p>
+                    </div>
+                  ) : (
+                    templates.map(t => (
+                      <div key={t.id} className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm hover:border-indigo-300 transition-all">
+                        <div className="flex items-start justify-between mb-3">
+                          <div>
+                            <p className="font-bold text-slate-800 text-sm">{t.nama}</p>
+                            <p className="text-xs text-slate-500 mt-0.5">{t.items.length} rute • Dibuat {new Date(t.createdAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button onClick={() => { setSelectedTemplate(t); setTemplateView('apply'); setApplyDates({ startDate: '', endDate: '' }); }} className="px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-indigo-100 transition-colors flex items-center gap-1">
+                              <span className="material-symbols-outlined text-[14px]">play_arrow</span> Terapkan
+                            </button>
+                            <button onClick={() => handleDeleteTemplate(t.id)} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors">
+                              <span className="material-symbols-outlined text-[16px]">delete</span>
+                            </button>
+                          </div>
+                        </div>
+                        <div className="space-y-1.5">
+                          {t.items.map((item: any, idx: number) => (
+                            <div key={idx} className="flex items-center gap-2 text-xs bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
+                              <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold shrink-0" style={{ background: petugasColor(item.petugasNipp || '') }}>
+                                {(item.petugasNama || '?').substring(0, 2).toUpperCase()}
+                              </span>
+                              <span className="font-semibold text-slate-700 truncate">{item.petugasNama || 'Petugas ?'}</span>
+                              <span className="text-slate-400">•</span>
+                              <span className="text-slate-600 truncate">{item.startPointName} → {item.endPointName}</span>
+                              {item.jamMulai && <span className="text-slate-400 shrink-0">{item.jamMulai}-{item.jamSelesai || '?'}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* ─── CREATE VIEW ─── */}
+              {templateView === 'create' && (
+                <div className="p-6 space-y-5">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Nama Template</label>
+                    <input value={templateForm.nama} onChange={e => setTemplateForm(f => ({ ...f, nama: e.target.value }))} placeholder="Contoh: Jadwal Harian Sektor A" className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none shadow-sm font-medium" />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-2">Item Rute</label>
+                    <div className="space-y-3">
+                      {templateForm.items.map((item, idx) => (
+                        <div key={idx} className="bg-white rounded-xl border border-slate-200 p-4 relative group">
+                          {templateForm.items.length > 1 && (
+                            <button onClick={() => handleRemoveTemplateItem(idx)} className="absolute -top-2 -right-2 w-6 h-6 bg-white border border-slate-200 rounded-full text-slate-400 hover:text-rose-600 hover:border-rose-300 shadow-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all z-10">
+                              <span className="material-symbols-outlined text-[14px]">close</span>
+                            </button>
+                          )}
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+                            <div>
+                              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Petugas</label>
+                              <select value={item.assignedTo} onChange={e => handleTemplateItemChange(idx, 'assignedTo', e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none">
+                                <option value="">-- Pilih --</option>
+                                {petugas.map(p => <option key={p.id} value={p.id}>{p.nama}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-bold text-emerald-500 uppercase tracking-widest block mb-1">Stasiun Awal</label>
+                              <select value={item.startPointName} onChange={e => handleTemplateItemChange(idx, 'startPointName', e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 bg-white focus:ring-2 focus:ring-emerald-500 outline-none">
+                                <option value="">-- Pilih --</option>
+                                {filteredStations.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-bold text-rose-500 uppercase tracking-widest block mb-1">Stasiun Akhir</label>
+                              <select value={item.endPointName} onChange={e => handleTemplateItemChange(idx, 'endPointName', e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 bg-white focus:ring-2 focus:ring-rose-500 outline-none">
+                                <option value="">-- Pilih --</option>
+                                {filteredStations.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
+                              </select>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Jam Mulai</label>
+                              <input type="time" value={item.jamMulai} onChange={e => handleTemplateItemChange(idx, 'jamMulai', e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Jam Selesai</label>
+                              <input type="time" value={item.jamSelesai} onChange={e => handleTemplateItemChange(idx, 'jamSelesai', e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <button onClick={handleAddTemplateItem} className="mt-3 w-full py-2 border-2 border-dashed border-slate-300 rounded-xl text-xs font-bold text-slate-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50/30 transition-all flex items-center justify-center gap-1.5">
+                      <span className="material-symbols-outlined text-[16px]">add</span> Tambah Rute
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* ─── APPLY VIEW ─── */}
+              {templateView === 'apply' && selectedTemplate && (
+                <div className="p-6 space-y-5">
+                  <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
+                    <p className="text-sm font-bold text-indigo-800">{selectedTemplate.nama}</p>
+                    <p className="text-xs text-indigo-600 mt-0.5">{selectedTemplate.items.length} rute akan digenerate untuk setiap tanggal dalam rentang</p>
+                  </div>
+
+                  <div className="bg-white rounded-xl border border-slate-200 p-4">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-3">Rentang Tanggal</label>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest block mb-1">Tanggal Mulai</label>
+                        <input type="date" value={applyDates.startDate} onChange={e => setApplyDates(d => ({ ...d, startDate: e.target.value }))} className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm font-medium" />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-bold text-rose-600 uppercase tracking-widest block mb-1">Tanggal Akhir</label>
+                        <input type="date" value={applyDates.endDate} onChange={e => setApplyDates(d => ({ ...d, endDate: e.target.value }))} className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm font-medium" />
+                      </div>
+                    </div>
+                    {applyDates.startDate && applyDates.endDate && (
+                      <div className="mt-3 bg-indigo-50 py-2 px-4 rounded-lg border border-indigo-100 flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest">Total Tugas</span>
+                        <span className="text-sm font-extrabold text-indigo-700">
+                          {(() => {
+                            const d = Math.ceil((new Date(applyDates.endDate).getTime() - new Date(applyDates.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                            return d > 0 ? `${d} hari × ${selectedTemplate.items.length} rute = ${d * selectedTemplate.items.length} tugas` : 'Tanggal tidak valid';
+                          })()}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Preview items */}
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Rute dalam template</p>
+                    {selectedTemplate.items.map((item: any, idx: number) => (
+                      <div key={idx} className="flex items-center gap-2 text-xs bg-white rounded-lg px-3 py-2 border border-slate-200">
+                        <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold shrink-0" style={{ background: petugasColor(item.petugasNipp || '') }}>
+                          {(item.petugasNama || '?').substring(0, 2).toUpperCase()}
+                        </span>
+                        <span className="font-semibold text-slate-700">{item.petugasNama}</span>
+                        <span className="text-slate-400">•</span>
+                        <span className="text-slate-600">{item.startPointName} → {item.endPointName}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-5 border-t border-slate-200 flex gap-3 shrink-0 bg-white">
+              {templateView === 'list' && (
+                <>
+                  <button onClick={() => setShowTemplateModal(false)} className="flex-1 py-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50 transition-colors uppercase tracking-wider">Tutup</button>
+                  <button onClick={() => { setTemplateView('create'); setTemplateForm({ nama: '', items: [{ assignedTo: '', startPointName: '', endPointName: '', jamMulai: '', jamSelesai: '' }] }); }} className="flex-[2] py-3 rounded-xl bg-indigo-600 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-indigo-200 hover:bg-indigo-700 transition-all active:scale-[0.98] uppercase tracking-wider">
+                    <span className="material-symbols-outlined text-[18px]">add</span> Buat Template Baru
+                  </button>
+                </>
+              )}
+              {templateView === 'create' && (
+                <>
+                  <button onClick={() => setTemplateView('list')} className="flex-1 py-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50 transition-colors uppercase tracking-wider">Kembali</button>
+                  <button onClick={handleCreateTemplate} disabled={savingTemplate} className="flex-[2] py-3 rounded-xl bg-indigo-600 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-60 transition-all active:scale-[0.98] uppercase tracking-wider">
+                    <span className="material-symbols-outlined text-[18px]">save</span>
+                    {savingTemplate ? 'Menyimpan...' : 'Simpan Template'}
+                  </button>
+                </>
+              )}
+              {templateView === 'apply' && (
+                <>
+                  <button onClick={() => { setTemplateView('list'); setSelectedTemplate(null); }} className="flex-1 py-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50 transition-colors uppercase tracking-wider">Kembali</button>
+                  <button onClick={handleApplyTemplate} disabled={applyingTemplate || !applyDates.startDate || !applyDates.endDate} className="flex-[2] py-3 rounded-xl bg-indigo-600 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-60 transition-all active:scale-[0.98] uppercase tracking-wider">
+                    <span className="material-symbols-outlined text-[18px]">send</span>
+                    {applyingTemplate ? 'Membuat Tugas...' : 'Terapkan & Generate Tugas'}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
