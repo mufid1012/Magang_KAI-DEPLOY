@@ -609,18 +609,11 @@ export default function AdminPage() {
                 {canWrite && activeTab === 'tasks' && (
                   <div className="p-3 border-t border-slate-200 bg-slate-50 shrink-0 space-y-2">
                     {/* Excel Import/Export Row */}
-                    <div className="flex gap-2">
-                      <button
-                        onClick={handleDownloadTemplate}
-                        className="flex-1 py-2 bg-white border border-emerald-300 text-emerald-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-emerald-50 shadow-sm transition-all active:scale-[0.98]"
-                      >
-                        <span className="material-symbols-outlined text-[16px]">download</span>
-                        Template
-                      </button>
+                    <div className="w-full">
                       <button
                         onClick={() => fileInputRef.current?.click()}
                         disabled={importLoading}
-                        className="flex-1 py-2 bg-white border border-blue-300 text-blue-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-blue-50 shadow-sm transition-all active:scale-[0.98] disabled:opacity-50"
+                        className="w-full py-2 bg-white border border-blue-300 text-blue-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-blue-50 shadow-sm transition-all active:scale-[0.98] disabled:opacity-50"
                       >
                         <span className="material-symbols-outlined text-[16px]">{importLoading ? 'hourglass_empty' : 'upload_file'}</span>
                         {importLoading ? 'Importing...' : 'Import Excel'}
