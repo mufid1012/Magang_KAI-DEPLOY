@@ -99,7 +99,7 @@ const MAX_BRIDGE_DIST = 50; // meters
 function bridgeComponents(graph: Graph): void {
   const componentOf = findComponents(graph);
   const componentNodes = new Map<number, NodeId[]>();
-  for (const [nodeId, comp] of componentOf) {
+  for (const [nodeId, comp] of Array.from(componentOf.entries())) {
     if (!componentNodes.has(comp)) componentNodes.set(comp, []);
     componentNodes.get(comp)!.push(nodeId);
   }
@@ -143,7 +143,7 @@ function bridgeComponents(graph: Graph): void {
 function nearestNode(graph: Graph, lat: number, lng: number): NodeId | null {
   let minDist = Infinity;
   let nearest: NodeId | null = null;
-  for (const [id, [nlat, nlng]] of graph.coords) {
+  for (const [id, [nlat, nlng]] of Array.from(graph.coords.entries())) {
     const d = haversineM(lat, lng, nlat, nlng);
     if (d < minDist) { minDist = d; nearest = id; }
   }

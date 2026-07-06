@@ -4,7 +4,9 @@ import React, { useEffect, useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import api from '../../lib/api';
 import { useRouter } from 'next/navigation';
-import { playNotification, NotificationSound } from '../../lib/audio';
+import { playNotification, NotificationSound, speakEmergencyAnnouncement } from '../../lib/audio';
+import { showToast } from '../../lib/toast';
+import { showConfirm } from '../../lib/confirm';
 
 // Same deterministic color as AdminMap — NIPP → unique HSL color
 function petugasColor(nipp: string): string {
@@ -125,12 +127,23 @@ export default function AdminPage() {
     }
   }, []);
 
-  // Play sound on new emergency
+  // Play sound + TTS on new emergency
   useEffect(() => {
     if (emergencies.length > 0) {
       const latestId = Math.max(...emergencies.map(e => e.id));
       if (lastEmergencyId.current > 0 && latestId > lastEmergencyId.current) {
+        // Play alert sound first
         playNotification(alertSound);
+
+        // Find the newest emergency for TTS announcement
+        const newEmergency = emergencies.find(e => e.id === latestId);
+        if (newEmergency && alertSound !== 'off') {
+          // Delay TTS slightly so the alert sound plays first
+          setTimeout(() => {
+            const petugasNama = newEmergency.tracking?.tugas?.user?.nama || 'Petugas';
+            speakEmergencyAnnouncement(newEmergency.jenisTemuan, newEmergency.deskripsi, petugasNama);
+          }, 2500);
+        }
       }
       lastEmergencyId.current = Math.max(lastEmergencyId.current, latestId);
     }
@@ -213,8 +226,8 @@ export default function AdminPage() {
     setShowUserModal(true);
   };
   const handleSaveUser = async () => {
-    if (!userForm.nipp || !userForm.nama || !userForm.role) { alert('Lengkapi semua field!'); return; }
-    if (!editingUser && !userForm.password) { alert('Password wajib diisi untuk akun baru!'); return; }
+    if (!userForm.nipp || !userForm.nama || !userForm.role) { showToast('Lengkapi semua field!', 'warning'); return; }
+    if (!editingUser && !userForm.password) { showToast('Password wajib diisi untuk akun baru!', 'warning'); return; }
     try {
       setSavingUser(true);
       if (editingUser) {
@@ -227,12 +240,12 @@ export default function AdminPage() {
       }
       setShowUserModal(false);
       fetchUsers();
-    } catch (e: any) { alert(e.response?.data?.message || 'Gagal menyimpan akun.'); }
+    } catch (e: any) { showToast(e.response?.data?.message || 'Gagal menyimpan akun.', 'error'); }
     finally { setSavingUser(false); }
   };
   const handleToggleUserActive = async (u: ManagedUser) => {
     const action = u.isActive ? 'Nonaktifkan' : 'Aktifkan';
-    if (!confirm(`${action} akun ${u.nama}?`)) return;
+    if (!(await showConfirm(`${action} akun ${u.nama}?`))) return;
     try {
       if (u.isActive) {
         await api.delete(`/admin/users/${u.id}`);
@@ -240,7 +253,7 @@ export default function AdminPage() {
         await api.patch(`/admin/users/${u.id}`, { isActive: true });
       }
       fetchUsers();
-    } catch (e: any) { alert(e.response?.data?.message || 'Gagal.'); }
+    } catch (e: any) { showToast(e.response?.data?.message || 'Gagal.', 'error'); }
   };
 
   // Station dropdown handlers
@@ -293,20 +306,20 @@ export default function AdminPage() {
   };
 
   const handleCreateTugas = async () => {
-    if (!form.jalur || !form.tanggal || !form.assignedTo || !form.startPointLat || !form.endPointLat) { alert('Lengkapi semua field!'); return; }
+    if (!form.jalur || !form.tanggal || !form.assignedTo || !form.startPointLat || !form.endPointLat) { showToast('Lengkapi semua field!', 'warning'); return; }
     try {
       setSubmitting(true);
       await api.post('/admin/tugas', form);
       setShowTaskModal(false);
       setForm({ jalur: '', tanggal: '', assignedTo: '', startPointName: '', endPointName: '', startPointLat: '', startPointLong: '', endPointLat: '', endPointLong: '', jamMulai: '', jamSelesai: '' });
       fetchAll();
-    } catch (e: any) { console.error(e); alert(e.response?.data?.message || 'Gagal membuat tugas.'); }
+    } catch (e: any) { console.error(e); showToast(e.response?.data?.message || 'Gagal membuat tugas.', 'error'); }
     finally { setSubmitting(false); }
   };
 
   const handleDeleteTugas = async (id: number) => {
-    if (!confirm('Hapus tugas ini?')) return;
-    try { await api.delete(`/admin/tugas/${id}`); fetchAll(); } catch { alert('Gagal menghapus.'); }
+    if (!(await showConfirm('Hapus tugas ini?'))) return;
+    try { await api.delete(`/admin/tugas/${id}`); fetchAll(); } catch { showToast('Gagal menghapus.', 'error'); }
   };
 
   const handleAddPetugas = async () => {
@@ -314,24 +327,24 @@ export default function AdminPage() {
     try {
       setAddingPetugas(true);
       const res = await api.post('/admin/petugas/add', { nipps: selectedNipps });
-      alert(res.data.message);
+      showToast(res.data.message, 'success');
       setShowAddPetugasModal(false);
       setSelectedNipps([]);
       fetchAll();
     } catch (e: any) {
-      alert(e.response?.data?.message || 'Gagal menambahkan petugas.');
+      showToast(e.response?.data?.message || 'Gagal menambahkan petugas.', 'error');
     } finally {
       setAddingPetugas(false);
     }
   };
 
   const handleRemovePetugas = async (id: number) => {
-    if (!confirm('Hapus petugas ini dari daftar kelola Anda? Mereka tidak akan dihapus dari sistem, hanya dari pantauan Anda.')) return;
+    if (!(await showConfirm('Hapus petugas ini dari daftar kelola Anda? Mereka tidak akan dihapus dari sistem, hanya dari pantauan Anda.'))) return;
     try {
       await api.post('/admin/petugas/remove', { id });
       fetchAll();
     } catch (e: any) {
-      alert(e.response?.data?.message || 'Gagal menghapus petugas.');
+      showToast(e.response?.data?.message || 'Gagal menghapus petugas.', 'error');
     }
   };
 
@@ -348,7 +361,7 @@ export default function AdminPage() {
       link.remove();
       window.URL.revokeObjectURL(url);
     } catch (e: any) {
-      alert(e.response?.data?.message || 'Gagal mengunduh template.');
+      showToast(e.response?.data?.message || 'Gagal mengunduh template.', 'error');
     }
   };
 
@@ -370,7 +383,7 @@ export default function AdminPage() {
       setImportResult(res.data.data);
       fetchAll(); // Refresh task list
     } catch (e: any) {
-      alert(e.response?.data?.message || 'Gagal mengimpor file.');
+      showToast(e.response?.data?.message || 'Gagal mengimpor file.', 'error');
     } finally {
       setImportLoading(false);
     }
@@ -382,32 +395,32 @@ export default function AdminPage() {
   return (
     <div className="h-screen flex flex-col bg-[#F8FAFC] font-sans overflow-hidden">
       {/* Premium Header */}
-      <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0 z-50 shadow-sm">
-        <div className="flex items-center gap-4">
-          <img src="/logo-kai.png" alt="KAI Logo" className="h-8 w-auto object-contain" />
+      <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-6 shrink-0 z-50 shadow-sm">
+        <div className="flex items-center gap-2 md:gap-4">
+          <img src="/logo-kai.png" alt="KAI Logo" className="h-6 md:h-8 w-auto object-contain" />
           <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
-          <h1 className="font-h3 text-lg font-extrabold text-slate-800 tracking-tight hidden sm:block">Command Center <span className="text-primary">PPJ</span></h1>
-          <span className={`ml-2 px-2 py-0.5 text-white font-label-sm text-[10px] rounded uppercase font-bold tracking-widest shadow-sm ${ROLE_BADGE[userRole]?.bg || 'bg-slate-800'}`}>{ROLE_BADGE[userRole]?.label || 'Portal Admin'}</span>
+          <h1 className="font-h3 text-base md:text-lg font-extrabold text-slate-800 tracking-tight hidden sm:block">Command Center <span className="text-primary">PPJ</span></h1>
+          <span className={`ml-0 md:ml-2 px-2 py-0.5 text-white font-label-sm text-[10px] rounded uppercase font-bold tracking-widest shadow-sm hidden sm:inline-block ${ROLE_BADGE[userRole]?.bg || 'bg-slate-800'}`}>{ROLE_BADGE[userRole]?.label || 'Portal Admin'}</span>
         </div>
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-3 md:gap-6">
           {/* Sound settings */}
-          <div className="flex items-center gap-2 mr-2">
-            <span className="material-symbols-outlined text-slate-400 text-[20px]">{alertSound === 'off' ? 'notifications_off' : 'notifications_active'}</span>
+          <div className="flex items-center gap-1 md:gap-2 mr-1 md:mr-2">
+            <span className="material-symbols-outlined text-slate-400 text-[18px] md:text-[20px]">{alertSound === 'off' ? 'notifications_off' : 'notifications_active'}</span>
             <select
               value={alertSound}
               onChange={handleSoundChange}
-              className="bg-slate-50 border border-slate-200 text-slate-600 font-medium text-[11px] rounded-lg px-2 py-1.5 focus:ring-primary focus:border-primary outline-none cursor-pointer"
+              className="bg-slate-50 border border-slate-200 text-slate-600 font-medium text-[10px] md:text-[11px] rounded-lg px-1 md:px-2 py-1.5 focus:ring-primary focus:border-primary outline-none cursor-pointer w-[60px] md:w-auto"
             >
-              <option value="off">Suara: Mati</option>
-              <option value="siren">Suara: Sirine</option>
-              <option value="beep">Suara: Beep</option>
-              <option value="chime">Suara: Lonceng</option>
+              <option value="off">Mati</option>
+              <option value="siren">Sirine</option>
+              <option value="beep">Beep</option>
+              <option value="chime">Lonceng</option>
             </select>
           </div>
-          <div className="w-px h-6 bg-slate-200"></div>
+          <div className="w-px h-6 bg-slate-200 hidden md:block"></div>
           
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-primary-container text-primary rounded-full flex items-center justify-center font-bold text-sm border border-primary/20">
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className="w-7 h-7 md:w-8 md:h-8 bg-primary-container text-primary rounded-full flex items-center justify-center font-bold text-xs md:text-sm border border-primary/20">
               {user?.nama?.substring(0, 2).toUpperCase() || 'AD'}
             </div>
             <div className="hidden md:flex flex-col">
@@ -415,52 +428,52 @@ export default function AdminPage() {
             </div>
           </div>
           <div className="w-px h-6 bg-slate-200"></div>
-          <button onClick={handleLogout} className="flex items-center gap-2 text-slate-500 hover:text-error transition-colors font-label-sm font-semibold">
-            <span className="material-symbols-outlined text-[20px]">logout</span>
+          <button onClick={handleLogout} className="flex items-center gap-2 text-slate-500 hover:text-error transition-colors font-label-sm font-semibold p-1">
+            <span className="material-symbols-outlined text-[20px] md:text-[20px]">logout</span>
           </button>
         </div>
       </header>
 
       {/* Main Content */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-col-reverse md:flex-row flex-1 overflow-hidden relative pb-[60px] md:pb-0">
         
-        {/* Vertical Sidebar Nav */}
-        <nav className="w-[72px] bg-white border-r border-slate-200 flex flex-col items-center py-4 gap-2 shrink-0">
+        {/* Bottom / Vertical Sidebar Nav */}
+        <nav className="fixed md:static bottom-0 left-0 right-0 h-[60px] md:h-auto md:w-[72px] bg-white border-t md:border-t-0 md:border-r border-slate-200 flex flex-row md:flex-col items-center justify-around md:justify-start py-2 md:py-4 gap-2 shrink-0 z-40">
           <button
             onClick={() => setActiveMenu('penugasan')}
-            className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
+            className={`w-16 h-12 md:w-14 md:h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
               activeMenu === 'penugasan'
                 ? 'bg-primary text-white shadow-lg shadow-primary/25'
                 : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
             }`}
             title="Penugasan PPJ"
           >
-            <span className="material-symbols-outlined text-[22px]">assignment</span>
+            <span className="material-symbols-outlined text-[20px] md:text-[22px]">assignment</span>
             <span className="text-[9px] font-bold uppercase tracking-wider leading-none">Tugas</span>
           </button>
           <button
             onClick={() => setActiveMenu('liveview')}
-            className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
+            className={`w-16 h-12 md:w-14 md:h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
               activeMenu === 'liveview'
                 ? 'bg-primary text-white shadow-lg shadow-primary/25'
                 : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
             }`}
             title="Live View"
           >
-            <span className="material-symbols-outlined text-[22px]">map</span>
+            <span className="material-symbols-outlined text-[20px] md:text-[22px]">map</span>
             <span className="text-[9px] font-bold uppercase tracking-wider leading-none">Live</span>
           </button>
           {isAdmin && (
             <button
               onClick={() => { setActiveMenu('akun'); fetchUsers(); }}
-              className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
+              className={`w-16 h-12 md:w-14 md:h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
                 activeMenu === 'akun'
                   ? 'bg-primary text-white shadow-lg shadow-primary/25'
                   : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
               }`}
               title="Kelola Akun"
             >
-              <span className="material-symbols-outlined text-[22px]">manage_accounts</span>
+              <span className="material-symbols-outlined text-[20px] md:text-[22px]">manage_accounts</span>
               <span className="text-[9px] font-bold uppercase tracking-wider leading-none">Akun</span>
             </button>
           )}
@@ -468,9 +481,9 @@ export default function AdminPage() {
 
         {/* ── PENUGASAN VIEW ──────────────────────────────────── */}
         {activeMenu === 'penugasan' && (
-          <div className="flex flex-1 overflow-hidden p-4 gap-4">
+          <div className="flex flex-col md:flex-row flex-1 overflow-y-auto md:overflow-hidden p-3 md:p-4 gap-4">
             {/* Left Sidebar (Stats + Lists) */}
-            <aside className="w-[420px] flex flex-col gap-4 shrink-0">
+            <aside className="w-full md:w-[420px] flex flex-col gap-4 shrink-0">
               {/* KPI Grid */}
               <div className="grid grid-cols-2 gap-3 shrink-0">
                 {[
@@ -492,7 +505,7 @@ export default function AdminPage() {
               </div>
 
               {/* Activity Panel */}
-              <div className="flex-1 bg-white border border-slate-200 rounded-xl shadow-sm flex flex-col overflow-hidden">
+              <div className="min-h-[400px] md:min-h-0 flex-1 bg-white border border-slate-200 rounded-xl shadow-sm flex flex-col overflow-hidden">
                 {/* Tabs */}
                 <div className="flex border-b border-slate-200 shrink-0 bg-slate-50">
                   <button onClick={() => setActiveTab('map')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${activeTab === 'map' ? 'text-primary border-primary bg-primary-container/5' : 'text-slate-500 border-transparent hover:bg-slate-100'}`}>
@@ -650,9 +663,9 @@ export default function AdminPage() {
             </aside>
 
             {/* Right Area — Task List Detail / Summary */}
-            <main className="flex-1 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col relative">
+            <main className="min-h-[500px] md:min-h-0 flex-1 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col relative">
               {/* Penugasan summary with large cards */}
-              <div className="flex-1 overflow-y-auto p-6">
+              <div className="flex-1 overflow-y-auto p-4 md:p-6">
                 <h2 className="text-lg font-extrabold text-slate-800 mb-1 tracking-tight">Daftar Penugasan PPJ</h2>
                 <p className="text-sm text-slate-500 mb-6">Kelola tugas inspeksi jalur petugas Anda</p>
                 
@@ -710,7 +723,7 @@ export default function AdminPage() {
 
         {/* ── LIVE VIEW ──────────────────────────────────────── */}
         {activeMenu === 'liveview' && (
-          <main className="flex-1 overflow-hidden flex flex-col relative isolate m-4 bg-white rounded-xl border border-slate-200 shadow-sm">
+          <main className="flex-1 overflow-hidden flex flex-col relative isolate m-3 md:m-4 bg-white rounded-xl border border-slate-200 shadow-sm">
             <AdminMap
               emergencies={mapEmergencies}
               tasks={mapTasks}
@@ -744,10 +757,10 @@ export default function AdminPage() {
 
         {/* ── AKUN MANAGEMENT VIEW (Admin Only) ────────────── */}
         {activeMenu === 'akun' && isAdmin && (
-          <div className="flex flex-1 overflow-hidden p-4 gap-4">
-            <div className="flex-1 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+          <div className="flex flex-col lg:flex-row flex-1 overflow-y-auto lg:overflow-hidden p-3 md:p-4 gap-4">
+            <div className="min-h-[500px] lg:min-h-0 flex-1 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
               {/* Header */}
-              <div className="p-6 border-b border-slate-200 flex items-center justify-between shrink-0">
+              <div className="p-4 md:p-6 border-b border-slate-200 flex items-center justify-between shrink-0">
                 <div>
                   <h2 className="text-lg font-extrabold text-slate-800 tracking-tight">Kelola Akun Pengguna</h2>
                   <p className="text-sm text-slate-500 mt-0.5">Buat, edit, dan kelola akun QC, KUPT, dan PPJ</p>

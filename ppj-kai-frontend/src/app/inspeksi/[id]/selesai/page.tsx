@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import api from '../../../../lib/api';
+import { showToast } from '../../../../lib/toast';
 
 interface Laporan {
   id: number;
@@ -98,7 +99,7 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
       window.URL.revokeObjectURL(url);
     } catch (err: any) {
       console.error('Download PDF error:', err);
-      alert(err.response?.data?.message || 'Gagal mengunduh laporan PDF.');
+      showToast(err.response?.data?.message || 'Gagal mengunduh laporan PDF.', 'error');
     } finally {
       setIsDownloading(false);
     }

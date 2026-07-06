@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import api from '../../../lib/api';
+import { showToast } from '../../../lib/toast';
 
 const DynamicMap = dynamic(() => import('../../../components/map/DynamicMap'), { ssr: false });
 
@@ -172,7 +173,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
 
   const handleStartTracking = async () => {
     if (!isVerified) { setVerifyModalOpen(true); return; }
-    if (!gpsPos) { alert('Menunggu sinyal GPS...'); return; }
+    if (!gpsPos) { showToast('Menunggu sinyal GPS...', 'warning'); return; }
     try {
       const res = await api.post(`/tracking/start/${params.id}`, { lat: gpsPos.lat, lng: gpsPos.lng, fotoAwal: selfieDataUrl });
       const newTrackingId = res.data.trackingId;
@@ -192,7 +193,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
       }));
     } catch (err) {
       console.error('Failed to start tracking', err);
-      alert('Gagal memulai inspeksi.');
+      showToast('Gagal memulai inspeksi.', 'error');
     }
   };
 
@@ -201,7 +202,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
     // Use GPS position, or fallback to last known track point
     const stopLat = gpsPos?.lat ?? (trackPath.length > 0 ? trackPath[trackPath.length - 1][0] : null);
     const stopLng = gpsPos?.lng ?? (trackPath.length > 0 ? trackPath[trackPath.length - 1][1] : null);
-    if (stopLat === null || stopLng === null) { alert('Tidak ada posisi GPS yang tersedia.'); return; }
+    if (stopLat === null || stopLng === null) { showToast('Tidak ada posisi GPS yang tersedia.', 'warning'); return; }
     try {
       setIsStopping(true);
       await api.post(`/tracking/stop/${trackingId}`, { lat: stopLat, lng: stopLng, fotoSelesai: endSelfieDataUrl });
@@ -210,14 +211,14 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
       router.push(`/inspeksi/${params.id}/selesai`);
     } catch (err) {
       console.error('Failed to stop tracking', err);
-      alert('Gagal menghentikan inspeksi.');
+      showToast('Gagal menghentikan inspeksi.', 'error');
     } finally {
       setIsStopping(false);
     }
   };
 
   const handleKirimLaporan = async () => {
-    if (!trackingId || !gpsPos) { alert('Tracking belum aktif atau GPS belum tersedia.'); return; }
+    if (!trackingId || !gpsPos) { showToast('Tracking belum aktif atau GPS belum tersedia.', 'warning'); return; }
     try {
       setIsSubmittingLaporan(true);
       await api.post(`/laporan`, {
@@ -228,13 +229,13 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
         lng: gpsPos.lng,
         fotoUrl: emergencyPhoto || '',
       });
-      alert('Laporan berhasil dikirim!');
+      showToast('Laporan berhasil dikirim!', 'success');
       setIsEmergencyModalOpen(false);
       setDeskripsi('');
       setEmergencyPhoto(null);
     } catch (err) {
       console.error('Failed to send laporan', err);
-      alert('Gagal mengirim laporan darurat.');
+      showToast('Gagal mengirim laporan darurat.', 'error');
     } finally { setIsSubmittingLaporan(false); }
   };
 
@@ -250,7 +251,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
           emergencyVideoRef.current.play();
         }
       }, 100);
-    } catch { alert('Tidak dapat mengakses kamera.'); }
+    } catch { showToast('Tidak dapat mengakses kamera.', 'error'); }
   };
 
   const captureEmergencyPhoto = () => {
@@ -275,7 +276,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
       streamRef.current = stream;
       if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play(); }
-    } catch { alert('Tidak dapat mengakses kamera.'); }
+    } catch { showToast('Tidak dapat mengakses kamera.', 'error'); }
   };
 
   const capturePhoto = () => {
@@ -294,7 +295,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   };
 
   const confirmVerification = () => {
-    if (!selfieDataUrl) { alert('Silakan ambil foto terlebih dahulu.'); return; }
+    if (!selfieDataUrl) { showToast('Silakan ambil foto terlebih dahulu.', 'warning'); return; }
     setIsVerified(true);
     setVerifyModalOpen(false);
   };
@@ -307,7 +308,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
       setTimeout(() => {
         if (endVideoRef.current) { endVideoRef.current.srcObject = stream; endVideoRef.current.play(); }
       }, 100);
-    } catch { alert('Tidak dapat mengakses kamera.'); }
+    } catch { showToast('Tidak dapat mengakses kamera.', 'error'); }
   };
 
   const captureEndPhoto = () => {
@@ -326,7 +327,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   };
 
   const confirmEndVerification = () => {
-    if (!endSelfieDataUrl) { alert('Silakan ambil foto terlebih dahulu.'); return; }
+    if (!endSelfieDataUrl) { showToast('Silakan ambil foto terlebih dahulu.', 'warning'); return; }
     setEndVerified(true);
   };
 
@@ -342,8 +343,8 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
     const R = 6371000;
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLng = (lng2 - lng1) * Math.PI / 180;
-    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   };
 
   const GEOFENCE_RADIUS = 500; // meters
@@ -431,117 +432,115 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
               {/* Card Body — collapsible */}
               {!cardMinimized && (
                 <div className="flex flex-col gap-md px-md pb-md">
-              <div className="flex flex-col gap-sm">
-                {/* GPS Status */}
-                <div className={`flex items-center gap-md p-sm rounded-lg border ${gpsPos ? 'bg-surface-container-low border-outline-variant/30' : 'bg-error-container/20 border-error/30'}`}>
-                  <span className="material-symbols-outlined text-primary" style={gpsPos ? { fontVariationSettings: "'FILL' 1" } : {}}>
-                    {gpsPos ? 'check_circle' : 'gps_off'}
-                  </span>
-                  <div className="flex flex-col">
-                    <span className="font-body-md text-body-md text-on-surface font-semibold">
-                      {gpsPos ? 'GPS Location Locked' : (gpsError || 'Mencari sinyal GPS...')}
-                    </span>
-                    <span className="font-label-sm text-label-sm text-on-surface-variant">
-                      {gpsPos ? `Accuracy: ±${Math.round(gpsPos.accuracy)}m` : 'Pastikan GPS diaktifkan'}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Identity Verification */}
-                <button
-                  onClick={() => { setVerifyModalOpen(true); openCamera(); }}
-                  className={`flex items-center justify-between p-sm rounded-lg border transition-colors focus:outline-none ${isVerified ? 'bg-surface-container-low border-outline-variant/30' : 'bg-surface-container-low hover:bg-surface-container border-error-container/50'}`}
-                >
-                  <div className="flex items-center gap-md">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isVerified ? 'bg-primary-container text-on-primary-container' : 'bg-error-container text-on-error-container'}`}>
-                      <span className="material-symbols-outlined text-sm">{isVerified ? 'check' : 'photo_camera'}</span>
+                  <div className="flex flex-col gap-sm">
+                    {/* GPS Status */}
+                    <div className={`flex items-center gap-md p-sm rounded-lg border ${gpsPos ? 'bg-surface-container-low border-outline-variant/30' : 'bg-error-container/20 border-error/30'}`}>
+                      <span className="material-symbols-outlined text-primary" style={gpsPos ? { fontVariationSettings: "'FILL' 1" } : {}}>
+                        {gpsPos ? 'check_circle' : 'gps_off'}
+                      </span>
+                      <div className="flex flex-col">
+                        <span className="font-body-md text-body-md text-on-surface font-semibold">
+                          {gpsPos ? 'GPS Location Locked' : (gpsError || 'Mencari sinyal GPS...')}
+                        </span>
+                        <span className="font-label-sm text-label-sm text-on-surface-variant">
+                          {gpsPos ? `Accuracy: ±${Math.round(gpsPos.accuracy)}m` : 'Pastikan GPS diaktifkan'}
+                        </span>
+                      </div>
                     </div>
-                    <span className="font-body-md text-body-md text-on-surface">Identity Verification</span>
+
+                    {/* Verifikasi Identitas */}
+                    <button
+                      onClick={() => { setVerifyModalOpen(true); openCamera(); }}
+                      className={`flex items-center justify-between p-sm rounded-lg border transition-colors focus:outline-none ${isVerified ? 'bg-surface-container-low border-outline-variant/30' : 'bg-surface-container-low hover:bg-surface-container border-error-container/50'}`}
+                    >
+                      <div className="flex items-center gap-md">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isVerified ? 'bg-primary-container text-on-primary-container' : 'bg-error-container text-on-error-container'}`}>
+                          <span className="material-symbols-outlined text-sm">{isVerified ? 'check' : 'photo_camera'}</span>
+                        </div>
+                        <span className="font-body-md text-body-md text-on-surface">Verifikasi Identitas</span>
+                      </div>
+                      {isVerified ? (
+                        <span className="text-primary font-label-sm text-label-sm uppercase flex items-center gap-xs">Terverifikasi ✓</span>
+                      ) : (
+                        <span className="text-error font-label-sm text-label-sm uppercase flex items-center gap-xs">
+                          Wajib <span className="material-symbols-outlined text-[16px]">chevron_right</span>
+                        </span>
+                      )}
+                    </button>
                   </div>
-                  {isVerified ? (
-                    <span className="text-primary font-label-sm text-label-sm uppercase flex items-center gap-xs">Verified ✓</span>
-                  ) : (
-                    <span className="text-error font-label-sm text-label-sm uppercase flex items-center gap-xs">
-                      Required <span className="material-symbols-outlined text-[16px]">chevron_right</span>
-                    </span>
+
+                  {/* Route Info */}
+                  {tugas && (
+                    <div className="bg-surface-container-low rounded-lg p-sm flex items-center gap-sm">
+                      <span className="material-symbols-outlined text-primary text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>route</span>
+                      <div className="flex-1">
+                        <p className="font-label-sm text-[11px] text-on-surface-variant uppercase">Jarak Jalur</p>
+                        <p className="font-data-heavy text-on-surface">{routeKm} km</p>
+                        <p className="font-label-sm text-[10px] text-on-surface-variant">{tugas.startPointName} → {tugas.endPointName}</p>
+                      </div>
+                    </div>
                   )}
-                </button>
-              </div>
 
-              {/* Route Info */}
-              {tugas && (
-                <div className="bg-surface-container-low rounded-lg p-sm flex items-center gap-sm">
-                  <span className="material-symbols-outlined text-primary text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>route</span>
-                  <div className="flex-1">
-                    <p className="font-label-sm text-[11px] text-on-surface-variant uppercase">Jarak Jalur</p>
-                    <p className="font-data-heavy text-on-surface">{routeKm} km</p>
-                    <p className="font-label-sm text-[10px] text-on-surface-variant">{tugas.startPointName} → {tugas.endPointName}</p>
-                  </div>
+                  {/* Geofencing Distance */}
+                  {distanceToStart !== null && (
+                    <div className={`rounded-lg p-sm border ${withinGeofence ? 'bg-primary-container/10 border-primary/30' : 'bg-error-container/10 border-error/20'}`}>
+                      <div className="flex items-center justify-between mb-xs">
+                        <span className="font-label-sm text-[11px] text-on-surface-variant uppercase flex items-center gap-xs">
+                          <span className="material-symbols-outlined text-[14px]">{withinGeofence ? 'location_on' : 'near_me'}</span>
+                          Jarak ke Titik Awal
+                        </span>
+                        <span className={`font-label-sm text-[11px] font-bold ${withinGeofence ? 'text-primary' : 'text-error'}`}>
+                          {distanceToStart < 1000 ? `${Math.round(distanceToStart)}m` : `${(distanceToStart / 1000).toFixed(1)}km`}
+                        </span>
+                      </div>
+                      <div className="w-full bg-surface-container rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${withinGeofence ? 'bg-primary' : 'bg-error'}`}
+                          style={{ width: `${Math.min(100, (GEOFENCE_RADIUS / Math.max(distanceToStart, 1)) * 100)}%` }}
+                        />
+                      </div>
+                      <p className={`font-label-sm text-[10px] mt-xs ${withinGeofence ? 'text-primary' : 'text-error'}`}>
+                        {withinGeofence ? '✓ Anda sudah berada di lokasi, siap mulai!' : `Menuju titik awal, sisa ${GEOFENCE_RADIUS} meter`}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Test Mode Toggle — localhost only */}
+                  {isDevEnv && (
+                    <button
+                      onClick={() => setTestMode(m => !m)}
+                      className={`flex items-center justify-between p-sm rounded-lg border transition-colors ${testMode
+                          ? 'bg-amber-500/10 border-amber-500/40 text-amber-600'
+                          : 'bg-surface-container border-outline-variant text-on-surface-variant'
+                        }`}
+                    >
+                      <span className="flex items-center gap-sm font-label-sm text-[11px]">
+                        <span className="material-symbols-outlined text-[16px]">science</span>
+                        Mode Testing (bypass geofencing)
+                      </span>
+                      <span className={`w-9 h-5 rounded-full relative transition-colors ${testMode ? 'bg-amber-500' : 'bg-outline-variant'}`}>
+                        <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${testMode ? 'left-4' : 'left-0.5'}`} />
+                      </span>
+                    </button>
+                  )}
+
+                  <button
+                    onClick={handleStartTracking}
+                    disabled={!gpsPos || !withinGeofence}
+                    className={`w-full text-on-primary font-body-lg font-semibold h-[48px] rounded-lg flex items-center justify-center gap-sm shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all ${testMode ? 'bg-amber-500 hover:bg-amber-600' : 'bg-primary hover:bg-surface-tint'
+                      }`}
+                  >
+                    <span className="material-symbols-outlined">play_circle</span>
+                    {!gpsPos
+                      ? 'Menunggu GPS...'
+                      : testMode
+                        ? 'Mulai Tracking (Test Mode)'
+                        : !withinGeofence
+                          ? `Mendekat ke Titik Awal (${Math.round(distanceToStart ?? 0)}m)`
+                          : 'Mulai Tracking'
+                    }
+                  </button>
                 </div>
-              )}
-
-              {/* Geofencing Distance */}
-              {distanceToStart !== null && (
-                <div className={`rounded-lg p-sm border ${withinGeofence ? 'bg-primary-container/10 border-primary/30' : 'bg-error-container/10 border-error/20'}`}>
-                  <div className="flex items-center justify-between mb-xs">
-                    <span className="font-label-sm text-[11px] text-on-surface-variant uppercase flex items-center gap-xs">
-                      <span className="material-symbols-outlined text-[14px]">{withinGeofence ? 'location_on' : 'near_me'}</span>
-                      Jarak ke Titik Awal
-                    </span>
-                    <span className={`font-label-sm text-[11px] font-bold ${withinGeofence ? 'text-primary' : 'text-error'}`}>
-                      {distanceToStart < 1000 ? `${Math.round(distanceToStart)}m` : `${(distanceToStart/1000).toFixed(1)}km`}
-                    </span>
-                  </div>
-                  <div className="w-full bg-surface-container rounded-full h-1.5 overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all ${withinGeofence ? 'bg-primary' : 'bg-error'}`}
-                      style={{ width: `${Math.min(100, (GEOFENCE_RADIUS / Math.max(distanceToStart, 1)) * 100)}%` }}
-                    />
-                  </div>
-                  <p className={`font-label-sm text-[10px] mt-xs ${withinGeofence ? 'text-primary' : 'text-error'}`}>
-                    {withinGeofence ? '✓ Anda sudah berada di lokasi, siap mulai!' : `Menuju titik awal, sisa ${GEOFENCE_RADIUS} meter`}
-                  </p>
-                </div>
-              )}
-
-              {/* Test Mode Toggle — localhost only */}
-              {isDevEnv && (
-                <button
-                  onClick={() => setTestMode(m => !m)}
-                  className={`flex items-center justify-between p-sm rounded-lg border transition-colors ${
-                    testMode
-                      ? 'bg-amber-500/10 border-amber-500/40 text-amber-600'
-                      : 'bg-surface-container border-outline-variant text-on-surface-variant'
-                  }`}
-                >
-                  <span className="flex items-center gap-sm font-label-sm text-[11px]">
-                    <span className="material-symbols-outlined text-[16px]">science</span>
-                    Mode Testing (bypass geofencing)
-                  </span>
-                  <span className={`w-9 h-5 rounded-full relative transition-colors ${testMode ? 'bg-amber-500' : 'bg-outline-variant'}`}>
-                    <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${testMode ? 'left-4' : 'left-0.5'}`} />
-                  </span>
-                </button>
-              )}
-
-              <button
-                onClick={handleStartTracking}
-                disabled={!gpsPos || !withinGeofence}
-                className={`w-full text-on-primary font-body-lg font-semibold h-[48px] rounded-lg flex items-center justify-center gap-sm shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all ${
-                  testMode ? 'bg-amber-500 hover:bg-amber-600' : 'bg-primary hover:bg-surface-tint'
-                }`}
-              >
-                <span className="material-symbols-outlined">play_circle</span>
-                {!gpsPos
-                  ? 'Menunggu GPS...'
-                  : testMode
-                  ? 'Mulai Tracking (Test Mode)'
-                  : !withinGeofence
-                  ? `Mendekat ke Titik Awal (${Math.round(distanceToStart ?? 0)}m)`
-                  : 'Mulai Tracking'
-                }
-              </button>
-              </div>
               )}
             </div>
           </div>
@@ -553,7 +552,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
                 <span className="material-symbols-outlined text-[32px]" style={{ fontVariationSettings: "'FILL' 1" }}>warning</span>
               </button>
             </div>
-            
+
             {/* Active Tracking Panel */}
             <div className="fixed bottom-0 left-0 w-full px-container-padding pb-container-padding z-40 pointer-events-auto">
               <div className="bg-surface/95 backdrop-blur-xl rounded-2xl shadow-[0px_4px_24px_rgba(0,0,0,0.12)] p-md max-w-3xl mx-auto border border-outline-variant/20 flex flex-col gap-md">
@@ -573,7 +572,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
                     <div className="text-primary font-h2 font-bold tabular-nums">±{gpsPos ? Math.round(gpsPos.accuracy) : '-'}m</div>
                   </div>
                 </div>
-                
+
                 <button onClick={() => setShowStopModal(true)} className="w-full bg-error text-on-error rounded-xl h-[52px] flex items-center justify-center gap-sm font-h3 shadow-sm active:scale-[0.98] transition-transform hover:bg-error/90">
                   <span className="material-symbols-outlined text-[24px]" style={{ fontVariationSettings: "'FILL' 1" }}>stop_circle</span>
                   Selesai Inspeksi
@@ -753,7 +752,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
                       Jarak ke Titik Akhir
                     </span>
                     <span className={`font-label-sm text-[11px] font-bold ${withinEndGeofence ? 'text-primary' : 'text-error'}`}>
-                      {distanceToEnd < 1000 ? `${Math.round(distanceToEnd)}m` : `${(distanceToEnd/1000).toFixed(1)}km`}
+                      {distanceToEnd < 1000 ? `${Math.round(distanceToEnd)}m` : `${(distanceToEnd / 1000).toFixed(1)}km`}
                     </span>
                   </div>
                   <div className="w-full bg-surface-container rounded-full h-1.5 overflow-hidden">
@@ -811,11 +810,10 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
               {isDevEnv && (
                 <button
                   onClick={() => setTestMode(m => !m)}
-                  className={`flex items-center justify-between p-sm rounded-lg border transition-colors ${
-                    testMode
+                  className={`flex items-center justify-between p-sm rounded-lg border transition-colors ${testMode
                       ? 'bg-amber-500/10 border-amber-500/40 text-amber-600'
                       : 'bg-surface-container border-outline-variant text-on-surface-variant'
-                  }`}
+                    }`}
                 >
                   <span className="flex items-center gap-sm font-label-sm text-[11px]">
                     <span className="material-symbols-outlined text-[16px]">science</span>

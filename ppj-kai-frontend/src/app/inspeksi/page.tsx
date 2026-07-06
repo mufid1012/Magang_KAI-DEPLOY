@@ -148,48 +148,58 @@ export default function InspeksiIndexPage() {
               <Link
                 key={tugas.id}
                 href={`/inspeksi/${tugas.id}`}
-                className="bg-surface-container-lowest rounded-2xl border border-outline-variant shadow-sm overflow-hidden active:scale-[0.98] transition-transform duration-150 group"
+                className="group relative bg-white/80 backdrop-blur-2xl border border-white/60 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] rounded-[28px] overflow-hidden transition-all duration-300 hover:-translate-y-1.5 flex flex-col"
               >
-                {/* Status bar accent */}
-                <div className={`h-1 ${tugas.status === 'in_progress' ? 'bg-primary' : 'bg-amber-400'}`} />
+                {/* Modern Status Gradient Accent */}
+                <div className={`absolute top-0 left-0 right-0 h-1.5 ${tugas.status === 'in_progress' ? 'bg-gradient-to-r from-primary to-blue-400' : 'bg-gradient-to-r from-amber-400 to-amber-200'}`} />
 
-                <div className="p-md flex flex-col gap-sm">
-                  {/* Title + Status */}
-                  <div className="flex justify-between items-start gap-sm">
-                    <h2 className="font-data-heavy text-data-heavy text-on-surface flex-1 leading-snug">{tugas.jalur}</h2>
-                    <span className={`flex items-center gap-1 px-sm py-xs rounded-full font-label-sm text-[10px] uppercase border whitespace-nowrap shrink-0 ${statusStyle[tugas.status] ?? 'bg-surface-container text-on-surface-variant'}`}>
-                      <span className="material-symbols-outlined text-[12px]">{statusIcon[tugas.status]}</span>
+                <div className="p-6 flex flex-col gap-6">
+                  {/* Title & Status */}
+                  <div className="flex justify-between items-start gap-4">
+                    <div className="flex-1">
+                      <div className="inline-flex items-center gap-1.5 mb-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-pulse" />
+                        <span className="text-[10px] font-bold tracking-[0.2em] text-slate-400 uppercase">Tugas Inspeksi</span>
+                      </div>
+                      <h2 className="font-h2 text-xl font-extrabold text-slate-800 leading-snug tracking-tight group-hover:text-primary transition-colors">{tugas.jalur}</h2>
+                    </div>
+                    <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-2xl font-label-sm text-[11px] font-bold uppercase shrink-0 transition-colors ${statusStyle[tugas.status] ?? 'bg-surface-container text-on-surface-variant'}`}>
+                      <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>{statusIcon[tugas.status]}</span>
                       {statusLabel[tugas.status] ?? tugas.status}
                     </span>
                   </div>
 
-                  {/* Route */}
-                  <div className="flex items-center gap-xs">
-                    <div className="flex flex-col items-center gap-0.5">
-                      <div className="w-2 h-2 rounded-full bg-primary border-2 border-primary/30" />
-                      <div className="w-px h-3 bg-outline-variant" />
-                      <div className="w-2 h-2 rounded-full bg-error border-2 border-error/30" />
+                  {/* Route Timeline */}
+                  <div className="bg-slate-50/70 rounded-2xl p-4 border border-slate-100/80 flex items-center gap-4 group-hover:bg-primary/[0.02] transition-colors">
+                    <div className="flex flex-col items-center justify-center shrink-0">
+                      <div className="w-3 h-3 rounded-full bg-primary ring-4 ring-primary/15 relative z-10" />
+                      <div className="w-[2px] h-6 bg-gradient-to-b from-primary/30 to-error/30" />
+                      <div className="w-3 h-3 rounded-full bg-error ring-4 ring-error/15 relative z-10" />
                     </div>
-                    <div className="flex flex-col gap-0.5 ml-sm">
-                      <span className="font-label-sm text-label-sm text-on-surface">{tugas.startPointName || 'Titik Awal'}</span>
-                      <span className="font-label-sm text-label-sm text-on-surface-variant">{tugas.endPointName || 'Titik Akhir'}</span>
+                    <div className="flex flex-col justify-between h-[52px] flex-1 py-0.5">
+                      <span className="font-body-md text-[15px] font-bold text-slate-700 leading-none">{tugas.startPointName || 'Titik Awal'}</span>
+                      <span className="font-body-md text-[15px] font-bold text-slate-700 leading-none">{tugas.endPointName || 'Titik Akhir'}</span>
+                    </div>
+                    <div className="bg-white px-4 py-3 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center justify-center shrink-0 min-w-[72px]">
+                      <span className="font-data-heavy text-xl text-primary leading-none mb-1">{distance.toFixed(1)}</span>
+                      <span className="font-label-sm text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">KM</span>
                     </div>
                   </div>
 
-                  {/* Meta row */}
-                  <div className="flex items-center gap-lg mt-xs pt-sm border-t border-outline-variant/50">
-                    <span className="flex items-center gap-1 font-label-sm text-label-sm text-on-surface-variant">
-                      <span className="material-symbols-outlined text-[14px]">straighten</span>
-                      {distance.toFixed(1)} km
-                    </span>
-                    <span className="flex items-center gap-1 font-label-sm text-label-sm text-on-surface-variant">
-                      <span className="material-symbols-outlined text-[14px]">calendar_today</span>
-                      {new Date(tugas.tanggal).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short' })}
-                    </span>
-                    <span className="flex items-center gap-1 font-label-sm text-label-sm text-primary font-semibold ml-auto group-hover:translate-x-0.5 transition-transform">
-                      Buka
-                      <span className="material-symbols-outlined text-[16px]">chevron_right</span>
-                    </span>
+                  {/* Footer / Meta */}
+                  <div className="flex items-center justify-between pt-2">
+                    <div className="flex items-center gap-2.5 px-3 py-2 bg-slate-50 rounded-xl border border-slate-100">
+                      <div className="w-6 h-6 rounded-md bg-white shadow-sm flex items-center justify-center text-slate-500">
+                        <span className="material-symbols-outlined text-[14px]">calendar_month</span>
+                      </div>
+                      <span className="font-label-sm text-xs font-bold text-slate-600">
+                        {new Date(tugas.tanggal).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short' })}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white group-hover:bg-primary rounded-xl font-bold text-sm shadow-md shadow-slate-900/10 group-hover:shadow-primary/25 transition-all duration-300">
+                      {tugas.status === 'in_progress' ? 'Lanjutkan' : 'Buka'}
+                      <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform duration-300">arrow_forward</span>
+                    </div>
                   </div>
                 </div>
               </Link>

@@ -121,3 +121,44 @@ function playChime(ctx: AudioContext, t: number) {
   osc2.start(t + 0.5);
   osc2.stop(t + 1.5);
 }
+
+/**
+ * Speak an emergency announcement using the browser's built-in SpeechSynthesis API.
+ * Example output: "Perhatian! Ada Rel Retak dilaporkan oleh Budi Santoso. Keterangan: rel patah di KM 99"
+ */
+export function speakEmergencyAnnouncement(jenisTemuan: string, deskripsi: string, petugasNama: string) {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+
+  // Cancel any ongoing speech first
+  window.speechSynthesis.cancel();
+
+  const jenisMap: Record<string, string> = {
+    emergency: 'Darurat',
+    berat: 'Temuan Berat',
+    sedang: 'Temuan Sedang',
+    ringan: 'Temuan Ringan',
+  };
+  const jenisText = jenisMap[jenisTemuan] || jenisTemuan;
+
+  // Build the announcement text
+  const trimmedDesc = deskripsi?.trim();
+  let text = `Perhatian! Ada laporan ${jenisText}, dilaporkan oleh ${petugasNama || 'Petugas'}.`;
+  if (trimmedDesc) {
+    text += ` Keterangan: ${trimmedDesc}`;
+  }
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = 'id-ID';
+  utterance.rate = 0.95;
+  utterance.pitch = 1.0;
+  utterance.volume = 1.0;
+
+  // Try to pick an Indonesian voice if available
+  const voices = window.speechSynthesis.getVoices();
+  const idVoice = voices.find(v => v.lang.startsWith('id'));
+  if (idVoice) {
+    utterance.voice = idVoice;
+  }
+
+  window.speechSynthesis.speak(utterance);
+}
