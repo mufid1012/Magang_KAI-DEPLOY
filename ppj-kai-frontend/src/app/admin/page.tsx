@@ -4,6 +4,9 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import api from '../../lib/api';
 import { useRouter } from 'next/navigation';
+import { playNotification, NotificationSound, speakEmergencyAnnouncement, startLoopingNotification, stopLoopingNotification } from '../../lib/audio';
+import { showToast } from '../../lib/toast';
+import { showConfirm } from '../../lib/confirm';
 
 // Same deterministic color as AdminMap — NIPP → unique HSL color
 function petugasColor(nipp: string): string {
@@ -99,11 +102,11 @@ export default function AdminPage() {
   const [submitting, setSubmitting] = useState(false);
 
   const [showAddPetugasModal, setShowAddPetugasModal] = useState(false);
-  const [availablePetugas, setAvailablePetugas] = useState<{id: number, nipp: string, nama: string}[]>([]);
+  const [availablePetugas, setAvailablePetugas] = useState<{ id: number, nipp: string, nama: string }[]>([]);
   const [searchPetugas, setSearchPetugas] = useState('');
   const [selectedNipps, setSelectedNipps] = useState<string[]>([]);
   const [addingPetugas, setAddingPetugas] = useState(false);
-  
+
   // History state
   const [selectedPetugasHistory, setSelectedPetugasHistory] = useState<Petugas | null>(null);
 
@@ -116,6 +119,7 @@ export default function AdminPage() {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+
   // ── Template state ──
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [templates, setTemplates] = useState<any[]>([]);
@@ -125,6 +129,61 @@ export default function AdminPage() {
   const [applyingTemplate, setApplyingTemplate] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<any | null>(null);
   const [applyDates, setApplyDates] = useState({ startDate: '', endDate: '' });
+
+  // Audio Notification State
+  const [alertSound, setAlertSound] = useState<NotificationSound>('off');
+  const [alertActive, setAlertActive] = useState(false);
+  const lastEmergencyId = React.useRef(0);
+
+  // Load alert sound preference
+  useEffect(() => {
+    const savedSound = localStorage.getItem('admin_alert_sound');
+    if (savedSound) {
+      setAlertSound(savedSound as NotificationSound);
+    }
+  }, []);
+
+  // Play looping sound + TTS on new emergency
+  useEffect(() => {
+    if (emergencies.length > 0) {
+      const latestId = Math.max(...emergencies.map(e => e.id));
+      if (lastEmergencyId.current > 0 && latestId > lastEmergencyId.current) {
+        // Start looping alert sound
+        startLoopingNotification(alertSound);
+        setAlertActive(alertSound !== 'off');
+
+        // Find the newest emergency for TTS announcement
+        const newEmergency = emergencies.find(e => e.id === latestId);
+        if (newEmergency && alertSound !== 'off') {
+          // Delay TTS slightly so the alert sound plays first
+          setTimeout(() => {
+            const petugasNama = newEmergency.tracking?.tugas?.user?.nama || 'Petugas';
+            speakEmergencyAnnouncement(newEmergency.jenisTemuan, newEmergency.deskripsi, petugasNama);
+          }, 2500);
+        }
+      }
+      lastEmergencyId.current = Math.max(lastEmergencyId.current, latestId);
+    }
+  }, [emergencies, alertSound]);
+
+  // Cleanup looping sound on unmount
+  useEffect(() => {
+    return () => { stopLoopingNotification(); };
+  }, []);
+
+  const handleDismissAlert = () => {
+    stopLoopingNotification();
+    window.speechSynthesis.cancel();
+    setAlertActive(false);
+  };
+
+  const handleSoundChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const sound = e.target.value as NotificationSound;
+    setAlertSound(sound);
+    localStorage.setItem('admin_alert_sound', sound);
+    playNotification(sound); // Preview the sound
+  };
+
 
   const fetchAvailablePetugas = async () => {
     try {
@@ -169,11 +228,11 @@ export default function AdminPage() {
       if (me?.wilayahAssignments) {
         const stationNames: string[] = [];
         for (const wa of me.wilayahAssignments) {
-          try { stationNames.push(...JSON.parse(wa.wilayah.stations)); } catch {}
+          try { stationNames.push(...JSON.parse(wa.wilayah.stations)); } catch { }
         }
         setUserStations(stationNames);
       }
-    }).catch(() => {});
+    }).catch(() => { });
     fetchAll();
     const interval = setInterval(fetchAll, 15000);
     return () => clearInterval(interval);
@@ -446,18 +505,33 @@ export default function AdminPage() {
         </div>
       </header>
 
+      {/* ── Alert Dismiss Banner ─────────────────────────── */}
+      {alertActive && (
+        <div className="bg-rose-600 text-white px-4 py-2 flex items-center justify-between shrink-0 z-50 animate-pulse">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[20px]">emergency</span>
+            <span className="text-sm font-bold tracking-wide">🔔 ALARM DARURAT AKTIF — Suara akan terus berbunyi</span>
+          </div>
+          <button
+            onClick={handleDismissAlert}
+            className="bg-white text-rose-600 px-4 py-1.5 rounded-lg text-xs font-extrabold uppercase tracking-wider hover:bg-rose-100 transition-colors shadow-sm"
+          >
+            Hentikan Alarm
+          </button>
+        </div>
+      )}
+
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
-        
+
         {/* Vertical Sidebar Nav */}
         <nav className="w-[72px] bg-white border-r border-slate-200 flex flex-col items-center py-4 gap-2 shrink-0">
           <button
             onClick={() => setActiveMenu('penugasan')}
-            className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
-              activeMenu === 'penugasan'
+            className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${activeMenu === 'penugasan'
                 ? 'bg-primary text-white shadow-lg shadow-primary/25'
                 : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
-            }`}
+              }`}
             title="Penugasan PPJ"
           >
             <span className="material-symbols-outlined text-[22px]">assignment</span>
@@ -465,11 +539,10 @@ export default function AdminPage() {
           </button>
           <button
             onClick={() => setActiveMenu('liveview')}
-            className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
-              activeMenu === 'liveview'
+            className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${activeMenu === 'liveview'
                 ? 'bg-primary text-white shadow-lg shadow-primary/25'
                 : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
-            }`}
+              }`}
             title="Live View"
           >
             <span className="material-symbols-outlined text-[22px]">map</span>
@@ -478,11 +551,10 @@ export default function AdminPage() {
           {isAdmin && (
             <button
               onClick={() => { setActiveMenu('akun'); fetchUsers(); }}
-              className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
-                activeMenu === 'akun'
+              className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${activeMenu === 'akun'
                   ? 'bg-primary text-white shadow-lg shadow-primary/25'
                   : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
-              }`}
+                }`}
               title="Kelola Akun"
             >
               <span className="material-symbols-outlined text-[22px]">manage_accounts</span>
@@ -533,7 +605,7 @@ export default function AdminPage() {
 
                 {/* List Content */}
                 <div className="flex-1 overflow-y-auto p-4 bg-white relative">
-                  
+
                   {/* Petugas Tab */}
                   {activeTab === 'map' && (
                     <div className="space-y-3">
@@ -547,8 +619,8 @@ export default function AdminPage() {
                       {petugas.map(p => {
                         const aktif = p.tugasPpj.find(t => t.status === 'in_progress');
                         return (
-                          <div 
-                            key={p.id} 
+                          <div
+                            key={p.id}
                             onClick={() => setSelectedPetugasHistory(p)}
                             className="bg-slate-50 rounded-xl p-3 border border-slate-200 flex items-center gap-3 relative group cursor-pointer hover:border-primary/50 transition-colors"
                           >
@@ -565,8 +637,8 @@ export default function AdminPage() {
                             </div>
                             {/* Remove button (shows on hover) — only for admin/kupt */}
                             {canWrite && (
-                              <button 
-                                onClick={(e) => { e.stopPropagation(); handleRemovePetugas(p.id); }} 
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleRemovePetugas(p.id); }}
                                 className="absolute -top-2 -right-2 w-7 h-7 bg-white border border-slate-200 rounded-full text-slate-400 hover:text-rose-600 hover:border-rose-300 shadow-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all z-10"
                               >
                                 <span className="material-symbols-outlined text-[16px]">delete</span>
@@ -629,7 +701,7 @@ export default function AdminPage() {
                     </div>
                   )}
                 </div>
-                
+
                 {/* Action Buttons (Docked) — only for admin/kupt */}
                 {canWrite && activeTab === 'tasks' && (
                   <div className="p-3 border-t border-slate-200 bg-slate-50 shrink-0 space-y-2">
@@ -662,7 +734,7 @@ export default function AdminPage() {
               <div className="flex-1 overflow-y-auto p-6">
                 <h2 className="text-lg font-extrabold text-slate-800 mb-1 tracking-tight">Daftar Penugasan PPJ</h2>
                 <p className="text-sm text-slate-500 mb-6">Kelola tugas inspeksi jalur petugas Anda</p>
-                
+
                 {tugas.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-20 text-center">
                     <span className="material-symbols-outlined text-slate-200 text-6xl mb-4">assignment</span>
@@ -728,7 +800,7 @@ export default function AdminPage() {
             <div className="absolute bottom-6 left-6 bg-white/95 backdrop-blur-md rounded-xl p-3 shadow-md border border-slate-200 z-[1000]">
               <p className="text-slate-500 uppercase font-bold text-[9px] tracking-widest mb-2">Legenda Visual</p>
               <div className="flex flex-col gap-2">
-                {[['#94a3b8','Tugas Pending'],['#005bac','Tugas Aktif'],['#22c55e','Selesai']].map(([c,l]) => (
+                {[['#94a3b8', 'Tugas Pending'], ['#005bac', 'Tugas Aktif'], ['#22c55e', 'Selesai']].map(([c, l]) => (
                   <div key={l} className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-sm shadow-sm" style={{ background: c }} />
                     <span className="text-slate-700 text-[11px] font-semibold">{l}</span>
@@ -740,7 +812,7 @@ export default function AdminPage() {
                 </div>
               </div>
             </div>
-            
+
             {/* Live Indicator */}
             <div className="absolute top-6 right-6 bg-white/95 backdrop-blur-md rounded-full px-3 py-1.5 shadow-sm border border-slate-200 flex items-center gap-2 z-[1000]">
               <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
@@ -791,9 +863,8 @@ export default function AdminPage() {
                         return u.nipp.toLowerCase().includes(q) || u.nama.toLowerCase().includes(q);
                       })
                       .map(u => (
-                        <div key={u.id} className={`bg-slate-50 rounded-2xl border p-5 relative group transition-all ${
-                          u.isActive ? 'border-slate-200 hover:border-primary/30' : 'border-rose-200 bg-rose-50/50 opacity-70'
-                        }`}>
+                        <div key={u.id} className={`bg-slate-50 rounded-2xl border p-5 relative group transition-all ${u.isActive ? 'border-slate-200 hover:border-primary/30' : 'border-rose-200 bg-rose-50/50 opacity-70'
+                          }`}>
                           <div className="flex items-start gap-3 mb-3">
                             <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm text-white shadow-inner shrink-0" style={{ background: petugasColor(u.nipp) }}>
                               {u.nama.substring(0, 2).toUpperCase()}
@@ -802,11 +873,10 @@ export default function AdminPage() {
                               <p className="font-bold text-slate-800 text-sm truncate">{u.nama}</p>
                               <p className="text-xs text-slate-500 font-medium">{u.nipp}</p>
                             </div>
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                              u.role === 'qc' ? 'bg-indigo-100 text-indigo-700' :
-                              u.role === 'kupt' ? 'bg-teal-100 text-teal-700' :
-                              'bg-slate-100 text-slate-700'
-                            }`}>{ROLE_LABEL[u.role] || u.role}</span>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${u.role === 'qc' ? 'bg-indigo-100 text-indigo-700' :
+                                u.role === 'kupt' ? 'bg-teal-100 text-teal-700' :
+                                  'bg-slate-100 text-slate-700'
+                              }`}>{ROLE_LABEL[u.role] || u.role}</span>
                           </div>
                           {u.wilayahAssignments.length > 0 && (
                             <div className="flex flex-wrap gap-1.5 mb-3">
@@ -818,9 +888,8 @@ export default function AdminPage() {
                             </div>
                           )}
                           <div className="flex items-center gap-2 pt-3 border-t border-slate-200">
-                            <span className={`flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest ${
-                              u.isActive ? 'text-emerald-600' : 'text-rose-600'
-                            }`}>
+                            <span className={`flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest ${u.isActive ? 'text-emerald-600' : 'text-rose-600'
+                              }`}>
                               <span className={`w-1.5 h-1.5 rounded-full ${u.isActive ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
                               {u.isActive ? 'Aktif' : 'Nonaktif'}
                             </span>
@@ -1102,10 +1171,10 @@ export default function AdminPage() {
             <div className="p-5 border-b border-slate-100 shrink-0">
               <div className="relative">
                 <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
-                <input 
-                  value={searchPetugas} 
-                  onChange={e => setSearchPetugas(e.target.value)} 
-                  placeholder="Cari nama atau NIPP petugas..." 
+                <input
+                  value={searchPetugas}
+                  onChange={e => setSearchPetugas(e.target.value)}
+                  placeholder="Cari nama atau NIPP petugas..."
                   className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-xl text-sm bg-slate-50 focus:bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-all"
                 />
               </div>
@@ -1120,7 +1189,7 @@ export default function AdminPage() {
                     .map(p => {
                       const isSelected = selectedNipps.includes(p.nipp);
                       return (
-                        <button 
+                        <button
                           key={p.id}
                           onClick={() => {
                             if (isSelected) {
@@ -1145,7 +1214,7 @@ export default function AdminPage() {
                           )}
                         </button>
                       );
-                  })}
+                    })}
                   {availablePetugas.filter(p => p.nama.toLowerCase().includes(searchPetugas.toLowerCase()) || p.nipp.toLowerCase().includes(searchPetugas.toLowerCase())).length === 0 && (
                     <div className="p-4 text-center text-slate-500 text-sm">Pencarian tidak ditemukan.</div>
                   )}
@@ -1178,7 +1247,7 @@ export default function AdminPage() {
               </div>
               <button onClick={() => setSelectedPetugasHistory(null)} className="text-slate-400 hover:text-white transition-colors"><span className="material-symbols-outlined">close</span></button>
             </div>
-            
+
             <div className="flex-1 overflow-y-auto p-5 bg-slate-50/50">
               <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Riwayat Pekerjaan Tracking</h4>
               <div className="space-y-3">
@@ -1191,18 +1260,18 @@ export default function AdminPage() {
                   tugas.filter(t => t.user.nipp === selectedPetugasHistory.nipp).map(t => {
                     const latestTracking = t.tracking?.[0];
                     const laporanList = latestTracking?.laporan || [];
-                    
+
                     return (
                       <div key={t.id} className="bg-white rounded-xl border border-slate-200 shadow-sm relative overflow-hidden mb-4">
                         <div className={`absolute top-0 left-0 w-1.5 h-full ${t.status === 'completed' ? 'bg-primary' : t.status === 'in_progress' ? 'bg-blue-500' : 'bg-slate-300'}`}></div>
-                        
+
                         <div className="p-4 pl-5 border-b border-slate-100">
                           <div className="flex justify-between items-start gap-2 mb-1">
                             <p className="font-bold text-slate-800 text-sm leading-snug">{t.jalur}</p>
                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border shrink-0 ${STATUS_COLOR[t.status]}`}>{STATUS_LABEL[t.status]}</span>
                           </div>
                           <p className="text-xs font-semibold text-slate-500 mb-2 flex items-center gap-1">
-                            <span className="material-symbols-outlined text-[14px]">calendar_today</span> 
+                            <span className="material-symbols-outlined text-[14px]">calendar_today</span>
                             {new Date(t.tanggal).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
                           </p>
                           <div className="flex items-center gap-4 pt-2">
@@ -1217,11 +1286,11 @@ export default function AdminPage() {
                                   ? latestTracking.durasi >= 3600
                                     ? `${Math.floor(latestTracking.durasi / 3600)} jam ${Math.floor((latestTracking.durasi % 3600) / 60)} menit`
                                     : latestTracking.durasi >= 60
-                                    ? `${Math.floor(latestTracking.durasi / 60)} menit`
-                                    : `${latestTracking.durasi} detik`
+                                      ? `${Math.floor(latestTracking.durasi / 60)} menit`
+                                      : `${latestTracking.durasi} detik`
                                   : latestTracking?.startTime && latestTracking?.endTime
-                                  ? `${Math.floor((new Date(latestTracking.endTime).getTime() - new Date(latestTracking.startTime).getTime()) / 60000)} menit`
-                                  : '-'
+                                    ? `${Math.floor((new Date(latestTracking.endTime).getTime() - new Date(latestTracking.startTime).getTime()) / 60000)} menit`
+                                    : '-'
                               }</span>
                             </div>
                             <div className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -1312,9 +1381,8 @@ export default function AdminPage() {
                   onDragLeave={() => setDragOver(false)}
                   onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleFileSelect(f); }}
                   onClick={() => fileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
-                    dragOver ? 'border-emerald-500 bg-emerald-50' : importFile ? 'border-emerald-400 bg-emerald-50/50' : 'border-slate-300 bg-white hover:border-emerald-400 hover:bg-emerald-50/30'
-                  }`}
+                  className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${dragOver ? 'border-emerald-500 bg-emerald-50' : importFile ? 'border-emerald-400 bg-emerald-50/50' : 'border-slate-300 bg-white hover:border-emerald-400 hover:bg-emerald-50/30'
+                    }`}
                 >
                   <input ref={fileInputRef} type="file" accept=".xlsx" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); }} />
                   <span className={`material-symbols-outlined text-4xl mb-3 block ${importFile ? 'text-emerald-500' : 'text-slate-300'}`}>{importFile ? 'check_circle' : 'cloud_upload'}</span>
