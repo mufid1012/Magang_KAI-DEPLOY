@@ -5,11 +5,15 @@ import {
   getStats, getAllPetugas, getAvailablePetugas, addPetugasToManager,
   removePetugasFromManager, getAllTugas, createTugas, deleteTugas, getAllEmergency,
   getAllUsers, createUser, updateUser, deleteUser, getAllWilayah, getLivePositions,
+  downloadTugasTemplate, importTugasFromExcel,
 } from '../controllers/admin.controller';
 import {
   downloadExcelTemplate, importExcel,
   getTemplates, createTemplate, deleteTemplate, applyTemplate,
 } from '../controllers/import.controller';
+
+// Multer memory storage for Excel file uploads
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB max
 
 const router = Router();
 
@@ -19,7 +23,7 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-        file.originalname.endsWith('.xlsx')) {
+      file.originalname.endsWith('.xlsx')) {
       cb(null, true);
     } else {
       cb(new Error('Hanya file .xlsx yang diizinkan'));
@@ -41,6 +45,11 @@ router.post('/petugas/remove', requireAuth, requireCanWrite, removePetugasFromMa
 router.post('/tugas', requireAuth, requireCanWrite, createTugas);
 router.delete('/tugas/:id', requireAuth, requireCanWrite, deleteTugas);
 
+
+// ── Excel import/export — admin + kupt only ──
+router.get('/tugas/template', requireAuth, requireCanWrite, downloadTugasTemplate);
+router.post('/tugas/import', requireAuth, requireCanWrite, upload.single('file'), importTugasFromExcel);
+
 // ── Import & Template endpoints — admin + kupt only ──
 router.get('/tugas/template-excel', requireAuth, requireCanWrite, downloadExcelTemplate);
 router.post('/tugas/import-excel', requireAuth, requireCanWrite, upload.single('file'), importExcel);
@@ -48,6 +57,7 @@ router.get('/templates', requireAuth, requireCanWrite, getTemplates);
 router.post('/templates', requireAuth, requireCanWrite, createTemplate);
 router.delete('/templates/:id', requireAuth, requireCanWrite, deleteTemplate);
 router.post('/templates/:id/apply', requireAuth, requireCanWrite, applyTemplate);
+
 
 // ── Account management — admin only ──
 router.get('/users', requireAuth, requireAdmin, getAllUsers);
