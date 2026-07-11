@@ -206,7 +206,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
     if (stopLat === null || stopLng === null) { showToast('Tidak ada posisi GPS yang tersedia.', 'warning'); return; }
     try {
       setIsStopping(true);
-      await api.post(`/tracking/stop/${trackingId}`, { lat: stopLat, lng: stopLng, fotoSelesai: endSelfieDataUrl });
+      await api.post(`/tracking/stop/${trackingId}`, { lat: stopLat, lng: stopLng, fotoSelesai: endSelfieDataUrl, routePath: trackPath });
       if (timerRef.current) clearInterval(timerRef.current);
       localStorage.removeItem(STORAGE_KEY); // Clear persisted session
       router.push(`/inspeksi/${params.id}/selesai`);

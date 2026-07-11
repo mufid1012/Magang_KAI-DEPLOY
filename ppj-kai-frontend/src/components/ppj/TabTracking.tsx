@@ -211,7 +211,7 @@ export default function TabTracking({ tugasId, onFinish, onBack }: TabTrackingPr
     if (stopLat === null || stopLng === null) { alert('Tidak ada posisi GPS yang tersedia.'); return; }
     try {
       setIsStopping(true);
-      await api.post(`/tracking/stop/${trackingId}`, { lat: stopLat, lng: stopLng });
+      await api.post(`/tracking/stop/${trackingId}`, { lat: stopLat, lng: stopLng, routePath: trackPath });
       if (timerRef.current) clearInterval(timerRef.current);
       localStorage.removeItem(STORAGE_KEY); // Clear persisted session
       onFinish();

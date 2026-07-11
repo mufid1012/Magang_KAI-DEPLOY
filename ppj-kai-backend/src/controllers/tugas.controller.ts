@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../config/database';
+import { renderStaticMap } from '../lib/staticMap';
 
 export const getTugasPetugas = async (req: Request, res: Response) => {
   try {
@@ -121,6 +122,39 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
     const latestTracking = tugas.tracking[0] || null;
     const laporanList = latestTracking?.laporan || [];
 
+    // Parse route path
+    let routePath: [number, number][] = [];
+    if (latestTracking?.routePath) {
+      try {
+        const parsed = JSON.parse(latestTracking.routePath);
+        if (Array.isArray(parsed) && parsed.length > 0) routePath = parsed;
+      } catch { /* ignore */ }
+    }
+
+    // Calculate distance from routePath
+    const haversineM = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+      const R = 6371000;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLng = (lng2 - lng1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    };
+    const totalDistanceM = routePath.reduce((sum, point, i) => {
+      if (i === 0) return 0;
+      return sum + haversineM(routePath[i - 1][0], routePath[i - 1][1], point[0], point[1]);
+    }, 0);
+    const totalDistanceKm = (totalDistanceM / 1000).toFixed(2);
+
+    // Render static map image server-side from routePath
+    let mapImageBase64: string | null = null;
+    if (routePath.length >= 2) {
+      try {
+        mapImageBase64 = await renderStaticMap(routePath, 800, 400);
+      } catch (mapErr) {
+        console.error('Failed to render static map:', mapErr);
+      }
+    }
+
     // Setup pdfmake with standard Helvetica font
     const pdfmake = require('pdfmake');
     pdfmake.fonts = {
@@ -149,6 +183,18 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
       return `${detik} detik`;
     };
 
+    // Build info table rows
+    const infoRows: any[][] = [
+      ['Jalur', `: ${tugas.jalur}`],
+      ['Tanggal', `: ${formatDate(tugas.tanggal)}`],
+      ['Waktu', `: ${formatTime(latestTracking?.startTime || null)} — ${formatTime(latestTracking?.endTime || null)} (${formatDurasi(latestTracking?.durasi || null)})`],
+      ['Status', `: ${tugas.status.toUpperCase()}`],
+      ['ID Tugas', `: #PPJ-${String(tugas.id).padStart(6, '0')}`],
+    ];
+    if (routePath.length >= 2) {
+      infoRows.push(['Jarak Tempuh', `: ${totalDistanceKm} km (${routePath.length} titik GPS)`]);
+    }
+
     // Build PDF content
     const docDefinition: any = {
       defaultStyle: {
@@ -164,13 +210,7 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
           layout: 'noBorders',
           table: {
             widths: [100, '*'],
-            body: [
-              ['Jalur', `: ${tugas.jalur}`],
-              ['Tanggal', `: ${formatDate(tugas.tanggal)}`],
-              ['Waktu', `: ${formatTime(latestTracking?.startTime || null)} — ${formatTime(latestTracking?.endTime || null)} (${formatDurasi(latestTracking?.durasi || null)})`],
-              ['Status', `: ${tugas.status.toUpperCase()}`],
-              ['ID Tugas', `: #PPJ-${String(tugas.id).padStart(6, '0')}`],
-            ]
+            body: infoRows
           },
           margin: [0, 0, 0, 20]
         },
@@ -184,6 +224,30 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
         laporanMeta: { fontSize: 9, color: '#666666' }
       }
     };
+
+    // Add route map image if available
+    if (mapImageBase64) {
+      docDefinition.content.push({ text: 'PETA JALUR INSPEKSI', style: 'sectionHeader', margin: [0, 10, 0, 10] });
+      docDefinition.content.push({
+        image: mapImageBase64,
+        width: 480,
+        alignment: 'center',
+        margin: [0, 0, 0, 5]
+      });
+      docDefinition.content.push({
+        text: `Jalur yang dilalui petugas selama inspeksi (${totalDistanceKm} km)`,
+        style: 'laporanMeta',
+        alignment: 'center',
+        margin: [0, 0, 0, 20]
+      });
+    } else if (routePath.length >= 2) {
+      // Fallback: just mention route info textually
+      docDefinition.content.push({ text: 'JALUR INSPEKSI', style: 'sectionHeader', margin: [0, 10, 0, 10] });
+      docDefinition.content.push({
+        text: `Petugas menempuh ${totalDistanceKm} km dari titik (${routePath[0][0].toFixed(5)}, ${routePath[0][1].toFixed(5)}) ke (${routePath[routePath.length - 1][0].toFixed(5)}, ${routePath[routePath.length - 1][1].toFixed(5)}).`,
+        margin: [0, 0, 0, 20]
+      });
+    }
     // Add foto awal and foto selesai if available
     if (latestTracking && (latestTracking.fotoAwal || latestTracking.fotoSelesai)) {
       docDefinition.content.push({ text: 'VERIFIKASI IDENTITAS', style: 'sectionHeader', margin: [0, 10, 0, 10] });

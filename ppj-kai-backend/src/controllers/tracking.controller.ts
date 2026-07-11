@@ -7,9 +7,9 @@ export const getActiveTracking = async (req: Request, res: Response) => {
     const tracking = await prisma.tracking.findFirst({
       where: { tugasId, status: { not: 'stopped' } },
       orderBy: { startTime: 'desc' },
-      select: { id: true, startTime: true },
+      select: { id: true, startTime: true, routePath: true },
     });
-    return res.json({ success: true, trackingId: tracking?.id ?? null, startTime: tracking?.startTime ?? null });
+    return res.json({ success: true, trackingId: tracking?.id ?? null, startTime: tracking?.startTime ?? null, routePath: tracking?.routePath ?? null });
   } catch (error) {
     return res.status(500).json({ success: false, message: 'Internal server error' });
   }
@@ -82,7 +82,7 @@ export const updateTracking = async (req: Request, res: Response) => {
 export const stopTracking = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { lat, lng, fotoSelesai } = req.body;
+    const { lat, lng, fotoSelesai, routePath } = req.body;
 
     const tracking = await prisma.tracking.findUnique({
       where: { id: parseInt(id) }
@@ -96,6 +96,12 @@ export const stopTracking = async (req: Request, res: Response) => {
     const durasiMs = tracking.startTime ? new Date().getTime() - new Date(tracking.startTime).getTime() : 0;
     const durasiDetik = Math.round(durasiMs / 1000);
 
+    // Serialize routePath to JSON string if provided as array
+    let routePathStr: string | null = null;
+    if (routePath) {
+      routePathStr = typeof routePath === 'string' ? routePath : JSON.stringify(routePath);
+    }
+
     await prisma.tracking.update({
       where: { id: tracking.id },
       data: { 
@@ -105,6 +111,7 @@ export const stopTracking = async (req: Request, res: Response) => {
         durasi: durasiDetik,
         status: 'completed',
         fotoSelesai: fotoSelesai || null,
+        routePath: routePathStr,
       }
     });
 

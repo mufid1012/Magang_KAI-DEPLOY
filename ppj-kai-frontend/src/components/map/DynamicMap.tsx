@@ -62,6 +62,8 @@ export default function DynamicMap({ lat, lng, zoom = 16, trackPath, routeStart,
   useEffect(() => {
     if (!mapRef.current || !trackPath || trackPath.length < 2) return;
     const polyline = L.polyline(trackPath, { color: '#005bac', weight: 5, opacity: 0.8 }).addTo(mapRef.current);
+    // Fit map to show full track path
+    mapRef.current.fitBounds(polyline.getBounds(), { padding: [40, 40], maxZoom: 16 });
     return () => { polyline.remove(); };
   }, [trackPath]);
 

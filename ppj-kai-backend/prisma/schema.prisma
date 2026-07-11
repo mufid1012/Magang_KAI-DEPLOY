@@ -67,6 +67,7 @@ model Tracking {
   status      String    @default("started") @db.VarChar(20)
   fotoAwal    String?   @map("foto_awal") @db.LongText
   fotoSelesai String?   @map("foto_selesai") @db.LongText
+  routePath   String?   @map("route_path") @db.LongText  // JSON: [[lat,lng], ...]
   tugas       TugasPpj  @relation(fields: [tugasId], references: [id])
   laporan   Laporan[]
   createdAt DateTime  @default(now()) @map("created_at")
