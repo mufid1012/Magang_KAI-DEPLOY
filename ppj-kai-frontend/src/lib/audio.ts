@@ -1,6 +1,8 @@
 export type NotificationSound = 'siren' | 'beep' | 'chime' | 'off';
 
 let audioCtx: AudioContext | null = null;
+let loopIntervalId: ReturnType<typeof setInterval> | null = null;
+let activeOscillators: OscillatorNode[] = [];
 
 function getAudioContext() {
   if (typeof window === 'undefined') return null;
@@ -8,6 +10,69 @@ function getAudioContext() {
     audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
   }
   return audioCtx;
+}
+
+// Duration of each sound type in ms (used for loop interval)
+const SOUND_DURATION: Record<string, number> = {
+  siren: 2200,
+  beep: 1300,
+  chime: 1700,
+};
+
+/**
+ * Start playing the notification sound in a continuous loop.
+ * It will keep playing until stopLoopingNotification() is called.
+ */
+export function startLoopingNotification(type: NotificationSound) {
+  if (type === 'off') return;
+
+  // Stop any existing loop first
+  stopLoopingNotification();
+
+  // Play immediately
+  playNotification(type);
+
+  // Then repeat at interval
+  const interval = SOUND_DURATION[type] || 2000;
+  loopIntervalId = setInterval(() => {
+    playNotification(type);
+  }, interval);
+}
+
+/**
+ * Stop the looping notification sound and clean up all audio.
+ */
+export function stopLoopingNotification() {
+  // Clear the loop interval
+  if (loopIntervalId !== null) {
+    clearInterval(loopIntervalId);
+    loopIntervalId = null;
+  }
+
+  // Stop all active oscillators
+  for (const osc of activeOscillators) {
+    try { osc.stop(); } catch { /* already stopped */ }
+  }
+  activeOscillators = [];
+
+  // Cancel any ongoing TTS
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    window.speechSynthesis.cancel();
+  }
+}
+
+/** Returns true if a looping alarm is currently active */
+export function isLoopingActive(): boolean {
+  return loopIntervalId !== null;
+}
+
+/** Track an oscillator so it can be stopped later */
+function trackOscillator(osc: OscillatorNode) {
+  activeOscillators.push(osc);
+  // Auto-remove when it ends naturally
+  osc.onended = () => {
+    activeOscillators = activeOscillators.filter(o => o !== osc);
+  };
 }
 
 export function playNotification(type: NotificationSound) {
@@ -56,6 +121,7 @@ function playSiren(ctx: AudioContext, t: number) {
   osc.connect(gain);
   gain.connect(ctx.destination);
   
+  trackOscillator(osc);
   osc.start(t);
   osc.stop(t + 2.0);
 }
@@ -86,6 +152,7 @@ function playBeep(ctx: AudioContext, t: number) {
   osc.connect(gain);
   gain.connect(ctx.destination);
   
+  trackOscillator(osc);
   osc.start(t);
   osc.stop(t + 1.1);
 }
@@ -115,6 +182,8 @@ function playChime(ctx: AudioContext, t: number) {
   gain1.connect(ctx.destination);
   gain2.connect(ctx.destination);
   
+  trackOscillator(osc1);
+  trackOscillator(osc2);
   osc1.start(t);
   osc1.stop(t + 1.0);
   

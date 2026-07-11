@@ -5,7 +5,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import api from '../../lib/api';
 import { useRouter } from 'next/navigation';
-import { playNotification, NotificationSound, speakEmergencyAnnouncement } from '../../lib/audio';
+import { playNotification, NotificationSound, speakEmergencyAnnouncement, startLoopingNotification, stopLoopingNotification } from '../../lib/audio';
 import { showToast } from '../../lib/toast';
 import { showConfirm } from '../../lib/confirm';
 
@@ -118,6 +118,7 @@ export default function AdminPage() {
 
   // Audio Notification State
   const [alertSound, setAlertSound] = useState<NotificationSound>('off');
+  const [isAlarmActive, setIsAlarmActive] = useState(false);
   const lastEmergencyId = React.useRef(0);
 
   // Load alert sound preference
@@ -128,13 +129,23 @@ export default function AdminPage() {
     }
   }, []);
 
-  // Play sound + TTS on new emergency
+  // Cleanup looping alarm on unmount
+  useEffect(() => {
+    return () => {
+      stopLoopingNotification();
+    };
+  }, []);
+
+  // Play looping sound + TTS on new emergency
   useEffect(() => {
     if (emergencies.length > 0) {
       const latestId = Math.max(...emergencies.map(e => e.id));
       if (lastEmergencyId.current > 0 && latestId > lastEmergencyId.current) {
-        // Play alert sound first
-        playNotification(alertSound);
+        // Start looping alert sound
+        startLoopingNotification(alertSound);
+        if (alertSound !== 'off') {
+          setIsAlarmActive(true);
+        }
 
         // Find the newest emergency for TTS announcement
         const newEmergency = emergencies.find(e => e.id === latestId);
@@ -150,11 +161,16 @@ export default function AdminPage() {
     }
   }, [emergencies, alertSound]);
 
+  const handleStopAlarm = () => {
+    stopLoopingNotification();
+    setIsAlarmActive(false);
+  };
+
   const handleSoundChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const sound = e.target.value as NotificationSound;
     setAlertSound(sound);
     localStorage.setItem('admin_alert_sound', sound);
-    playNotification(sound); // Preview the sound
+    playNotification(sound); // Preview the sound (single play, not looping)
   };
 
   const fetchAvailablePetugas = async () => {
@@ -395,6 +411,42 @@ export default function AdminPage() {
 
   return (
     <div className="h-screen flex flex-col bg-[#F8FAFC] font-sans overflow-hidden">
+      {/* ── ALARM ACTIVE OVERLAY BANNER ──────────────────── */}
+      {isAlarmActive && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm" style={{ animation: 'alarmPulse 1s ease-in-out infinite' }}>
+          <div className="bg-white rounded-3xl shadow-2xl p-8 md:p-12 flex flex-col items-center gap-6 max-w-md mx-4 border-4 border-rose-500" style={{ animation: 'alarmBounce 0.5s ease-in-out infinite alternate' }}>
+            <div className="w-20 h-20 md:w-24 md:h-24 rounded-full bg-rose-100 flex items-center justify-center" style={{ animation: 'alarmIconPulse 0.8s ease-in-out infinite' }}>
+              <span className="material-symbols-outlined text-rose-600 text-[48px] md:text-[56px]">crisis_alert</span>
+            </div>
+            <div className="text-center">
+              <h2 className="text-2xl md:text-3xl font-extrabold text-slate-800 mb-2">🚨 ALARM DARURAT</h2>
+              <p className="text-slate-500 text-sm md:text-base font-medium">Ada laporan darurat baru masuk!<br/>Segera periksa tab Insiden.</p>
+            </div>
+            <button
+              onClick={handleStopAlarm}
+              className="w-full py-4 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl text-lg font-extrabold flex items-center justify-center gap-3 shadow-lg shadow-rose-600/30 transition-all active:scale-95 uppercase tracking-wider"
+            >
+              <span className="material-symbols-outlined text-[28px]">alarm_off</span>
+              Matikan Alarm
+            </button>
+          </div>
+          <style>{`
+            @keyframes alarmPulse {
+              0%, 100% { background-color: rgba(0,0,0,0.6); }
+              50% { background-color: rgba(190,18,60,0.35); }
+            }
+            @keyframes alarmBounce {
+              0% { transform: scale(1); }
+              100% { transform: scale(1.02); }
+            }
+            @keyframes alarmIconPulse {
+              0%, 100% { transform: scale(1); background-color: rgb(255 228 230); }
+              50% { transform: scale(1.15); background-color: rgb(254 205 211); }
+            }
+          `}</style>
+        </div>
+      )}
+
       {/* Premium Header */}
       <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-6 shrink-0 z-50 shadow-sm">
         <div className="flex items-center gap-2 md:gap-4">
@@ -417,6 +469,23 @@ export default function AdminPage() {
               <option value="beep">Beep</option>
               <option value="chime">Lonceng</option>
             </select>
+            {/* Stop Alarm button in header — visible only when alarm is active */}
+            {isAlarmActive && (
+              <button
+                onClick={handleStopAlarm}
+                className="ml-1 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-[10px] md:text-[11px] font-bold rounded-lg flex items-center gap-1 shadow-sm transition-all active:scale-95"
+                style={{ animation: 'headerAlarmPulse 1s ease-in-out infinite' }}
+              >
+                <span className="material-symbols-outlined text-[16px]">alarm_off</span>
+                <span className="hidden md:inline">Stop Alarm</span>
+              </button>
+            )}
+            <style>{`
+              @keyframes headerAlarmPulse {
+                0%, 100% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.4); }
+                50% { box-shadow: 0 0 0 6px rgba(225, 29, 72, 0); }
+              }
+            `}</style>
           </div>
           <div className="w-px h-6 bg-slate-200 hidden md:block"></div>
           
