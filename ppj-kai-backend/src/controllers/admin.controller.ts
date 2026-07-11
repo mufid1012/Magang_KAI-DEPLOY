@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import prisma from '../config/database';
+import * as XLSX from 'xlsx';
 
 // Extend Request type to include user (set by auth middleware)
 interface AuthRequest extends Request {
@@ -654,6 +655,257 @@ export const getAllWilayah = async (req: AuthRequest, res: Response) => {
     return res.json({ success: true, data: wilayah });
   } catch (error) {
     console.error('Get wilayah error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Station Data (same as frontend STATIONS constant)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const STATIONS = [
+  { name: 'Sta. Maguwo', lat: -7.785040, lng: 110.436899 },
+  { name: 'Sta. Lempuyangan', lat: -7.789961, lng: 110.375275 },
+  { name: 'Sta. Yogyakarta', lat: -7.788870, lng: 110.363213 },
+  { name: 'Sta. Patukan', lat: -7.790771, lng: 110.325332 },
+  { name: 'Sta. Wojo', lat: -7.862278, lng: 110.041092 },
+  { name: 'Sta. Jenar', lat: -7.802037, lng: 110.000797 },
+  { name: 'Sta. Wates', lat: -7.859248, lng: 110.158247 },
+  { name: 'Sta. Brambanan', lat: -7.756641, lng: 110.500415 },
+  { name: 'Sta. Klaten', lat: -7.712576, lng: 110.602980 },
+  { name: 'Sta. Delanggu', lat: -7.622398, lng: 110.706588 },
+  { name: 'Sta. Solo Balapan', lat: -7.557184, lng: 110.819394 },
+  { name: 'Sta. Wonogiri', lat: -7.815882, lng: 110.921733 },
+  { name: 'Sta. Sumberlawang', lat: -7.327810, lng: 110.863565 },
+  { name: 'Sta. Palur', lat: -7.568030, lng: 110.875387 },
+  { name: 'Sta. Sragen', lat: -7.429623, lng: 111.016701 },
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /admin/tugas/template — Download Excel template for bulk task import
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const downloadTugasTemplate = async (req: AuthRequest, res: Response) => {
+  try {
+    const managerId = req.user!.id;
+
+    // Fetch petugas managed by this admin/kupt
+    const petugasList = await prisma.user.findMany({
+      where: { managerId, role: 'ppj', isActive: true },
+      select: { nipp: true, nama: true },
+      orderBy: { nama: 'asc' },
+    });
+
+    const wb = XLSX.utils.book_new();
+
+    // Sheet 1: Template with headers + example row
+    const templateData = [
+      ['NIPP Petugas', 'Stasiun Awal', 'Stasiun Akhir', 'Tanggal (YYYY-MM-DD)', 'Jam Mulai (HH:mm)', 'Jam Selesai (HH:mm)'],
+      [petugasList[0]?.nipp || 'KAI-1234', 'Sta. Yogyakarta', 'Sta. Solo Balapan', '2026-07-10', '08:00', '16:00'],
+    ];
+    const wsTemplate = XLSX.utils.aoa_to_sheet(templateData);
+    // Set column widths
+    wsTemplate['!cols'] = [
+      { wch: 18 }, { wch: 22 }, { wch: 22 }, { wch: 22 }, { wch: 18 }, { wch: 18 },
+    ];
+    XLSX.utils.book_append_sheet(wb, wsTemplate, 'Template Penugasan');
+
+    // Sheet 2: Daftar Stasiun
+    const stationData = [
+      ['Nama Stasiun', 'Latitude', 'Longitude'],
+      ...STATIONS.map(s => [s.name, s.lat, s.lng]),
+    ];
+    const wsStations = XLSX.utils.aoa_to_sheet(stationData);
+    wsStations['!cols'] = [{ wch: 22 }, { wch: 14 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, wsStations, 'Daftar Stasiun');
+
+    // Sheet 3: Daftar Petugas Kelolaan
+    const petugasData = [
+      ['NIPP', 'Nama'],
+      ...petugasList.map(p => [p.nipp, p.nama]),
+    ];
+    const wsPetugas = XLSX.utils.aoa_to_sheet(petugasData);
+    wsPetugas['!cols'] = [{ wch: 18 }, { wch: 30 }];
+    XLSX.utils.book_append_sheet(wb, wsPetugas, 'Daftar Petugas');
+
+    // Generate buffer
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="template_penugasan_ppj.xlsx"');
+    return res.send(Buffer.from(buf));
+  } catch (error) {
+    console.error('Download template error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /admin/tugas/import — Import tasks from uploaded Excel file
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
+  try {
+    const managerId = req.user!.id;
+    const role = req.user!.role;
+
+    const file = (req as any).file;
+    if (!file) {
+      return res.status(400).json({ success: false, message: 'File Excel wajib diunggah' });
+    }
+
+    // Parse Excel from buffer (multer memoryStorage)
+    const wb = XLSX.read(file.buffer, { type: 'buffer' });
+    const sheetName = wb.SheetNames[0];
+    if (!sheetName) {
+      return res.status(400).json({ success: false, message: 'File Excel kosong' });
+    }
+
+    const ws = wb.Sheets[sheetName];
+    const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+    // Skip header row
+    if (rows.length < 2) {
+      return res.status(400).json({ success: false, message: 'File tidak memiliki data (hanya header)' });
+    }
+
+    // Fetch managed petugas for validation
+    const managedPetugas = await prisma.user.findMany({
+      where: { managerId, role: 'ppj', isActive: true },
+      select: { id: true, nipp: true, nama: true },
+    });
+    const nippMap = new Map(managedPetugas.map(p => [p.nipp.trim().toUpperCase(), p]));
+
+    // KUPT station validation
+    let allowedStations: string[] | null = null;
+    if (role === 'kupt') {
+      allowedStations = await getStationsForUser(managerId, role);
+    }
+
+    const stationMap = new Map(STATIONS.map(s => [s.name.trim().toLowerCase(), s]));
+
+    const results: { row: number; status: 'success' | 'error'; message: string; jalur?: string }[] = [];
+    let created = 0;
+
+    // Process each data row (skip row 0 = header)
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 1; // Human-readable row number (1-indexed, header = row 1)
+
+      // Skip completely empty rows
+      if (!row || row.every(cell => cell === null || cell === undefined || String(cell).trim() === '')) {
+        continue;
+      }
+
+      const rawNipp = String(row[0] || '').trim();
+      const rawStart = String(row[1] || '').trim();
+      const rawEnd = String(row[2] || '').trim();
+      const rawTanggal = String(row[3] || '').trim();
+      const rawJamMulai = String(row[4] || '').trim();
+      const rawJamSelesai = String(row[5] || '').trim();
+
+      // Validate required fields
+      if (!rawNipp) {
+        results.push({ row: rowNum, status: 'error', message: 'NIPP Petugas kosong' });
+        continue;
+      }
+      if (!rawStart) {
+        results.push({ row: rowNum, status: 'error', message: 'Stasiun Awal kosong' });
+        continue;
+      }
+      if (!rawEnd) {
+        results.push({ row: rowNum, status: 'error', message: 'Stasiun Akhir kosong' });
+        continue;
+      }
+      if (!rawTanggal) {
+        results.push({ row: rowNum, status: 'error', message: 'Tanggal kosong' });
+        continue;
+      }
+
+      // Validate NIPP
+      const petugas = nippMap.get(rawNipp.toUpperCase());
+      if (!petugas) {
+        results.push({ row: rowNum, status: 'error', message: `NIPP "${rawNipp}" tidak ditemukan di daftar petugas kelolaan Anda` });
+        continue;
+      }
+
+      // Validate stations
+      const startStation = stationMap.get(rawStart.toLowerCase());
+      const endStation = stationMap.get(rawEnd.toLowerCase());
+      if (!startStation) {
+        results.push({ row: rowNum, status: 'error', message: `Stasiun Awal "${rawStart}" tidak ditemukan` });
+        continue;
+      }
+      if (!endStation) {
+        results.push({ row: rowNum, status: 'error', message: `Stasiun Akhir "${rawEnd}" tidak ditemukan` });
+        continue;
+      }
+      if (startStation.name === endStation.name) {
+        results.push({ row: rowNum, status: 'error', message: 'Stasiun Awal dan Akhir tidak boleh sama' });
+        continue;
+      }
+
+      // KUPT: validate station within wilayah
+      if (allowedStations) {
+        if (!allowedStations.includes(startStation.name) || !allowedStations.includes(endStation.name)) {
+          results.push({ row: rowNum, status: 'error', message: 'Stasiun di luar wilayah Anda' });
+          continue;
+        }
+      }
+
+      // Validate date
+      let parsedDate: Date;
+      // Handle Excel serial date numbers
+      if (typeof row[3] === 'number') {
+        parsedDate = new Date(Math.round((row[3] - 25569) * 86400 * 1000));
+      } else {
+        parsedDate = new Date(rawTanggal);
+      }
+      if (isNaN(parsedDate.getTime())) {
+        results.push({ row: rowNum, status: 'error', message: `Tanggal "${rawTanggal}" tidak valid (gunakan format YYYY-MM-DD)` });
+        continue;
+      }
+
+      // Build jalur name
+      const jalur = `${startStation.name} → ${endStation.name}`;
+
+      // Create tugas
+      try {
+        await prisma.tugasPpj.create({
+          data: {
+            jalur,
+            tanggal: parsedDate,
+            startPointLat: startStation.lat,
+            startPointLong: startStation.lng,
+            endPointLat: endStation.lat,
+            endPointLong: endStation.lng,
+            startPointName: startStation.name,
+            endPointName: endStation.name,
+            jamMulai: rawJamMulai || null,
+            jamSelesai: rawJamSelesai || null,
+            assignedTo: petugas.id,
+            status: 'pending',
+          },
+        });
+        created++;
+        results.push({ row: rowNum, status: 'success', message: 'Berhasil', jalur });
+      } catch (err: any) {
+        results.push({ row: rowNum, status: 'error', message: `Gagal menyimpan: ${err.message}` });
+      }
+    }
+
+    const errors = results.filter(r => r.status === 'error');
+    return res.json({
+      success: true,
+      data: {
+        total: results.length,
+        created,
+        failed: errors.length,
+        details: results,
+      },
+    });
+  } catch (error) {
+    console.error('Import tugas error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };

@@ -1,16 +1,126 @@
 // Force Next.js rebuild
 'use client';
 
-import { useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import api from '../../../lib/api';
 import { showToast } from '../../../lib/toast';
 
-// Backward compatibility: redirect old /inspeksi/:id URLs to the new tab-based page
-export default function TrackingPageRedirect({ params }: { params: { id: string } }) {
-  const router = useRouter();
+const DynamicMap = dynamic(() => import('../../../components/map/DynamicMap'), { ssr: false });
 
+// GPS Hook with improved accuracy and reliability
+function useGPS() {
+  const [position, setPosition] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const watchRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!navigator.geolocation) { setError('GPS tidak didukung browser ini'); return; }
+
+    // Try high accuracy first
+    watchRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        setError(null);
+        setPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy });
+      },
+      (err) => {
+        // If high accuracy fails, try with lower accuracy as fallback
+        if (err.code === err.TIMEOUT && watchRef.current !== null) {
+          navigator.geolocation.clearWatch(watchRef.current);
+          watchRef.current = navigator.geolocation.watchPosition(
+            (pos) => {
+              setError(null);
+              setPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy });
+            },
+            (err2) => setError(err2.message),
+            { enableHighAccuracy: false, timeout: 30000, maximumAge: 10000 }
+          );
+        } else {
+          setError(err.message);
+        }
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 5000 }
+    );
+    return () => { if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current); };
+  }, []);
+
+  return { position, error };
+}
+
+export default function TrackingPage({ params }: { params: { id: string } }) {
+  const router = useRouter();
+  const { position: gpsPos, error: gpsError } = useGPS();
+
+  const [status, setStatus] = useState<'pending' | 'active'>('pending');
+  const [tugas, setTugas] = useState<any>(null);
+  const [trackingId, setTrackingId] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [trackPath, setTrackPath] = useState<[number, number][]>([]);
+
+  // Timer
+  const [elapsed, setElapsed] = useState(0);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Identity Verification
+  const [isVerified, setIsVerified] = useState(false);
+  const [verifyModalOpen, setVerifyModalOpen] = useState(false);
+  const [selfieDataUrl, setSelfieDataUrl] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  // Emergency Modal
+  const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
+  const [jenisTemuan, setJenisTemuan] = useState('ringan');
+  const [deskripsi, setDeskripsi] = useState('');
+  const [isSubmittingLaporan, setIsSubmittingLaporan] = useState(false);
+  const [emergencyPhoto, setEmergencyPhoto] = useState<string | null>(null);
+  const [emergencyCameraActive, setEmergencyCameraActive] = useState(false);
+  const emergencyVideoRef = useRef<HTMLVideoElement>(null);
+  const emergencyStreamRef = useRef<MediaStream | null>(null);
+
+  // Card minimize state
+  const [cardMinimized, setCardMinimized] = useState(false);
+
+  // Stop Confirmation Modal
+  const [showStopModal, setShowStopModal] = useState(false);
+  const [endVerified, setEndVerified] = useState(false);
+  const [endSelfieDataUrl, setEndSelfieDataUrl] = useState<string | null>(null);
+  const endVideoRef = useRef<HTMLVideoElement>(null);
+  const endStreamRef = useRef<MediaStream | null>(null);
+  const [isStopping, setIsStopping] = useState(false);
+
+  // Dev test mode — bypass geofencing (localhost only)
+  const [testMode, setTestMode] = useState(false);
+  const isDevEnv = typeof window !== 'undefined' && window.location.hostname === 'localhost';
+
+  // localStorage key for persisting tracking session
+  const STORAGE_KEY = `tracking_session_${params.id}`;
+
+  useEffect(() => { fetchTugasDetail(); }, [params.id]);
+
+  // Track GPS path when active, persist to localStorage
+  useEffect(() => {
+    if (status === 'active' && gpsPos) {
+      setTrackPath(prev => {
+        const updated: [number, number][] = [...prev, [gpsPos.lat, gpsPos.lng]];
+        // Update localStorage path (throttle: only every 5 points to reduce writes)
+        if (updated.length % 5 === 0) {
+          try {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved) {
+              const session = JSON.parse(saved);
+              localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...session, trackPath: updated }));
+            }
+          } catch { /* ignore */ }
+        }
+        return updated;
+      });
+    }
+  }, [gpsPos, status]);
+
+  // Timer tick
   useEffect(() => {
     if (status === 'active') {
       timerRef.current = setInterval(() => setElapsed(p => p + 1), 1000);
@@ -265,7 +375,26 @@ export default function TrackingPageRedirect({ params }: { params: { id: string 
     <div className="flex h-screen items-center justify-center bg-background">
       <div className="flex flex-col items-center gap-md text-on-surface-variant">
         <span className="material-symbols-outlined text-primary text-[48px] animate-spin">refresh</span>
-        <p className="font-body-md">Mengalihkan...</p>
+        <p className="font-body-md">Memuat data tugas...</p>
+      </div>
+    </div>
+  );
+
+  const mapLat = gpsPos?.lat ?? -6.1754;
+  const mapLng = gpsPos?.lng ?? 106.8272;
+
+  return (
+    <div className="bg-surface text-on-surface font-body-lg h-screen w-screen overflow-hidden flex flex-col relative selection:bg-primary-container selection:text-on-primary-container">
+      {/* Live Map Background */}
+      <div className="absolute inset-0 z-0 w-full h-full">
+        <DynamicMap
+          lat={mapLat}
+          lng={mapLng}
+          zoom={status === 'pending' ? 13 : 17}
+          trackPath={status === 'active' ? trackPath : undefined}
+          routeStart={tugas ? { lat: tugas.startPointLat, lng: tugas.startPointLong, name: tugas.startPointName } : undefined}
+          routeEnd={tugas ? { lat: tugas.endPointLat, lng: tugas.endPointLong, name: tugas.endPointName } : undefined}
+        />
       </div>
 
       {/* TopAppBar */}
@@ -382,8 +511,8 @@ export default function TrackingPageRedirect({ params }: { params: { id: string 
                     <button
                       onClick={() => setTestMode(m => !m)}
                       className={`flex items-center justify-between p-sm rounded-lg border transition-colors ${testMode
-                        ? 'bg-amber-500/10 border-amber-500/40 text-amber-600'
-                        : 'bg-surface-container border-outline-variant text-on-surface-variant'
+                          ? 'bg-amber-500/10 border-amber-500/40 text-amber-600'
+                          : 'bg-surface-container border-outline-variant text-on-surface-variant'
                         }`}
                     >
                       <span className="flex items-center gap-sm font-label-sm text-[11px]">
@@ -683,8 +812,8 @@ export default function TrackingPageRedirect({ params }: { params: { id: string 
                 <button
                   onClick={() => setTestMode(m => !m)}
                   className={`flex items-center justify-between p-sm rounded-lg border transition-colors ${testMode
-                    ? 'bg-amber-500/10 border-amber-500/40 text-amber-600'
-                    : 'bg-surface-container border-outline-variant text-on-surface-variant'
+                      ? 'bg-amber-500/10 border-amber-500/40 text-amber-600'
+                      : 'bg-surface-container border-outline-variant text-on-surface-variant'
                     }`}
                 >
                   <span className="flex items-center gap-sm font-label-sm text-[11px]">

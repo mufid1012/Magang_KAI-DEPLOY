@@ -255,7 +255,7 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
             {isDownloading ? 'Mengunduh Laporan...' : 'Download Laporan PDF'}
             <span className="material-symbols-outlined">{isDownloading ? 'hourglass_empty' : 'picture_as_pdf'}</span>
           </button>
-
+          
           <Link href="/inspeksi" className="w-full bg-primary text-on-primary font-h3 text-h3 py-md rounded-xl shadow-lg active:scale-[0.98] transition-all flex items-center justify-center gap-md">
             Kembali ke Daftar Tugas
             <span className="material-symbols-outlined">map</span>

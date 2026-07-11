@@ -4,7 +4,7 @@ import prisma from '../config/database';
 export const getTugasPetugas = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.id;
-
+    
     const tugas = await prisma.tugasPpj.findMany({
       where: { assignedTo: userId },
       orderBy: { tanggal: 'desc' },
@@ -121,57 +121,6 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
     const latestTracking = tugas.tracking[0] || null;
     const laporanList = latestTracking?.laporan || [];
 
-
-    // Helper: fetch a static map image as base64 data URI
-    const fetchStaticMapBase64 = async (
-      startLat: number, startLng: number, endLat: number, endLng: number
-    ): Promise<string | null> => {
-      try {
-        // Calculate center and zoom
-        const centerLat = (startLat + endLat) / 2;
-        const centerLng = (startLng + endLng) / 2;
-
-        // Calculate a reasonable zoom based on distance
-        const latDiff = Math.abs(startLat - endLat);
-        const lngDiff = Math.abs(startLng - endLng);
-        const maxDiff = Math.max(latDiff, lngDiff);
-        let zoom = 13;
-        if (maxDiff > 1) zoom = 8;
-        else if (maxDiff > 0.5) zoom = 9;
-        else if (maxDiff > 0.2) zoom = 10;
-        else if (maxDiff > 0.1) zoom = 11;
-        else if (maxDiff > 0.05) zoom = 12;
-        else if (maxDiff > 0.02) zoom = 13;
-        else zoom = 14;
-
-        // Use OpenStreetMap static map service with markers
-        const mapUrl = `https://staticmap.openstreetmap.de/staticmap.php?center=${centerLat},${centerLng}&zoom=${zoom}&size=600x350&maptype=mapnik&markers=${startLat},${startLng},ol-marker-green|${endLat},${endLng},ol-marker`;
-
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 12000);
-
-        const response = await fetch(mapUrl, { signal: controller.signal });
-        clearTimeout(timeout);
-
-        if (!response.ok) return null;
-
-        const arrayBuffer = await response.arrayBuffer();
-        const base64 = Buffer.from(arrayBuffer).toString('base64');
-        const contentType = response.headers.get('content-type') || 'image/png';
-        return `data:${contentType};base64,${base64}`;
-      } catch (e) {
-        console.error('Static map fetch failed (non-fatal):', e);
-        return null;
-      }
-    };
-
-    // Fetch static map image
-    const mapImage = await fetchStaticMapBase64(
-      tugas.startPointLat, tugas.startPointLong,
-      tugas.endPointLat, tugas.endPointLong
-    );
-
-
     // Setup pdfmake with standard Helvetica font
     const pdfmake = require('pdfmake');
     pdfmake.fonts = {
@@ -210,7 +159,7 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
       content: [
         { text: 'PT KERETA API INDONESIA (Persero)', style: 'header' },
         { text: 'LAPORAN INSPEKSI JALUR PPJ', style: 'subheader', margin: [0, 0, 0, 20] },
-
+        
         {
           layout: 'noBorders',
           table: {
@@ -235,109 +184,88 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
         laporanMeta: { fontSize: 9, color: '#666666' }
       }
     };
-
     // Add foto awal and foto selesai if available
     if (latestTracking && (latestTracking.fotoAwal || latestTracking.fotoSelesai)) {
       docDefinition.content.push({ text: 'VERIFIKASI IDENTITAS', style: 'sectionHeader', margin: [0, 10, 0, 10] });
-
-
-
-      // Add map image if available
-      if (mapImage) {
-        docDefinition.content.push(
-          { text: 'PETA RUTE INSPEKSI', style: 'sectionHeader', margin: [0, 10, 0, 8] },
-          { image: mapImage, width: 480, alignment: 'center', margin: [0, 0, 0, 5] },
-          {
-            text: `🟢 Titik Awal: ${tugas.startPointName || `${tugas.startPointLat.toFixed(5)}, ${tugas.startPointLong.toFixed(5)}`}    🔴 Titik Akhir: ${tugas.endPointName || `${tugas.endPointLat.toFixed(5)}, ${tugas.endPointLong.toFixed(5)}`}`,
-            style: 'laporanMeta',
-            alignment: 'center',
-            margin: [0, 0, 0, 20]
-          }
-        );
-      }
-      // Add foto awal and foto selesai if available
-      if (latestTracking && (latestTracking.fotoAwal || latestTracking.fotoSelesai)) {
-        docDefinition.content.push({ text: 'VERIFIKASI IDENTITAS', style: 'sectionHeader', margin: [0, 10, 0, 10] });
-
-
-        const identityTableBody = [
-          [
-            latestTracking.fotoAwal ? { text: 'Foto Awal (Mulai)', style: 'laporanTitle', alignment: 'center' } : '',
-            latestTracking.fotoSelesai ? { text: 'Foto Akhir (Selesai)', style: 'laporanTitle', alignment: 'center' } : ''
-          ],
-          [
-            latestTracking.fotoAwal && latestTracking.fotoAwal.startsWith('data:image/') ? { image: latestTracking.fotoAwal, width: 200, alignment: 'center' } : '',
-            latestTracking.fotoSelesai && latestTracking.fotoSelesai.startsWith('data:image/') ? { image: latestTracking.fotoSelesai, width: 200, alignment: 'center' } : ''
-          ]
-        ];
-
-        docDefinition.content.push({
-          layout: 'noBorders',
-          table: {
-            widths: ['*', '*'],
-            body: identityTableBody
-          },
-          margin: [0, 0, 0, 20]
-        });
-      }
-
-      docDefinition.content.push({ text: 'DAFTAR TEMUAN', style: 'sectionHeader', margin: [0, 10, 0, 10] });
-
-      if (laporanList.length === 0) {
-        docDefinition.content.push({ text: 'Inspeksi berlangsung tanpa ada temuan kendala.', italics: true, color: '#555555' });
-      } else {
-        laporanList.forEach((lap, idx) => {
-          docDefinition.content.push({
-            text: `${idx + 1}. [${lap.jenisTemuan.toUpperCase()}] ${formatTime(lap.createdAt)}`,
-            style: 'laporanTitle',
-            margin: [0, 10, 0, 2]
-          });
-
-          if (lap.deskripsi) {
-            docDefinition.content.push({
-              text: `Deskripsi: ${lap.deskripsi}`,
-              style: 'laporanDesc',
-              margin: [15, 0, 0, 2]
-            });
-          }
-
-          docDefinition.content.push({
-            text: `Koordinat: ${lap.latitude.toFixed(5)}, ${lap.longitude.toFixed(5)}`,
-            style: 'laporanMeta',
-            margin: [15, 0, 0, 5]
-          });
-
-          // if there's a photo, and it's base64, embed it
-          if (lap.foto && lap.foto.startsWith('data:image/')) {
-            try {
-              docDefinition.content.push({
-                image: lap.foto,
-                width: 250,
-                margin: [15, 5, 0, 10]
-              });
-            } catch (e) {
-              console.error('Failed to embed image for laporan', lap.id, e);
-            }
-          }
-        });
-      }
+      
+      const identityTableBody = [
+        [
+          latestTracking.fotoAwal ? { text: 'Foto Awal (Mulai)', style: 'laporanTitle', alignment: 'center' } : '',
+          latestTracking.fotoSelesai ? { text: 'Foto Akhir (Selesai)', style: 'laporanTitle', alignment: 'center' } : ''
+        ],
+        [
+          latestTracking.fotoAwal && latestTracking.fotoAwal.startsWith('data:image/') ? { image: latestTracking.fotoAwal, width: 200, alignment: 'center' } : '',
+          latestTracking.fotoSelesai && latestTracking.fotoSelesai.startsWith('data:image/') ? { image: latestTracking.fotoSelesai, width: 200, alignment: 'center' } : ''
+        ]
+      ];
 
       docDefinition.content.push({
-        text: `\n\nDicetak pada: ${formatDate(new Date())} ${formatTime(new Date())}`,
-        style: 'laporanMeta',
-        alignment: 'right',
-        margin: [0, 30, 0, 0]
+        layout: 'noBorders',
+        table: {
+          widths: ['*', '*'],
+          body: identityTableBody
+        },
+        margin: [0, 0, 0, 20]
       });
-
-      const doc = pdfmake.createPdf(docDefinition);
-      const buffer = await doc.getBuffer();
-
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="Laporan_Inspeksi_PPJ_${tugas.id}.pdf"`);
-      return res.send(buffer);
-
-    } catch (error) {
-      console.error('Download Report error:', error);
-      return res.status(500).json({ success: false, message: 'Internal server error' });
     }
-  };
+
+    docDefinition.content.push({ text: 'DAFTAR TEMUAN', style: 'sectionHeader', margin: [0, 10, 0, 10] });
+
+    if (laporanList.length === 0) {
+      docDefinition.content.push({ text: 'Inspeksi berlangsung tanpa ada temuan kendala.', italics: true, color: '#555555' });
+    } else {
+      laporanList.forEach((lap, idx) => {
+        docDefinition.content.push({
+          text: `${idx + 1}. [${lap.jenisTemuan.toUpperCase()}] ${formatTime(lap.createdAt)}`,
+          style: 'laporanTitle',
+          margin: [0, 10, 0, 2]
+        });
+        
+        if (lap.deskripsi) {
+          docDefinition.content.push({
+            text: `Deskripsi: ${lap.deskripsi}`,
+            style: 'laporanDesc',
+            margin: [15, 0, 0, 2]
+          });
+        }
+        
+        docDefinition.content.push({
+          text: `Koordinat: ${lap.latitude.toFixed(5)}, ${lap.longitude.toFixed(5)}`,
+          style: 'laporanMeta',
+          margin: [15, 0, 0, 5]
+        });
+
+        // if there's a photo, and it's base64, embed it
+        if (lap.foto && lap.foto.startsWith('data:image/')) {
+          try {
+            docDefinition.content.push({
+              image: lap.foto,
+              width: 250,
+              margin: [15, 5, 0, 10]
+            });
+          } catch (e) {
+            console.error('Failed to embed image for laporan', lap.id, e);
+          }
+        }
+      });
+    }
+
+    docDefinition.content.push({
+      text: `\n\nDicetak pada: ${formatDate(new Date())} ${formatTime(new Date())}`,
+      style: 'laporanMeta',
+      alignment: 'right',
+      margin: [0, 30, 0, 0]
+    });
+
+    const doc = pdfmake.createPdf(docDefinition);
+    const buffer = await doc.getBuffer();
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="Laporan_Inspeksi_PPJ_${tugas.id}.pdf"`);
+    return res.send(buffer);
+
+  } catch (error) {
+    console.error('Download Report error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};

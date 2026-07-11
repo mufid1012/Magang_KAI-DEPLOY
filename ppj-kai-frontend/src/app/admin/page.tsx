@@ -1,11 +1,13 @@
+// Force Next.js rebuild
 'use client';
 
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import api from '../../lib/api';
 import { useRouter } from 'next/navigation';
-import { playNotification, NotificationSound, speakEmergencyAnnouncement, startLoopingNotification, stopLoopingNotification } from '../../lib/audio';
-
+import { playNotification, NotificationSound, speakEmergencyAnnouncement } from '../../lib/audio';
+import { showToast } from '../../lib/toast';
+import { showConfirm } from '../../lib/confirm';
 
 // Same deterministic color as AdminMap — NIPP → unique HSL color
 function petugasColor(nipp: string): string {
@@ -101,37 +103,21 @@ export default function AdminPage() {
   const [submitting, setSubmitting] = useState(false);
 
   const [showAddPetugasModal, setShowAddPetugasModal] = useState(false);
-  const [availablePetugas, setAvailablePetugas] = useState<{ id: number, nipp: string, nama: string }[]>([]);
+  const [availablePetugas, setAvailablePetugas] = useState<{id: number, nipp: string, nama: string}[]>([]);
   const [searchPetugas, setSearchPetugas] = useState('');
   const [selectedNipps, setSelectedNipps] = useState<string[]>([]);
   const [addingPetugas, setAddingPetugas] = useState(false);
-
+  
   // History state
   const [selectedPetugasHistory, setSelectedPetugasHistory] = useState<Petugas | null>(null);
 
-  // ── Import Excel state ──
-  const [showImportModal, setShowImportModal] = useState(false);
-  const [importFile, setImportFile] = useState<File | null>(null);
-  const [importPreview, setImportPreview] = useState<any[] | null>(null);
-  const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState<{ imported: number; errors: number; errorDetails: { row: number; message: string }[] } | null>(null);
-  const [dragOver, setDragOver] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-
-  // ── Template state ──
-  const [showTemplateModal, setShowTemplateModal] = useState(false);
-  const [templates, setTemplates] = useState<any[]>([]);
-  const [templateView, setTemplateView] = useState<'list' | 'create' | 'apply'>('list');
-  const [templateForm, setTemplateForm] = useState({ nama: '', items: [{ assignedTo: '', startPointName: '', endPointName: '', jamMulai: '', jamSelesai: '' }] });
-  const [savingTemplate, setSavingTemplate] = useState(false);
-  const [applyingTemplate, setApplyingTemplate] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState<any | null>(null);
-  const [applyDates, setApplyDates] = useState({ startDate: '', endDate: '' });
+  // Excel import state
+  const [importLoading, setImportLoading] = useState(false);
+  const [importResult, setImportResult] = useState<{ total: number; created: number; failed: number; details: { row: number; status: string; message: string; jalur?: string }[] } | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // Audio Notification State
   const [alertSound, setAlertSound] = useState<NotificationSound>('off');
-  const [alertActive, setAlertActive] = useState(false);
   const lastEmergencyId = React.useRef(0);
 
   // Load alert sound preference
@@ -142,14 +128,13 @@ export default function AdminPage() {
     }
   }, []);
 
-  // Play looping sound + TTS on new emergency
+  // Play sound + TTS on new emergency
   useEffect(() => {
     if (emergencies.length > 0) {
       const latestId = Math.max(...emergencies.map(e => e.id));
       if (lastEmergencyId.current > 0 && latestId > lastEmergencyId.current) {
-        // Start looping alert sound
-        startLoopingNotification(alertSound);
-        setAlertActive(alertSound !== 'off');
+        // Play alert sound first
+        playNotification(alertSound);
 
         // Find the newest emergency for TTS announcement
         const newEmergency = emergencies.find(e => e.id === latestId);
@@ -165,24 +150,12 @@ export default function AdminPage() {
     }
   }, [emergencies, alertSound]);
 
-  // Cleanup looping sound on unmount
-  useEffect(() => {
-    return () => { stopLoopingNotification(); };
-  }, []);
-
-  const handleDismissAlert = () => {
-    stopLoopingNotification();
-    window.speechSynthesis.cancel();
-    setAlertActive(false);
-  };
-
   const handleSoundChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const sound = e.target.value as NotificationSound;
     setAlertSound(sound);
     localStorage.setItem('admin_alert_sound', sound);
     playNotification(sound); // Preview the sound
   };
-
 
   const fetchAvailablePetugas = async () => {
     try {
@@ -227,11 +200,11 @@ export default function AdminPage() {
       if (me?.wilayahAssignments) {
         const stationNames: string[] = [];
         for (const wa of me.wilayahAssignments) {
-          try { stationNames.push(...JSON.parse(wa.wilayah.stations)); } catch { }
+          try { stationNames.push(...JSON.parse(wa.wilayah.stations)); } catch {}
         }
         setUserStations(stationNames);
       }
-    }).catch(() => { });
+    }).catch(() => {});
     fetchAll();
     const interval = setInterval(fetchAll, 15000);
     return () => clearInterval(interval);
@@ -254,8 +227,8 @@ export default function AdminPage() {
     setShowUserModal(true);
   };
   const handleSaveUser = async () => {
-    if (!userForm.nipp || !userForm.nama || !userForm.role) { alert('Lengkapi semua field!'); return; }
-    if (!editingUser && !userForm.password) { alert('Password wajib diisi untuk akun baru!'); return; }
+    if (!userForm.nipp || !userForm.nama || !userForm.role) { showToast('Lengkapi semua field!', 'warning'); return; }
+    if (!editingUser && !userForm.password) { showToast('Password wajib diisi untuk akun baru!', 'warning'); return; }
     try {
       setSavingUser(true);
       if (editingUser) {
@@ -268,12 +241,12 @@ export default function AdminPage() {
       }
       setShowUserModal(false);
       fetchUsers();
-    } catch (e: any) { alert(e.response?.data?.message || 'Gagal menyimpan akun.'); }
+    } catch (e: any) { showToast(e.response?.data?.message || 'Gagal menyimpan akun.', 'error'); }
     finally { setSavingUser(false); }
   };
   const handleToggleUserActive = async (u: ManagedUser) => {
     const action = u.isActive ? 'Nonaktifkan' : 'Aktifkan';
-    if (!confirm(`${action} akun ${u.nama}?`)) return;
+    if (!(await showConfirm(`${action} akun ${u.nama}?`))) return;
     try {
       if (u.isActive) {
         await api.delete(`/admin/users/${u.id}`);
@@ -281,7 +254,7 @@ export default function AdminPage() {
         await api.patch(`/admin/users/${u.id}`, { isActive: true });
       }
       fetchUsers();
-    } catch (e: any) { alert(e.response?.data?.message || 'Gagal.'); }
+    } catch (e: any) { showToast(e.response?.data?.message || 'Gagal.', 'error'); }
   };
 
   // Station dropdown handlers
@@ -334,20 +307,20 @@ export default function AdminPage() {
   };
 
   const handleCreateTugas = async () => {
-    if (!form.jalur || !form.tanggal || !form.assignedTo || !form.startPointLat || !form.endPointLat) { alert('Lengkapi semua field!'); return; }
+    if (!form.jalur || !form.tanggal || !form.assignedTo || !form.startPointLat || !form.endPointLat) { showToast('Lengkapi semua field!', 'warning'); return; }
     try {
       setSubmitting(true);
       await api.post('/admin/tugas', form);
       setShowTaskModal(false);
       setForm({ jalur: '', tanggal: '', assignedTo: '', startPointName: '', endPointName: '', startPointLat: '', startPointLong: '', endPointLat: '', endPointLong: '', jamMulai: '', jamSelesai: '' });
       fetchAll();
-    } catch (e: any) { console.error(e); alert(e.response?.data?.message || 'Gagal membuat tugas.'); }
+    } catch (e: any) { console.error(e); showToast(e.response?.data?.message || 'Gagal membuat tugas.', 'error'); }
     finally { setSubmitting(false); }
   };
 
   const handleDeleteTugas = async (id: number) => {
-    if (!confirm('Hapus tugas ini?')) return;
-    try { await api.delete(`/admin/tugas/${id}`); fetchAll(); } catch { alert('Gagal menghapus.'); }
+    if (!(await showConfirm('Hapus tugas ini?'))) return;
+    try { await api.delete(`/admin/tugas/${id}`); fetchAll(); } catch { showToast('Gagal menghapus.', 'error'); }
   };
 
   const handleAddPetugas = async () => {
@@ -355,124 +328,66 @@ export default function AdminPage() {
     try {
       setAddingPetugas(true);
       const res = await api.post('/admin/petugas/add', { nipps: selectedNipps });
-      alert(res.data.message);
+      showToast(res.data.message, 'success');
       setShowAddPetugasModal(false);
       setSelectedNipps([]);
       fetchAll();
     } catch (e: any) {
-      alert(e.response?.data?.message || 'Gagal menambahkan petugas.');
+      showToast(e.response?.data?.message || 'Gagal menambahkan petugas.', 'error');
     } finally {
       setAddingPetugas(false);
     }
   };
 
   const handleRemovePetugas = async (id: number) => {
-    if (!confirm('Hapus petugas ini dari daftar kelola Anda? Mereka tidak akan dihapus dari sistem, hanya dari pantauan Anda.')) return;
+    if (!(await showConfirm('Hapus petugas ini dari daftar kelola Anda? Mereka tidak akan dihapus dari sistem, hanya dari pantauan Anda.'))) return;
     try {
       await api.post('/admin/petugas/remove', { id });
       fetchAll();
     } catch (e: any) {
-      alert(e.response?.data?.message || 'Gagal menghapus petugas.');
+      showToast(e.response?.data?.message || 'Gagal menghapus petugas.', 'error');
     }
   };
 
-  // ── Import Excel handlers ──
+  // Excel import/export handlers
   const handleDownloadTemplate = async () => {
     try {
-      const res = await api.get('/admin/tugas/template-excel', { responseType: 'blob' });
+      const res = await api.get('/admin/tugas/template', { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([res.data]));
-      const a = document.createElement('a');
-      a.href = url; a.download = 'template_jadwal_ppj.xlsx'; a.click();
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'template_penugasan_ppj.xlsx');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
       window.URL.revokeObjectURL(url);
-    } catch { alert('Gagal mengunduh template.'); }
-  };
-
-  const handleFileSelect = (file: File) => {
-    if (!file.name.endsWith('.xlsx')) { alert('Hanya file .xlsx yang diizinkan'); return; }
-    setImportFile(file);
-    setImportResult(null);
-    // Read preview using FileReader
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      try {
-        const XLSX = await import('xlsx');
-        const wb = XLSX.read(e.target?.result, { type: 'array' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-        setImportPreview((data as any[][]).slice(0, 11)); // header + max 10 rows
-      } catch { setImportPreview(null); }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
-  const handleImportExcel = async () => {
-    if (!importFile) return;
-    try {
-      setImporting(true);
-      const formData = new FormData();
-      formData.append('file', importFile);
-      const res = await api.post('/admin/tugas/import-excel', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-      setImportResult(res.data.data);
-      if (res.data.data.imported > 0) fetchAll();
     } catch (e: any) {
-      alert(e.response?.data?.message || 'Gagal import file.');
-    } finally { setImporting(false); }
+      showToast(e.response?.data?.message || 'Gagal mengunduh template.', 'error');
+    }
   };
 
-  const handleCloseImport = () => {
-    setShowImportModal(false); setImportFile(null); setImportPreview(null); setImportResult(null); setDragOver(false);
-  };
+  const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-  // ── Template handlers ──
-  const fetchTemplates = async () => {
+    // Reset file input so the same file can be selected again
+    if (fileInputRef.current) fileInputRef.current.value = '';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
     try {
-      const res = await api.get('/admin/templates');
-      setTemplates(res.data.data);
-    } catch { console.error('Failed to fetch templates'); }
-  };
-
-  const handleCreateTemplate = async () => {
-    if (!templateForm.nama.trim()) { alert('Nama template wajib diisi'); return; }
-    const validItems = templateForm.items.filter(i => i.assignedTo && i.startPointName && i.endPointName);
-    if (validItems.length === 0) { alert('Minimal 1 item rute yang lengkap'); return; }
-    try {
-      setSavingTemplate(true);
-      await api.post('/admin/templates', { nama: templateForm.nama, items: validItems });
-      setTemplateView('list');
-      setTemplateForm({ nama: '', items: [{ assignedTo: '', startPointName: '', endPointName: '', jamMulai: '', jamSelesai: '' }] });
-      fetchTemplates();
-    } catch (e: any) { alert(e.response?.data?.message || 'Gagal menyimpan template.'); }
-    finally { setSavingTemplate(false); }
-  };
-
-  const handleDeleteTemplate = async (id: number) => {
-    if (!confirm('Hapus template ini?')) return;
-    try { await api.delete(`/admin/templates/${id}`); fetchTemplates(); }
-    catch { alert('Gagal menghapus template.'); }
-  };
-
-  const handleApplyTemplate = async () => {
-    if (!selectedTemplate || !applyDates.startDate || !applyDates.endDate) { alert('Pilih template dan rentang tanggal'); return; }
-    try {
-      setApplyingTemplate(true);
-      const res = await api.post(`/admin/templates/${selectedTemplate.id}/apply`, applyDates);
-      alert(res.data.message);
-      setTemplateView('list'); setSelectedTemplate(null); setApplyDates({ startDate: '', endDate: '' });
-      fetchAll();
-    } catch (e: any) { alert(e.response?.data?.message || 'Gagal menerapkan template.'); }
-    finally { setApplyingTemplate(false); }
-  };
-
-  const handleAddTemplateItem = () => {
-    setTemplateForm(f => ({ ...f, items: [...f.items, { assignedTo: '', startPointName: '', endPointName: '', jamMulai: '', jamSelesai: '' }] }));
-  };
-
-  const handleRemoveTemplateItem = (idx: number) => {
-    setTemplateForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
-  };
-
-  const handleTemplateItemChange = (idx: number, field: string, value: string) => {
-    setTemplateForm(f => ({ ...f, items: f.items.map((item, i) => i === idx ? { ...item, [field]: value } : item) }));
+      setImportLoading(true);
+      const res = await api.post('/admin/tugas/import', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setImportResult(res.data.data);
+      fetchAll(); // Refresh task list
+    } catch (e: any) {
+      showToast(e.response?.data?.message || 'Gagal mengimpor file.', 'error');
+    } finally {
+      setImportLoading(false);
+    }
   };
 
   const mapEmergencies = emergencies.map(e => ({ id: e.id, latitude: e.latitude, longitude: e.longitude, jenisTemuan: e.jenisTemuan, deskripsi: e.deskripsi, foto: e.foto, createdAt: e.createdAt, petugasNama: e.tracking?.tugas?.user?.nama, jalur: e.tracking?.tugas?.jalur }));
@@ -481,16 +396,32 @@ export default function AdminPage() {
   return (
     <div className="h-screen flex flex-col bg-[#F8FAFC] font-sans overflow-hidden">
       {/* Premium Header */}
-      <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0 z-50 shadow-sm">
-        <div className="flex items-center gap-4">
-          <img src="/logo-kai.png" alt="KAI Logo" className="h-8 w-auto object-contain" />
+      <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-6 shrink-0 z-50 shadow-sm">
+        <div className="flex items-center gap-2 md:gap-4">
+          <img src="/logo-kai.png" alt="KAI Logo" className="h-6 md:h-8 w-auto object-contain" />
           <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
-          <h1 className="font-h3 text-lg font-extrabold text-slate-800 tracking-tight hidden sm:block">Command Center <span className="text-primary">PPJ</span></h1>
-          <span className={`ml-2 px-2 py-0.5 text-white font-label-sm text-[10px] rounded uppercase font-bold tracking-widest shadow-sm ${ROLE_BADGE[userRole]?.bg || 'bg-slate-800'}`}>{ROLE_BADGE[userRole]?.label || 'Portal Admin'}</span>
+          <h1 className="font-h3 text-base md:text-lg font-extrabold text-slate-800 tracking-tight hidden sm:block">Command Center <span className="text-primary">PPJ</span></h1>
+          <span className={`ml-0 md:ml-2 px-2 py-0.5 text-white font-label-sm text-[10px] rounded uppercase font-bold tracking-widest shadow-sm hidden sm:inline-block ${ROLE_BADGE[userRole]?.bg || 'bg-slate-800'}`}>{ROLE_BADGE[userRole]?.label || 'Portal Admin'}</span>
         </div>
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-primary-container text-primary rounded-full flex items-center justify-center font-bold text-sm border border-primary/20">
+        <div className="flex items-center gap-3 md:gap-6">
+          {/* Sound settings */}
+          <div className="flex items-center gap-1 md:gap-2 mr-1 md:mr-2">
+            <span className="material-symbols-outlined text-slate-400 text-[18px] md:text-[20px]">{alertSound === 'off' ? 'notifications_off' : 'notifications_active'}</span>
+            <select
+              value={alertSound}
+              onChange={handleSoundChange}
+              className="bg-slate-50 border border-slate-200 text-slate-600 font-medium text-[10px] md:text-[11px] rounded-lg px-1 md:px-2 py-1.5 focus:ring-primary focus:border-primary outline-none cursor-pointer w-[60px] md:w-auto"
+            >
+              <option value="off">Mati</option>
+              <option value="siren">Sirine</option>
+              <option value="beep">Beep</option>
+              <option value="chime">Lonceng</option>
+            </select>
+          </div>
+          <div className="w-px h-6 bg-slate-200 hidden md:block"></div>
+          
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className="w-7 h-7 md:w-8 md:h-8 bg-primary-container text-primary rounded-full flex items-center justify-center font-bold text-xs md:text-sm border border-primary/20">
               {user?.nama?.substring(0, 2).toUpperCase() || 'AD'}
             </div>
             <div className="hidden md:flex flex-col">
@@ -498,65 +429,52 @@ export default function AdminPage() {
             </div>
           </div>
           <div className="w-px h-6 bg-slate-200"></div>
-          <button onClick={handleLogout} className="flex items-center gap-2 text-slate-500 hover:text-error transition-colors font-label-sm font-semibold">
-            <span className="material-symbols-outlined text-[20px]">logout</span>
+          <button onClick={handleLogout} className="flex items-center gap-2 text-slate-500 hover:text-error transition-colors font-label-sm font-semibold p-1">
+            <span className="material-symbols-outlined text-[20px] md:text-[20px]">logout</span>
           </button>
         </div>
       </header>
 
-      {/* ── Alert Dismiss Banner ─────────────────────────── */}
-      {alertActive && (
-        <div className="bg-rose-600 text-white px-4 py-2 flex items-center justify-between shrink-0 z-50 animate-pulse">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-[20px]">emergency</span>
-            <span className="text-sm font-bold tracking-wide">🔔 ALARM DARURAT AKTIF — Suara akan terus berbunyi</span>
-          </div>
-          <button
-            onClick={handleDismissAlert}
-            className="bg-white text-rose-600 px-4 py-1.5 rounded-lg text-xs font-extrabold uppercase tracking-wider hover:bg-rose-100 transition-colors shadow-sm"
-          >
-            Hentikan Alarm
-          </button>
-        </div>
-      )}
-
       {/* Main Content */}
-      <div className="flex flex-1 overflow-hidden">
-
-        {/* Vertical Sidebar Nav */}
-        <nav className="w-[72px] bg-white border-r border-slate-200 flex flex-col items-center py-4 gap-2 shrink-0">
+      <div className="flex flex-col-reverse md:flex-row flex-1 overflow-hidden relative pb-[60px] md:pb-0">
+        
+        {/* Bottom / Vertical Sidebar Nav */}
+        <nav className="fixed md:static bottom-0 left-0 right-0 h-[60px] md:h-auto md:w-[72px] bg-white border-t md:border-t-0 md:border-r border-slate-200 flex flex-row md:flex-col items-center justify-around md:justify-start py-2 md:py-4 gap-2 shrink-0 z-40">
           <button
             onClick={() => setActiveMenu('penugasan')}
-            className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${activeMenu === 'penugasan'
-              ? 'bg-primary text-white shadow-lg shadow-primary/25'
-              : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
-              }`}
+            className={`w-16 h-12 md:w-14 md:h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
+              activeMenu === 'penugasan'
+                ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+            }`}
             title="Penugasan PPJ"
           >
-            <span className="material-symbols-outlined text-[22px]">assignment</span>
+            <span className="material-symbols-outlined text-[20px] md:text-[22px]">assignment</span>
             <span className="text-[9px] font-bold uppercase tracking-wider leading-none">Tugas</span>
           </button>
           <button
             onClick={() => setActiveMenu('liveview')}
-            className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${activeMenu === 'liveview'
-              ? 'bg-primary text-white shadow-lg shadow-primary/25'
-              : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
-              }`}
+            className={`w-16 h-12 md:w-14 md:h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
+              activeMenu === 'liveview'
+                ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+            }`}
             title="Live View"
           >
-            <span className="material-symbols-outlined text-[22px]">map</span>
+            <span className="material-symbols-outlined text-[20px] md:text-[22px]">map</span>
             <span className="text-[9px] font-bold uppercase tracking-wider leading-none">Live</span>
           </button>
           {isAdmin && (
             <button
               onClick={() => { setActiveMenu('akun'); fetchUsers(); }}
-              className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${activeMenu === 'akun'
-                ? 'bg-primary text-white shadow-lg shadow-primary/25'
-                : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
-                }`}
+              className={`w-16 h-12 md:w-14 md:h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
+                activeMenu === 'akun'
+                  ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                  : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+              }`}
               title="Kelola Akun"
             >
-              <span className="material-symbols-outlined text-[22px]">manage_accounts</span>
+              <span className="material-symbols-outlined text-[20px] md:text-[22px]">manage_accounts</span>
               <span className="text-[9px] font-bold uppercase tracking-wider leading-none">Akun</span>
             </button>
           )}
@@ -564,9 +482,9 @@ export default function AdminPage() {
 
         {/* ── PENUGASAN VIEW ──────────────────────────────────── */}
         {activeMenu === 'penugasan' && (
-          <div className="flex flex-1 overflow-hidden p-4 gap-4">
+          <div className="flex flex-col md:flex-row flex-1 overflow-y-auto md:overflow-hidden p-3 md:p-4 gap-4">
             {/* Left Sidebar (Stats + Lists) */}
-            <aside className="w-[420px] flex flex-col gap-4 shrink-0">
+            <aside className="w-full md:w-[420px] flex flex-col gap-4 shrink-0">
               {/* KPI Grid */}
               <div className="grid grid-cols-2 gap-3 shrink-0">
                 {[
@@ -588,7 +506,7 @@ export default function AdminPage() {
               </div>
 
               {/* Activity Panel */}
-              <div className="flex-1 bg-white border border-slate-200 rounded-xl shadow-sm flex flex-col overflow-hidden">
+              <div className="min-h-[400px] md:min-h-0 flex-1 bg-white border border-slate-200 rounded-xl shadow-sm flex flex-col overflow-hidden">
                 {/* Tabs */}
                 <div className="flex border-b border-slate-200 shrink-0 bg-slate-50">
                   <button onClick={() => setActiveTab('map')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${activeTab === 'map' ? 'text-primary border-primary bg-primary-container/5' : 'text-slate-500 border-transparent hover:bg-slate-100'}`}>
@@ -604,7 +522,7 @@ export default function AdminPage() {
 
                 {/* List Content */}
                 <div className="flex-1 overflow-y-auto p-4 bg-white relative">
-
+                  
                   {/* Petugas Tab */}
                   {activeTab === 'map' && (
                     <div className="space-y-3">
@@ -618,8 +536,8 @@ export default function AdminPage() {
                       {petugas.map(p => {
                         const aktif = p.tugasPpj.find(t => t.status === 'in_progress');
                         return (
-                          <div
-                            key={p.id}
+                          <div 
+                            key={p.id} 
                             onClick={() => setSelectedPetugasHistory(p)}
                             className="bg-slate-50 rounded-xl p-3 border border-slate-200 flex items-center gap-3 relative group cursor-pointer hover:border-primary/50 transition-colors"
                           >
@@ -636,8 +554,8 @@ export default function AdminPage() {
                             </div>
                             {/* Remove button (shows on hover) — only for admin/kupt */}
                             {canWrite && (
-                              <button
-                                onClick={(e) => { e.stopPropagation(); handleRemovePetugas(p.id); }}
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); handleRemovePetugas(p.id); }} 
                                 className="absolute -top-2 -right-2 w-7 h-7 bg-white border border-slate-200 rounded-full text-slate-400 hover:text-rose-600 hover:border-rose-300 shadow-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all z-10"
                               >
                                 <span className="material-symbols-outlined text-[16px]">delete</span>
@@ -700,21 +618,39 @@ export default function AdminPage() {
                     </div>
                   )}
                 </div>
-
+                
                 {/* Action Buttons (Docked) — only for admin/kupt */}
                 {canWrite && activeTab === 'tasks' && (
                   <div className="p-3 border-t border-slate-200 bg-slate-50 shrink-0 space-y-2">
+                    {/* Excel Import/Export Row */}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleDownloadTemplate}
+                        className="flex-1 py-2 bg-white border border-emerald-300 text-emerald-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-emerald-50 shadow-sm transition-all active:scale-[0.98]"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">download</span>
+                        Template
+                      </button>
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={importLoading}
+                        className="flex-1 py-2 bg-white border border-blue-300 text-blue-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-blue-50 shadow-sm transition-all active:scale-[0.98] disabled:opacity-50"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">{importLoading ? 'hourglass_empty' : 'upload_file'}</span>
+                        {importLoading ? 'Importing...' : 'Import Excel'}
+                      </button>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".xlsx,.xls"
+                        onChange={handleImportExcel}
+                        className="hidden"
+                      />
+                    </div>
+                    {/* Create Single Task Button */}
                     <button onClick={() => setShowTaskModal(true)} className="w-full py-2.5 bg-primary text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-primary/90 shadow-sm transition-all active:scale-[0.98]">
                       <span className="material-symbols-outlined text-[18px]">add</span> Tugaskan Pemeriksa
                     </button>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button onClick={() => { setShowImportModal(true); setImportFile(null); setImportPreview(null); setImportResult(null); }} className="py-2 bg-white border border-emerald-500 text-emerald-600 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-emerald-50 shadow-sm transition-all active:scale-[0.98]">
-                        <span className="material-symbols-outlined text-[16px]">upload_file</span> Import Excel
-                      </button>
-                      <button onClick={() => { setShowTemplateModal(true); setTemplateView('list'); fetchTemplates(); }} className="py-2 bg-white border border-indigo-500 text-indigo-600 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-indigo-50 shadow-sm transition-all active:scale-[0.98]">
-                        <span className="material-symbols-outlined text-[16px]">bookmark</span> Template
-                      </button>
-                    </div>
                   </div>
                 )}
                 {canWrite && activeTab === 'map' && (
@@ -728,12 +664,12 @@ export default function AdminPage() {
             </aside>
 
             {/* Right Area — Task List Detail / Summary */}
-            <main className="flex-1 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col relative">
+            <main className="min-h-[500px] md:min-h-0 flex-1 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col relative">
               {/* Penugasan summary with large cards */}
-              <div className="flex-1 overflow-y-auto p-6">
+              <div className="flex-1 overflow-y-auto p-4 md:p-6">
                 <h2 className="text-lg font-extrabold text-slate-800 mb-1 tracking-tight">Daftar Penugasan PPJ</h2>
                 <p className="text-sm text-slate-500 mb-6">Kelola tugas inspeksi jalur petugas Anda</p>
-
+                
                 {tugas.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-20 text-center">
                     <span className="material-symbols-outlined text-slate-200 text-6xl mb-4">assignment</span>
@@ -788,7 +724,7 @@ export default function AdminPage() {
 
         {/* ── LIVE VIEW ──────────────────────────────────────── */}
         {activeMenu === 'liveview' && (
-          <main className="flex-1 overflow-hidden flex flex-col relative isolate m-4 bg-white rounded-xl border border-slate-200 shadow-sm">
+          <main className="flex-1 overflow-hidden flex flex-col relative isolate m-3 md:m-4 bg-white rounded-xl border border-slate-200 shadow-sm">
             <AdminMap
               emergencies={mapEmergencies}
               tasks={mapTasks}
@@ -799,7 +735,7 @@ export default function AdminPage() {
             <div className="absolute bottom-6 left-6 bg-white/95 backdrop-blur-md rounded-xl p-3 shadow-md border border-slate-200 z-[1000]">
               <p className="text-slate-500 uppercase font-bold text-[9px] tracking-widest mb-2">Legenda Visual</p>
               <div className="flex flex-col gap-2">
-                {[['#94a3b8', 'Tugas Pending'], ['#005bac', 'Tugas Aktif'], ['#22c55e', 'Selesai']].map(([c, l]) => (
+                {[['#94a3b8','Tugas Pending'],['#005bac','Tugas Aktif'],['#22c55e','Selesai']].map(([c,l]) => (
                   <div key={l} className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-sm shadow-sm" style={{ background: c }} />
                     <span className="text-slate-700 text-[11px] font-semibold">{l}</span>
@@ -811,7 +747,7 @@ export default function AdminPage() {
                 </div>
               </div>
             </div>
-
+            
             {/* Live Indicator */}
             <div className="absolute top-6 right-6 bg-white/95 backdrop-blur-md rounded-full px-3 py-1.5 shadow-sm border border-slate-200 flex items-center gap-2 z-[1000]">
               <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
@@ -822,10 +758,10 @@ export default function AdminPage() {
 
         {/* ── AKUN MANAGEMENT VIEW (Admin Only) ────────────── */}
         {activeMenu === 'akun' && isAdmin && (
-          <div className="flex flex-1 overflow-hidden p-4 gap-4">
-            <div className="flex-1 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+          <div className="flex flex-col lg:flex-row flex-1 overflow-y-auto lg:overflow-hidden p-3 md:p-4 gap-4">
+            <div className="min-h-[500px] lg:min-h-0 flex-1 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
               {/* Header */}
-              <div className="p-6 border-b border-slate-200 flex items-center justify-between shrink-0">
+              <div className="p-4 md:p-6 border-b border-slate-200 flex items-center justify-between shrink-0">
                 <div>
                   <h2 className="text-lg font-extrabold text-slate-800 tracking-tight">Kelola Akun Pengguna</h2>
                   <p className="text-sm text-slate-500 mt-0.5">Buat, edit, dan kelola akun QC, KUPT, dan PPJ</p>
@@ -862,8 +798,9 @@ export default function AdminPage() {
                         return u.nipp.toLowerCase().includes(q) || u.nama.toLowerCase().includes(q);
                       })
                       .map(u => (
-                        <div key={u.id} className={`bg-slate-50 rounded-2xl border p-5 relative group transition-all ${u.isActive ? 'border-slate-200 hover:border-primary/30' : 'border-rose-200 bg-rose-50/50 opacity-70'
-                          }`}>
+                        <div key={u.id} className={`bg-slate-50 rounded-2xl border p-5 relative group transition-all ${
+                          u.isActive ? 'border-slate-200 hover:border-primary/30' : 'border-rose-200 bg-rose-50/50 opacity-70'
+                        }`}>
                           <div className="flex items-start gap-3 mb-3">
                             <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm text-white shadow-inner shrink-0" style={{ background: petugasColor(u.nipp) }}>
                               {u.nama.substring(0, 2).toUpperCase()}
@@ -872,10 +809,11 @@ export default function AdminPage() {
                               <p className="font-bold text-slate-800 text-sm truncate">{u.nama}</p>
                               <p className="text-xs text-slate-500 font-medium">{u.nipp}</p>
                             </div>
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${u.role === 'qc' ? 'bg-indigo-100 text-indigo-700' :
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                              u.role === 'qc' ? 'bg-indigo-100 text-indigo-700' :
                               u.role === 'kupt' ? 'bg-teal-100 text-teal-700' :
-                                'bg-slate-100 text-slate-700'
-                              }`}>{ROLE_LABEL[u.role] || u.role}</span>
+                              'bg-slate-100 text-slate-700'
+                            }`}>{ROLE_LABEL[u.role] || u.role}</span>
                           </div>
                           {u.wilayahAssignments.length > 0 && (
                             <div className="flex flex-wrap gap-1.5 mb-3">
@@ -887,8 +825,9 @@ export default function AdminPage() {
                             </div>
                           )}
                           <div className="flex items-center gap-2 pt-3 border-t border-slate-200">
-                            <span className={`flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest ${u.isActive ? 'text-emerald-600' : 'text-rose-600'
-                              }`}>
+                            <span className={`flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest ${
+                              u.isActive ? 'text-emerald-600' : 'text-rose-600'
+                            }`}>
                               <span className={`w-1.5 h-1.5 rounded-full ${u.isActive ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
                               {u.isActive ? 'Aktif' : 'Nonaktif'}
                             </span>
@@ -1170,10 +1109,10 @@ export default function AdminPage() {
             <div className="p-5 border-b border-slate-100 shrink-0">
               <div className="relative">
                 <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
-                <input
-                  value={searchPetugas}
-                  onChange={e => setSearchPetugas(e.target.value)}
-                  placeholder="Cari nama atau NIPP petugas..."
+                <input 
+                  value={searchPetugas} 
+                  onChange={e => setSearchPetugas(e.target.value)} 
+                  placeholder="Cari nama atau NIPP petugas..." 
                   className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-xl text-sm bg-slate-50 focus:bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-all"
                 />
               </div>
@@ -1188,7 +1127,7 @@ export default function AdminPage() {
                     .map(p => {
                       const isSelected = selectedNipps.includes(p.nipp);
                       return (
-                        <button
+                        <button 
                           key={p.id}
                           onClick={() => {
                             if (isSelected) {
@@ -1213,7 +1152,7 @@ export default function AdminPage() {
                           )}
                         </button>
                       );
-                    })}
+                  })}
                   {availablePetugas.filter(p => p.nama.toLowerCase().includes(searchPetugas.toLowerCase()) || p.nipp.toLowerCase().includes(searchPetugas.toLowerCase())).length === 0 && (
                     <div className="p-4 text-center text-slate-500 text-sm">Pencarian tidak ditemukan.</div>
                   )}
@@ -1246,7 +1185,7 @@ export default function AdminPage() {
               </div>
               <button onClick={() => setSelectedPetugasHistory(null)} className="text-slate-400 hover:text-white transition-colors"><span className="material-symbols-outlined">close</span></button>
             </div>
-
+            
             <div className="flex-1 overflow-y-auto p-5 bg-slate-50/50">
               <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Riwayat Pekerjaan Tracking</h4>
               <div className="space-y-3">
@@ -1259,18 +1198,18 @@ export default function AdminPage() {
                   tugas.filter(t => t.user.nipp === selectedPetugasHistory.nipp).map(t => {
                     const latestTracking = t.tracking?.[0];
                     const laporanList = latestTracking?.laporan || [];
-
+                    
                     return (
                       <div key={t.id} className="bg-white rounded-xl border border-slate-200 shadow-sm relative overflow-hidden mb-4">
                         <div className={`absolute top-0 left-0 w-1.5 h-full ${t.status === 'completed' ? 'bg-primary' : t.status === 'in_progress' ? 'bg-blue-500' : 'bg-slate-300'}`}></div>
-
+                        
                         <div className="p-4 pl-5 border-b border-slate-100">
                           <div className="flex justify-between items-start gap-2 mb-1">
                             <p className="font-bold text-slate-800 text-sm leading-snug">{t.jalur}</p>
                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border shrink-0 ${STATUS_COLOR[t.status]}`}>{STATUS_LABEL[t.status]}</span>
                           </div>
                           <p className="text-xs font-semibold text-slate-500 mb-2 flex items-center gap-1">
-                            <span className="material-symbols-outlined text-[14px]">calendar_today</span>
+                            <span className="material-symbols-outlined text-[14px]">calendar_today</span> 
                             {new Date(t.tanggal).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
                           </p>
                           <div className="flex items-center gap-4 pt-2">
@@ -1285,11 +1224,11 @@ export default function AdminPage() {
                                   ? latestTracking.durasi >= 3600
                                     ? `${Math.floor(latestTracking.durasi / 3600)} jam ${Math.floor((latestTracking.durasi % 3600) / 60)} menit`
                                     : latestTracking.durasi >= 60
-                                      ? `${Math.floor(latestTracking.durasi / 60)} menit`
-                                      : `${latestTracking.durasi} detik`
+                                    ? `${Math.floor(latestTracking.durasi / 60)} menit`
+                                    : `${latestTracking.durasi} detik`
                                   : latestTracking?.startTime && latestTracking?.endTime
-                                    ? `${Math.floor((new Date(latestTracking.endTime).getTime() - new Date(latestTracking.startTime).getTime()) / 60000)} menit`
-                                    : '-'
+                                  ? `${Math.floor((new Date(latestTracking.endTime).getTime() - new Date(latestTracking.startTime).getTime()) / 60000)} menit`
+                                  : '-'
                               }</span>
                             </div>
                             <div className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -1351,327 +1290,76 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* ═══ IMPORT EXCEL MODAL ═══ */}
-      {showImportModal && (
+      {/* ── Import Result Modal ──────────────────────────── */}
+      {importResult && (
         <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
-            <div className="bg-emerald-700 px-6 py-4 flex items-center justify-between shrink-0">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-slate-800 px-6 py-4 flex items-center justify-between shrink-0">
               <h3 className="text-base font-bold text-white flex items-center gap-3 tracking-wide">
-                <span className="material-symbols-outlined text-[20px]">upload_file</span> IMPORT JADWAL DARI EXCEL
+                <span className="material-symbols-outlined text-emerald-400 text-[20px]">task_alt</span>
+                HASIL IMPORT EXCEL
               </h3>
-              <button onClick={handleCloseImport} className="text-white/70 hover:text-white transition-colors"><span className="material-symbols-outlined">close</span></button>
+              <button onClick={() => setImportResult(null)} className="text-slate-400 hover:text-white transition-colors flex items-center">
+                <span className="material-symbols-outlined">close</span>
+              </button>
             </div>
-            <div className="overflow-y-auto p-6 space-y-5 flex-1 bg-slate-50/50">
-              {/* Download Template */}
-              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-bold text-emerald-800">Template Excel</p>
-                  <p className="text-xs text-emerald-600 mt-0.5">Unduh template untuk memastikan format file yang benar</p>
+
+            {/* Summary */}
+            <div className="p-5 border-b border-slate-100 bg-slate-50/50">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-white rounded-xl p-3 border border-slate-200 text-center">
+                  <p className="text-2xl font-extrabold text-slate-800">{importResult.total}</p>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">Total Baris</p>
                 </div>
-                <button onClick={handleDownloadTemplate} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 hover:bg-emerald-700 shadow-sm transition-all active:scale-[0.98]">
-                  <span className="material-symbols-outlined text-[16px]">download</span> Download
-                </button>
+                <div className="bg-emerald-50 rounded-xl p-3 border border-emerald-200 text-center">
+                  <p className="text-2xl font-extrabold text-emerald-700">{importResult.created}</p>
+                  <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest mt-0.5">Berhasil</p>
+                </div>
+                <div className={`rounded-xl p-3 border text-center ${importResult.failed > 0 ? 'bg-rose-50 border-rose-200' : 'bg-white border-slate-200'}`}>
+                  <p className={`text-2xl font-extrabold ${importResult.failed > 0 ? 'text-rose-700' : 'text-slate-400'}`}>{importResult.failed}</p>
+                  <p className={`text-[10px] font-bold uppercase tracking-widest mt-0.5 ${importResult.failed > 0 ? 'text-rose-600' : 'text-slate-500'}`}>Gagal</p>
+                </div>
               </div>
+            </div>
 
-              {/* Drop Zone */}
-              {!importResult && (
+            {/* Detail List */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-1.5">
+              {importResult.details.map((d, idx) => (
                 <div
-                  onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                  onDragLeave={() => setDragOver(false)}
-                  onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleFileSelect(f); }}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${dragOver ? 'border-emerald-500 bg-emerald-50' : importFile ? 'border-emerald-400 bg-emerald-50/50' : 'border-slate-300 bg-white hover:border-emerald-400 hover:bg-emerald-50/30'
-                    }`}
+                  key={idx}
+                  className={`flex items-start gap-3 p-3 rounded-xl border text-sm ${
+                    d.status === 'success'
+                      ? 'bg-emerald-50/50 border-emerald-100'
+                      : 'bg-rose-50/50 border-rose-100'
+                  }`}
                 >
-                  <input ref={fileInputRef} type="file" accept=".xlsx" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); }} />
-                  <span className={`material-symbols-outlined text-4xl mb-3 block ${importFile ? 'text-emerald-500' : 'text-slate-300'}`}>{importFile ? 'check_circle' : 'cloud_upload'}</span>
-                  {importFile ? (
-                    <>
-                      <p className="text-sm font-bold text-emerald-700">{importFile.name}</p>
-                      <p className="text-xs text-emerald-600 mt-1">{(importFile.size / 1024).toFixed(1)} KB — Klik untuk ganti file</p>
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-sm font-bold text-slate-600">Drag & drop file Excel di sini</p>
-                      <p className="text-xs text-slate-400 mt-1">atau klik untuk pilih file (.xlsx)</p>
-                    </>
-                  )}
-                </div>
-              )}
-
-              {/* Preview Table */}
-              {importPreview && !importResult && (
-                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                  <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-                    <p className="text-xs font-bold text-slate-700 uppercase tracking-wider">Preview Data</p>
-                    <p className="text-[10px] text-slate-500">Menampilkan maks. 10 baris pertama</p>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="bg-slate-50">
-                          {importPreview[0]?.map((h: string, i: number) => (
-                            <th key={i} className="px-3 py-2 text-left font-bold text-slate-600 border-b border-slate-200 whitespace-nowrap">{String(h)}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {importPreview.slice(1).map((row: any[], rIdx: number) => (
-                          <tr key={rIdx} className="hover:bg-slate-50">
-                            {row.map((cell: any, cIdx: number) => (
-                              <td key={cIdx} className="px-3 py-1.5 border-b border-slate-100 text-slate-700 whitespace-nowrap">{String(cell)}</td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Import Result */}
-              {importResult && (
-                <div className="space-y-4">
-                  <div className={`rounded-xl p-4 border ${importResult.imported > 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'}`}>
-                    <div className="flex items-center gap-3">
-                      <span className={`material-symbols-outlined text-3xl ${importResult.imported > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{importResult.imported > 0 ? 'check_circle' : 'error'}</span>
-                      <div>
-                        <p className={`font-bold text-sm ${importResult.imported > 0 ? 'text-emerald-800' : 'text-rose-800'}`}>{importResult.imported} tugas berhasil diimport</p>
-                        {importResult.errors > 0 && <p className="text-xs text-rose-600 mt-0.5">{importResult.errors} baris bermasalah</p>}
-                      </div>
+                  <span className={`material-symbols-outlined text-[18px] mt-0.5 shrink-0 ${
+                    d.status === 'success' ? 'text-emerald-600' : 'text-rose-600'
+                  }`}>
+                    {d.status === 'success' ? 'check_circle' : 'error'}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-500">Baris {d.row}</span>
+                      {d.jalur && <span className="text-xs text-primary font-semibold truncate">{d.jalur}</span>}
                     </div>
+                    <p className={`text-xs mt-0.5 ${d.status === 'success' ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {d.message}
+                    </p>
                   </div>
-                  {importResult.errorDetails?.length > 0 && (
-                    <div className="bg-white rounded-xl border border-rose-200 overflow-hidden">
-                      <div className="px-4 py-2.5 bg-rose-50 border-b border-rose-200">
-                        <p className="text-xs font-bold text-rose-700 uppercase tracking-wider">Detail Error</p>
-                      </div>
-                      <div className="max-h-48 overflow-y-auto">
-                        {importResult.errorDetails.map((err, i) => (
-                          <div key={i} className="px-4 py-2 border-b border-rose-100 flex gap-3 items-start text-xs">
-                            <span className="bg-rose-100 text-rose-700 px-2 py-0.5 rounded font-bold shrink-0">Baris {err.row}</span>
-                            <span className="text-rose-600">{err.message}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
-              )}
+              ))}
             </div>
 
-            {/* Footer */}
-            <div className="p-5 border-t border-slate-200 flex gap-3 shrink-0 bg-white">
-              <button onClick={handleCloseImport} className="flex-1 py-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50 transition-colors uppercase tracking-wider">{importResult ? 'Tutup' : 'Batal'}</button>
-              {!importResult && (
-                <button onClick={handleImportExcel} disabled={!importFile || importing} className="flex-[2] py-3 rounded-xl bg-emerald-600 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-emerald-200 hover:bg-emerald-700 disabled:opacity-60 transition-all active:scale-[0.98] uppercase tracking-wider">
-                  <span className="material-symbols-outlined text-[18px]">publish</span>
-                  {importing ? 'Mengimport...' : 'Import Semua'}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ TEMPLATE PENUGASAN MODAL ═══ */}
-      {showTemplateModal && (
-        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
-            <div className="bg-indigo-700 px-6 py-4 flex items-center justify-between shrink-0">
-              <h3 className="text-base font-bold text-white flex items-center gap-3 tracking-wide">
-                <span className="material-symbols-outlined text-[20px]">bookmark</span>
-                {templateView === 'list' ? 'TEMPLATE PENUGASAN' : templateView === 'create' ? 'BUAT TEMPLATE BARU' : 'TERAPKAN TEMPLATE'}
-              </h3>
-              <button onClick={() => setShowTemplateModal(false)} className="text-white/70 hover:text-white transition-colors"><span className="material-symbols-outlined">close</span></button>
-            </div>
-
-            <div className="overflow-y-auto flex-1 bg-slate-50/50">
-              {/* ─── LIST VIEW ─── */}
-              {templateView === 'list' && (
-                <div className="p-6 space-y-4">
-                  {templates.length === 0 ? (
-                    <div className="text-center py-12">
-                      <span className="material-symbols-outlined text-slate-200 text-5xl mb-3 block">bookmark_border</span>
-                      <p className="text-slate-500 text-sm font-medium">Belum ada template penugasan.</p>
-                      <p className="text-slate-400 text-xs mt-1">Buat template untuk mempercepat pembuatan jadwal.</p>
-                    </div>
-                  ) : (
-                    templates.map(t => (
-                      <div key={t.id} className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm hover:border-indigo-300 transition-all">
-                        <div className="flex items-start justify-between mb-3">
-                          <div>
-                            <p className="font-bold text-slate-800 text-sm">{t.nama}</p>
-                            <p className="text-xs text-slate-500 mt-0.5">{t.items.length} rute • Dibuat {new Date(t.createdAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <button onClick={() => { setSelectedTemplate(t); setTemplateView('apply'); setApplyDates({ startDate: '', endDate: '' }); }} className="px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-indigo-100 transition-colors flex items-center gap-1">
-                              <span className="material-symbols-outlined text-[14px]">play_arrow</span> Terapkan
-                            </button>
-                            <button onClick={() => handleDeleteTemplate(t.id)} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors">
-                              <span className="material-symbols-outlined text-[16px]">delete</span>
-                            </button>
-                          </div>
-                        </div>
-                        <div className="space-y-1.5">
-                          {t.items.map((item: any, idx: number) => (
-                            <div key={idx} className="flex items-center gap-2 text-xs bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
-                              <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold shrink-0" style={{ background: petugasColor(item.petugasNipp || '') }}>
-                                {(item.petugasNama || '?').substring(0, 2).toUpperCase()}
-                              </span>
-                              <span className="font-semibold text-slate-700 truncate">{item.petugasNama || 'Petugas ?'}</span>
-                              <span className="text-slate-400">•</span>
-                              <span className="text-slate-600 truncate">{item.startPointName} → {item.endPointName}</span>
-                              {item.jamMulai && <span className="text-slate-400 shrink-0">{item.jamMulai}-{item.jamSelesai || '?'}</span>}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-
-              {/* ─── CREATE VIEW ─── */}
-              {templateView === 'create' && (
-                <div className="p-6 space-y-5">
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Nama Template</label>
-                    <input value={templateForm.nama} onChange={e => setTemplateForm(f => ({ ...f, nama: e.target.value }))} placeholder="Contoh: Jadwal Harian Sektor A" className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none shadow-sm font-medium" />
-                  </div>
-
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-2">Item Rute</label>
-                    <div className="space-y-3">
-                      {templateForm.items.map((item, idx) => (
-                        <div key={idx} className="bg-white rounded-xl border border-slate-200 p-4 relative group">
-                          {templateForm.items.length > 1 && (
-                            <button onClick={() => handleRemoveTemplateItem(idx)} className="absolute -top-2 -right-2 w-6 h-6 bg-white border border-slate-200 rounded-full text-slate-400 hover:text-rose-600 hover:border-rose-300 shadow-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all z-10">
-                              <span className="material-symbols-outlined text-[14px]">close</span>
-                            </button>
-                          )}
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
-                            <div>
-                              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Petugas</label>
-                              <select value={item.assignedTo} onChange={e => handleTemplateItemChange(idx, 'assignedTo', e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none">
-                                <option value="">-- Pilih --</option>
-                                {petugas.map(p => <option key={p.id} value={p.id}>{p.nama}</option>)}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="text-[9px] font-bold text-emerald-500 uppercase tracking-widest block mb-1">Stasiun Awal</label>
-                              <select value={item.startPointName} onChange={e => handleTemplateItemChange(idx, 'startPointName', e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 bg-white focus:ring-2 focus:ring-emerald-500 outline-none">
-                                <option value="">-- Pilih --</option>
-                                {filteredStations.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="text-[9px] font-bold text-rose-500 uppercase tracking-widest block mb-1">Stasiun Akhir</label>
-                              <select value={item.endPointName} onChange={e => handleTemplateItemChange(idx, 'endPointName', e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 bg-white focus:ring-2 focus:ring-rose-500 outline-none">
-                                <option value="">-- Pilih --</option>
-                                {filteredStations.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
-                              </select>
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Jam Mulai</label>
-                              <input type="time" value={item.jamMulai} onChange={e => handleTemplateItemChange(idx, 'jamMulai', e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none" />
-                            </div>
-                            <div>
-                              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Jam Selesai</label>
-                              <input type="time" value={item.jamSelesai} onChange={e => handleTemplateItemChange(idx, 'jamSelesai', e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none" />
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    <button onClick={handleAddTemplateItem} className="mt-3 w-full py-2 border-2 border-dashed border-slate-300 rounded-xl text-xs font-bold text-slate-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50/30 transition-all flex items-center justify-center gap-1.5">
-                      <span className="material-symbols-outlined text-[16px]">add</span> Tambah Rute
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* ─── APPLY VIEW ─── */}
-              {templateView === 'apply' && selectedTemplate && (
-                <div className="p-6 space-y-5">
-                  <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
-                    <p className="text-sm font-bold text-indigo-800">{selectedTemplate.nama}</p>
-                    <p className="text-xs text-indigo-600 mt-0.5">{selectedTemplate.items.length} rute akan digenerate untuk setiap tanggal dalam rentang</p>
-                  </div>
-
-                  <div className="bg-white rounded-xl border border-slate-200 p-4">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-3">Rentang Tanggal</label>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest block mb-1">Tanggal Mulai</label>
-                        <input type="date" value={applyDates.startDate} onChange={e => setApplyDates(d => ({ ...d, startDate: e.target.value }))} className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm font-medium" />
-                      </div>
-                      <div>
-                        <label className="text-[9px] font-bold text-rose-600 uppercase tracking-widest block mb-1">Tanggal Akhir</label>
-                        <input type="date" value={applyDates.endDate} onChange={e => setApplyDates(d => ({ ...d, endDate: e.target.value }))} className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm font-medium" />
-                      </div>
-                    </div>
-                    {applyDates.startDate && applyDates.endDate && (
-                      <div className="mt-3 bg-indigo-50 py-2 px-4 rounded-lg border border-indigo-100 flex items-center justify-between">
-                        <span className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest">Total Tugas</span>
-                        <span className="text-sm font-extrabold text-indigo-700">
-                          {(() => {
-                            const d = Math.ceil((new Date(applyDates.endDate).getTime() - new Date(applyDates.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1;
-                            return d > 0 ? `${d} hari × ${selectedTemplate.items.length} rute = ${d * selectedTemplate.items.length} tugas` : 'Tanggal tidak valid';
-                          })()}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Preview items */}
-                  <div className="space-y-1.5">
-                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Rute dalam template</p>
-                    {selectedTemplate.items.map((item: any, idx: number) => (
-                      <div key={idx} className="flex items-center gap-2 text-xs bg-white rounded-lg px-3 py-2 border border-slate-200">
-                        <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold shrink-0" style={{ background: petugasColor(item.petugasNipp || '') }}>
-                          {(item.petugasNama || '?').substring(0, 2).toUpperCase()}
-                        </span>
-                        <span className="font-semibold text-slate-700">{item.petugasNama}</span>
-                        <span className="text-slate-400">•</span>
-                        <span className="text-slate-600">{item.startPointName} → {item.endPointName}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="p-5 border-t border-slate-200 flex gap-3 shrink-0 bg-white">
-              {templateView === 'list' && (
-                <>
-                  <button onClick={() => setShowTemplateModal(false)} className="flex-1 py-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50 transition-colors uppercase tracking-wider">Tutup</button>
-                  <button onClick={() => { setTemplateView('create'); setTemplateForm({ nama: '', items: [{ assignedTo: '', startPointName: '', endPointName: '', jamMulai: '', jamSelesai: '' }] }); }} className="flex-[2] py-3 rounded-xl bg-indigo-600 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-indigo-200 hover:bg-indigo-700 transition-all active:scale-[0.98] uppercase tracking-wider">
-                    <span className="material-symbols-outlined text-[18px]">add</span> Buat Template Baru
-                  </button>
-                </>
-              )}
-              {templateView === 'create' && (
-                <>
-                  <button onClick={() => setTemplateView('list')} className="flex-1 py-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50 transition-colors uppercase tracking-wider">Kembali</button>
-                  <button onClick={handleCreateTemplate} disabled={savingTemplate} className="flex-[2] py-3 rounded-xl bg-indigo-600 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-60 transition-all active:scale-[0.98] uppercase tracking-wider">
-                    <span className="material-symbols-outlined text-[18px]">save</span>
-                    {savingTemplate ? 'Menyimpan...' : 'Simpan Template'}
-                  </button>
-                </>
-              )}
-              {templateView === 'apply' && (
-                <>
-                  <button onClick={() => { setTemplateView('list'); setSelectedTemplate(null); }} className="flex-1 py-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50 transition-colors uppercase tracking-wider">Kembali</button>
-                  <button onClick={handleApplyTemplate} disabled={applyingTemplate || !applyDates.startDate || !applyDates.endDate} className="flex-[2] py-3 rounded-xl bg-indigo-600 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-60 transition-all active:scale-[0.98] uppercase tracking-wider">
-                    <span className="material-symbols-outlined text-[18px]">send</span>
-                    {applyingTemplate ? 'Membuat Tugas...' : 'Terapkan & Generate Tugas'}
-                  </button>
-                </>
-              )}
+            {/* Close Button */}
+            <div className="p-4 border-t border-slate-200 bg-white shrink-0">
+              <button
+                onClick={() => setImportResult(null)}
+                className="w-full py-3 rounded-xl bg-primary text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-primary/20 hover:bg-primary/90 transition-all active:scale-[0.98] uppercase tracking-wider"
+              >
+                <span className="material-symbols-outlined text-[18px]">done</span>
+                Tutup
+              </button>
             </div>
           </div>
         </div>

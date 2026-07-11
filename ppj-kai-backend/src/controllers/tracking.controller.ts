@@ -18,7 +18,7 @@ export const getActiveTracking = async (req: Request, res: Response) => {
 export const startTracking = async (req: Request, res: Response) => {
   try {
     const { tugasId } = req.params;
-    const { lat, lng } = req.body;
+    const { lat, lng, fotoAwal } = req.body;
 
     const tugas = await prisma.tugasPpj.findUnique({
       where: { id: parseInt(tugasId) }
@@ -36,6 +36,7 @@ export const startTracking = async (req: Request, res: Response) => {
         startLat: lat || 0,
         startLong: lng || 0,
         status: 'started',
+        fotoAwal: fotoAwal || null,
       }
     });
 
@@ -81,7 +82,7 @@ export const updateTracking = async (req: Request, res: Response) => {
 export const stopTracking = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { lat, lng } = req.body;
+    const { lat, lng, fotoSelesai } = req.body;
 
     const tracking = await prisma.tracking.findUnique({
       where: { id: parseInt(id) }
@@ -103,6 +104,7 @@ export const stopTracking = async (req: Request, res: Response) => {
         endLong: lng || 0,
         durasi: durasiDetik,
         status: 'completed',
+        fotoSelesai: fotoSelesai || null,
       }
     });
 

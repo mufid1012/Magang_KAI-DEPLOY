@@ -61,11 +61,13 @@ model Tracking {
   endTime   DateTime? @map("end_time")
   startLat  Float?    @map("start_lat")
   startLong Float?    @map("start_long")
-  endLat    Float?    @map("end_lat")
-  endLong   Float?    @map("end_long")
-  durasi    Int?      @default(0)
-  status    String    @default("started") @db.VarChar(20)
-  tugas     TugasPpj  @relation(fields: [tugasId], references: [id])
+  endLat      Float?    @map("end_lat")
+  endLong     Float?    @map("end_long")
+  durasi      Int?      @default(0)
+  status      String    @default("started") @db.VarChar(20)
+  fotoAwal    String?   @map("foto_awal") @db.LongText
+  fotoSelesai String?   @map("foto_selesai") @db.LongText
+  tugas       TugasPpj  @relation(fields: [tugasId], references: [id])
   laporan   Laporan[]
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
