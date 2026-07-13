@@ -102,6 +102,10 @@ export default function AdminPage() {
   const [savingUser, setSavingUser] = useState(false);
   const [userSearchQuery, setUserSearchQuery] = useState('');
 
+  // Task list filter state
+  const [tugasSearchQuery, setTugasSearchQuery] = useState('');
+  const [tugasStatusFilter, setTugasStatusFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed'>('all');
+
   // Task form state
   const [form, setForm] = useState({ jalur: '', tanggal: '', assignedTo: '', startPointName: '', endPointName: '', startPointLat: '', startPointLong: '', endPointLat: '', endPointLong: '', jamMulai: '', jamSelesai: '' });
   const [submitting, setSubmitting] = useState(false);
@@ -149,6 +153,20 @@ export default function AdminPage() {
     });
     return map;
   }, [kategoriList]);
+
+  // Filtered task list (search by jalur/nama/nipp + status)
+  const filteredTugas = React.useMemo(() => {
+    const q = tugasSearchQuery.trim().toLowerCase();
+    return tugas.filter(t => {
+      if (tugasStatusFilter !== 'all' && t.status !== tugasStatusFilter) return false;
+      if (!q) return true;
+      return (
+        t.jalur.toLowerCase().includes(q) ||
+        (t.user?.nama?.toLowerCase().includes(q) ?? false) ||
+        (t.user?.nipp?.toLowerCase().includes(q) ?? false)
+      );
+    });
+  }, [tugas, tugasSearchQuery, tugasStatusFilter]);
 
   // Load alert sound preference
   useEffect(() => {
@@ -807,17 +825,72 @@ export default function AdminPage() {
               {/* Penugasan summary with large cards */}
               <div className="flex-1 overflow-y-auto p-4 md:p-6">
                 <h2 className="text-lg font-extrabold text-slate-800 mb-1 tracking-tight">Daftar Penugasan PPJ</h2>
-                <p className="text-sm text-slate-500 mb-6">Kelola tugas inspeksi jalur petugas Anda</p>
-                
+                <p className="text-sm text-slate-500 mb-4">Kelola tugas inspeksi jalur petugas Anda</p>
+
+                {/* Filter bar */}
+                {tugas.length > 0 && (
+                  <div className="flex flex-col sm:flex-row gap-3 mb-6">
+                    <div className="relative flex-1">
+                      <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">search</span>
+                      <input
+                        value={tugasSearchQuery}
+                        onChange={e => setTugasSearchQuery(e.target.value)}
+                        placeholder="Cari jalur, nama, atau NIPP petugas..."
+                        className="w-full pl-9 pr-9 py-2.5 border border-slate-300 rounded-xl text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none font-medium"
+                      />
+                      {tugasSearchQuery && (
+                        <button
+                          onClick={() => setTugasSearchQuery('')}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                          title="Bersihkan pencarian"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">close</span>
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1 shrink-0">
+                      {([
+                        ['all', 'Semua'],
+                        ['pending', 'Pending'],
+                        ['in_progress', 'Berlangsung'],
+                        ['completed', 'Selesai'],
+                      ] as const).map(([value, label]) => (
+                        <button
+                          key={value}
+                          onClick={() => setTugasStatusFilter(value)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                            tugasStatusFilter === value
+                              ? 'bg-white text-primary shadow-sm'
+                              : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {tugas.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-20 text-center">
                     <span className="material-symbols-outlined text-slate-200 text-6xl mb-4">assignment</span>
                     <p className="text-slate-500 font-medium">Belum ada tugas yang dibuat.</p>
                     <p className="text-slate-400 text-sm mt-1">Gunakan panel di sebelah kiri untuk membuat penugasan baru.</p>
                   </div>
+                ) : filteredTugas.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-center">
+                    <span className="material-symbols-outlined text-slate-200 text-6xl mb-4">search_off</span>
+                    <p className="text-slate-500 font-medium">Tidak ada tugas yang cocok dengan filter.</p>
+                    <button
+                      onClick={() => { setTugasSearchQuery(''); setTugasStatusFilter('all'); }}
+                      className="text-primary text-sm font-semibold mt-2 hover:underline"
+                    >
+                      Reset filter
+                    </button>
+                  </div>
                 ) : (
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    {tugas.map(t => {
+                    {filteredTugas.map(t => {
                       const latestTracking = t.tracking?.[0];
                       const laporanCount = latestTracking?.laporan?.length ?? 0;
                       return (
@@ -1144,24 +1217,22 @@ export default function AdminPage() {
                               >
                                 <span className="material-symbols-outlined text-[18px]">edit</span>
                               </button>
-                              {k.isActive && (
-                                <button
-                                  onClick={async () => {
-                                    if (!(await showConfirm(`Nonaktifkan kategori "${k.label}"?`))) return;
-                                    try {
-                                      await api.delete(`/admin/kategori-temuan/${k.id}`);
-                                      fetchKategori();
-                                      showToast('Kategori dinonaktifkan', 'success');
-                                    } catch (err: unknown) {
-                                      showToast(getApiErrorMessage(err, 'Gagal menghapus'), 'error');
-                                    }
-                                  }}
-                                  className="p-2 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors"
-                                  title="Nonaktifkan"
-                                >
-                                  <span className="material-symbols-outlined text-[18px]">delete</span>
-                                </button>
-                              )}
+                              <button
+                                onClick={async () => {
+                                  if (!(await showConfirm(`Hapus kategori "${k.label}"? Tindakan ini permanen.`))) return;
+                                  try {
+                                    await api.delete(`/admin/kategori-temuan/${k.id}`);
+                                    fetchKategori();
+                                    showToast('Kategori dihapus', 'success');
+                                  } catch (err: unknown) {
+                                    showToast(getApiErrorMessage(err, 'Gagal menghapus'), 'error');
+                                  }
+                                }}
+                                className="p-2 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors"
+                                title="Hapus kategori"
+                              >
+                                <span className="material-symbols-outlined text-[18px]">delete</span>
+                              </button>
                             </div>
                           )}
                         </div>

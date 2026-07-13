@@ -1015,13 +1015,11 @@ export const deleteKategoriTemuan = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ success: false, message: 'Kategori tidak ditemukan' });
     }
 
-    // Soft-delete: set isActive = false (so existing laporan labels still resolve)
-    const updated = await prisma.kategoriTemuan.update({
-      where: { id: parseInt(id) },
-      data: { isActive: false },
-    });
+    // Hard-delete: remove the row entirely. Laporan store jenisTemuan as a plain
+    // string (no FK), and the frontend falls back to the raw key for old records.
+    await prisma.kategoriTemuan.delete({ where: { id: parseInt(id) } });
 
-    return res.json({ success: true, data: updated, message: 'Kategori dinonaktifkan' });
+    return res.json({ success: true, message: 'Kategori dihapus' });
   } catch (error) {
     console.error('Delete kategori temuan error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });
