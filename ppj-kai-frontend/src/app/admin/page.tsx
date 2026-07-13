@@ -445,7 +445,6 @@ export default function AdminPage() {
   };
 
   // Excel import/export handlers
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleDownloadTemplate = async () => {
     try {
       const res = await api.get('/admin/tugas/template', { responseType: 'blob' });
@@ -781,7 +780,7 @@ export default function AdminPage() {
                 {canWrite && activeTab === 'tasks' && (
                   <div className="p-3 border-t border-slate-200 bg-slate-50 shrink-0 space-y-2">
                     {/* Excel Import/Export Row */}
-                    <div className="w-full">
+                    <div className="w-full space-y-2">
                       <button
                         onClick={() => fileInputRef.current?.click()}
                         disabled={importLoading}
@@ -789,6 +788,13 @@ export default function AdminPage() {
                       >
                         <span className="material-symbols-outlined text-[16px]">{importLoading ? 'hourglass_empty' : 'upload_file'}</span>
                         {importLoading ? 'Importing...' : 'Import Excel'}
+                      </button>
+                      <button
+                        onClick={handleDownloadTemplate}
+                        className="w-full py-2 bg-white border border-emerald-300 text-emerald-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-emerald-50 shadow-sm transition-all active:scale-[0.98]"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">download</span>
+                        Download Template
                       </button>
                       <input
                         ref={fileInputRef}
