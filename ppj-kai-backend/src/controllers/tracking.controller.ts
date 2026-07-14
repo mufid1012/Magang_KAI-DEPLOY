@@ -18,7 +18,11 @@ export const getActiveTracking = async (req: Request, res: Response) => {
 export const startTracking = async (req: Request, res: Response) => {
   try {
     const { tugasId } = req.params;
-    const { lat, lng, fotoAwal } = req.body;
+    const { lat, lng, fotoAwal, bypassMode } = req.body;
+    // Temporary deployment-testing switch. Set TRACKING_BYPASS_ENABLED=false
+    // after testing to enforce the schedule on every request again.
+    const bypassEnabled = process.env.TRACKING_BYPASS_ENABLED !== 'false';
+    const useBypass = bypassEnabled && bypassMode === true;
 
     const tugas = await prisma.tugasPpj.findUnique({
       where: { id: parseInt(tugasId) }
@@ -28,7 +32,7 @@ export const startTracking = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Tugas not found' });
     }
 
-    if (tugas.tanggal && tugas.jamMulai) {
+    if (!useBypass && tugas.tanggal && tugas.jamMulai) {
       const jadwal = new Date(tugas.tanggal);
       const [hh, mm] = tugas.jamMulai.split(':');
       jadwal.setHours(parseInt(hh, 10), parseInt(mm, 10), 0, 0);

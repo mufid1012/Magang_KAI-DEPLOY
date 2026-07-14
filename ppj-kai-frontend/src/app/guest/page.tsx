@@ -15,7 +15,7 @@ export default function GuestPage() {
           <img src="/logo-kai.png" alt="KAI Logo" className="h-7 w-auto object-contain" />
           <div className="h-5 w-px bg-slate-200 hidden sm:block"></div>
           <h1 className="font-extrabold text-slate-800 tracking-tight text-sm hidden sm:block">
-            Monitoring PPJ <span className="text-primary">DAOP 6</span>
+            <span className="text-primary">DAOP 6 Yogyakarta</span>
           </h1>
           <span className="ml-1 px-2 py-0.5 bg-slate-500 text-white font-bold text-[9px] rounded uppercase tracking-widest shadow-sm">
             Guest

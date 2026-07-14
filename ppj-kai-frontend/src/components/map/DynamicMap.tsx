@@ -14,12 +14,99 @@ interface DynamicMapProps {
   routeEnd?: { lat: number; lng: number; name?: string };
 }
 
+type RailPoint = [number, number];
+
+interface RailProjection {
+  point: RailPoint;
+  segmentIndex: number;
+  progress: number;
+  distanceSquared: number;
+}
+
+function projectPointToRail(point: RailPoint, rail: RailPoint[]): RailProjection | null {
+  if (rail.length < 2) return null;
+
+  const lngScale = Math.cos(point[0] * Math.PI / 180);
+  let best: RailProjection | null = null;
+
+  for (let i = 0; i < rail.length - 1; i++) {
+    const a = rail[i];
+    const b = rail[i + 1];
+    const ax = a[1] * lngScale;
+    const ay = a[0];
+    const bx = b[1] * lngScale;
+    const by = b[0];
+    const px = point[1] * lngScale;
+    const py = point[0];
+    const dx = bx - ax;
+    const dy = by - ay;
+    const lengthSquared = dx * dx + dy * dy;
+    const progress = lengthSquared === 0
+      ? 0
+      : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSquared));
+    const projected: RailPoint = [
+      a[0] + (b[0] - a[0]) * progress,
+      a[1] + (b[1] - a[1]) * progress,
+    ];
+    const projectedX = projected[1] * lngScale;
+    const distanceSquared = (px - projectedX) ** 2 + (py - projected[0]) ** 2;
+
+    if (!best || distanceSquared < best.distanceSquared) {
+      best = { point: projected, segmentIndex: i, progress, distanceSquared };
+    }
+  }
+
+  return best;
+}
+
+function buildRailAlignedTrack(gpsTrack: RailPoint[], railwaySegments: RailPoint[][]): RailPoint[] {
+  if (gpsTrack.length < 2) return [];
+
+  const firstGpsPoint = gpsTrack[0];
+  const lastGpsPoint = gpsTrack[gpsTrack.length - 1];
+  let selected: { rail: RailPoint[]; start: RailProjection; end: RailProjection; score: number } | null = null;
+
+  for (const rail of railwaySegments) {
+    const start = projectPointToRail(firstGpsPoint, rail);
+    const end = projectPointToRail(lastGpsPoint, rail);
+    if (!start || !end) continue;
+    const score = start.distanceSquared + end.distanceSquared;
+    if (!selected || score < selected.score) selected = { rail, start, end, score };
+  }
+
+  if (!selected) return [];
+
+  const { rail, start, end } = selected;
+  const startOrder = start.segmentIndex + start.progress;
+  const endOrder = end.segmentIndex + end.progress;
+  const aligned: RailPoint[] = [start.point];
+
+  if (startOrder <= endOrder) {
+    for (let i = start.segmentIndex + 1; i <= end.segmentIndex; i++) aligned.push(rail[i]);
+  } else {
+    for (let i = start.segmentIndex; i > end.segmentIndex; i--) aligned.push(rail[i]);
+  }
+  aligned.push(end.point);
+
+  return aligned.filter((point, index) => (
+    index === 0 || point[0] !== aligned[index - 1][0] || point[1] !== aligned[index - 1][1]
+  ));
+}
+
 export default function DynamicMap({ lat, lng, zoom = 16, trackPath, routeStart, routeEnd }: DynamicMapProps) {
+  const routeStartLat = routeStart?.lat;
+  const routeStartLng = routeStart?.lng;
+  const routeStartName = routeStart?.name;
+  const routeEndLat = routeEnd?.lat;
+  const routeEndLng = routeEnd?.lng;
+  const routeEndName = routeEnd?.name;
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markerRef = useRef<L.Marker | null>(null);
   const routeLayerRef = useRef<L.LayerGroup | null>(null);
+  const trackLayerRef = useRef<L.LayerGroup | null>(null);
   const [loadingRoute, setLoadingRoute] = useState(false);
+  const [railwaySegments, setRailwaySegments] = useState<RailPoint[][]>([]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -44,6 +131,7 @@ export default function DynamicMap({ lat, lng, zoom = 16, trackPath, routeStart,
 
     markerRef.current = L.marker([lat, lng], { icon: pulseIcon }).addTo(mapRef.current);
     routeLayerRef.current = L.layerGroup().addTo(mapRef.current);
+    trackLayerRef.current = L.layerGroup().addTo(mapRef.current);
 
     return () => {
       mapRef.current?.remove();
@@ -58,20 +146,35 @@ export default function DynamicMap({ lat, lng, zoom = 16, trackPath, routeStart,
     mapRef.current.setView([lat, lng], mapRef.current.getZoom());
   }, [lat, lng]);
 
-  // Draw GPS track path while active
+  // Draw the travelled path using actual railway geometry. Raw GPS points are
+  // intentionally not connected directly because sparse/noisy samples create
+  // straight chords that cut across bends in the railway.
   useEffect(() => {
-    if (!mapRef.current || !trackPath || trackPath.length < 2) return;
-    const polyline = L.polyline(trackPath, { color: '#005bac', weight: 5, opacity: 0.8 }).addTo(mapRef.current);
-    // Fit map to show full track path
+    if (!mapRef.current || !trackLayerRef.current) return;
+
+    const layer = trackLayerRef.current;
+    layer.clearLayers();
+    if (!trackPath || trackPath.length < 2) return;
+
+    const alignedTrack = buildRailAlignedTrack(trackPath, railwaySegments);
+    if (alignedTrack.length < 2) return;
+
+    const polyline = L.polyline(alignedTrack, {
+      color: '#f59e0b',
+      weight: 6,
+      opacity: 0.95,
+    }).addTo(layer);
     mapRef.current.fitBounds(polyline.getBounds(), { padding: [40, 40], maxZoom: 16 });
-    return () => { polyline.remove(); };
-  }, [trackPath]);
+
+    return () => { layer.clearLayers(); };
+  }, [trackPath, railwaySegments]);
 
   // Draw route following actual railway geometry
   useEffect(() => {
     if (!routeLayerRef.current || !mapRef.current) return;
     routeLayerRef.current.clearLayers();
-    if (!routeStart || !routeEnd) return;
+    setRailwaySegments([]);
+    if (routeStartLat == null || routeStartLng == null || routeEndLat == null || routeEndLng == null) return;
 
     const layer = routeLayerRef.current;
     const map = mapRef.current;
@@ -88,36 +191,35 @@ export default function DynamicMap({ lat, lng, zoom = 16, trackPath, routeStart,
     });
 
     // Add start/end markers immediately
-    L.marker([routeStart.lat, routeStart.lng], { icon: makePin('#16a34a', 'A', routeStart.name) })
-      .bindTooltip(`<b>Titik Awal</b>${routeStart.name ? `<br>${routeStart.name}` : ''}`)
+    L.marker([routeStartLat, routeStartLng], { icon: makePin('#16a34a', 'A', routeStartName) })
+      .bindTooltip(`<b>Titik Awal</b>${routeStartName ? `<br>${routeStartName}` : ''}`)
       .addTo(layer);
-    L.marker([routeEnd.lat, routeEnd.lng], { icon: makePin('#dc2626', 'B', routeEnd.name) })
-      .bindTooltip(`<b>Titik Akhir</b>${routeEnd.name ? `<br>${routeEnd.name}` : ''}`)
+    L.marker([routeEndLat, routeEndLng], { icon: makePin('#dc2626', 'B', routeEndName) })
+      .bindTooltip(`<b>Titik Akhir</b>${routeEndName ? `<br>${routeEndName}` : ''}`)
       .addTo(layer);
 
     // Fit map to route immediately
-    const bounds = L.latLngBounds([routeStart.lat, routeStart.lng], [routeEnd.lat, routeEnd.lng]);
+    const bounds = L.latLngBounds([routeStartLat, routeStartLng], [routeEndLat, routeEndLng]);
     map.fitBounds(bounds, { padding: [60, 60], maxZoom: 15 });
 
     // Fetch real railway geometry async
     setLoadingRoute(true);
-    fetchRailwayGeometry(routeStart.lat, routeStart.lng, routeEnd.lat, routeEnd.lng)
+    let cancelled = false;
+    fetchRailwayGeometry(routeStartLat, routeStartLng, routeEndLat, routeEndLng)
       .then(segments => {
+        if (cancelled) return;
+        setRailwaySegments(segments);
         // Remove any existing straight line and draw real track
         if (segments.length > 0) {
           segments.forEach(seg => {
             L.polyline(seg, { color: '#005bac', weight: 4, opacity: 0.75 }).addTo(layer);
           });
-        } else {
-          // Fallback: straight dashed line if no OSM data
-          L.polyline(
-            [[routeStart.lat, routeStart.lng], [routeEnd.lat, routeEnd.lng]],
-            { color: '#005bac', weight: 4, dashArray: '12,8', opacity: 0.55 }
-          ).addTo(layer);
         }
       })
-      .finally(() => setLoadingRoute(false));
-  }, [routeStart, routeEnd]);
+      .finally(() => { if (!cancelled) setLoadingRoute(false); });
+
+    return () => { cancelled = true; };
+  }, [routeStartLat, routeStartLng, routeStartName, routeEndLat, routeEndLng, routeEndName]);
 
   return (
     <div className="w-full h-full relative">

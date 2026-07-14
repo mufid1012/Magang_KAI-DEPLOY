@@ -119,9 +119,10 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   const endStreamRef = useRef<MediaStream | null>(null);
   const [isStopping, setIsStopping] = useState(false);
 
-  // Dev test mode — bypass geofencing (localhost only)
+  // Temporary deployment-testing bypass. Set
+  // NEXT_PUBLIC_TRACKING_BYPASS_ENABLED=false to remove it from the UI.
   const [testMode, setTestMode] = useState(false);
-  const isDevEnv = typeof window !== 'undefined' && window.location.hostname === 'localhost';
+  const bypassAvailable = process.env.NEXT_PUBLIC_TRACKING_BYPASS_ENABLED !== 'false';
 
   // localStorage key for persisting tracking session
   const STORAGE_KEY = `tracking_session_${params.id}`;
@@ -210,11 +211,11 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   };
 
   const handleStartTracking = async () => {
-    if (!isVerified) { setVerifyModalOpen(true); return; }
-    if (!gpsPos) { showToast('Menunggu sinyal GPS...', 'warning'); return; }
+    if (!testMode && !isVerified) { setVerifyModalOpen(true); return; }
+    if (!gpsPos && !(testMode && tugas)) { showToast('Menunggu sinyal GPS...', 'warning'); return; }
 
     // Validasi jadwal inspeksi
-    if (tugas?.tanggal && tugas?.jamMulai) {
+    if (!testMode && tugas?.tanggal && tugas?.jamMulai) {
       const jadwal = new Date(tugas.tanggal);
       const [hh, mm] = tugas.jamMulai.split(':');
       jadwal.setHours(parseInt(hh, 10), parseInt(mm, 10), 0, 0);
@@ -227,10 +228,17 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
     }
 
     try {
-      const res = await api.post(`/tracking/start/${params.id}`, { lat: gpsPos.lat, lng: gpsPos.lng, fotoAwal: selfieDataUrl });
+      const startLat = gpsPos?.lat ?? tugas!.startPointLat;
+      const startLng = gpsPos?.lng ?? tugas!.startPointLong;
+      const res = await api.post(`/tracking/start/${params.id}`, {
+        lat: startLat,
+        lng: startLng,
+        fotoAwal: selfieDataUrl,
+        bypassMode: testMode,
+      });
       const newTrackingId = res.data.trackingId;
       const startedAt = Date.now();
-      const initialPath: [number, number][] = [[gpsPos.lat, gpsPos.lng]];
+      const initialPath: [number, number][] = [[startLat, startLng]];
 
       setTrackingId(newTrackingId);
       setStatus('active');
@@ -252,12 +260,16 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   const handleStopTracking = async () => {
     if (!trackingId) return;
     // Use GPS position, or fallback to last known track point
-    const stopLat = gpsPos?.lat ?? (trackPath.length > 0 ? trackPath[trackPath.length - 1][0] : null);
-    const stopLng = gpsPos?.lng ?? (trackPath.length > 0 ? trackPath[trackPath.length - 1][1] : null);
+    const stopLat = gpsPos?.lat
+      ?? (trackPath.length > 0 ? trackPath[trackPath.length - 1][0] : null)
+      ?? (testMode ? tugas?.endPointLat : null);
+    const stopLng = gpsPos?.lng
+      ?? (trackPath.length > 0 ? trackPath[trackPath.length - 1][1] : null)
+      ?? (testMode ? tugas?.endPointLong : null);
     if (stopLat === null || stopLng === null) { showToast('Tidak ada posisi GPS yang tersedia.', 'warning'); return; }
     try {
       setIsStopping(true);
-      await api.post(`/tracking/stop/${trackingId}`, { lat: stopLat, lng: stopLng, fotoSelesai: endSelfieDataUrl, routePath: trackPath });
+      await api.post(`/tracking/stop/${trackingId}`, { lat: stopLat, lng: stopLng, fotoSelesai: endSelfieDataUrl, routePath: trackPath, bypassMode: testMode });
       if (timerRef.current) clearInterval(timerRef.current);
       localStorage.removeItem(STORAGE_KEY); // Clear persisted session
       router.push(`/inspeksi/${params.id}/selesai`);
@@ -557,8 +569,8 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
                     </div>
                   )}
 
-                  {/* Test Mode Toggle — localhost only */}
-                  {isDevEnv && (
+                  {/* Temporary deployment testing bypass */}
+                  {bypassAvailable && (
                     <button
                       onClick={() => setTestMode(m => !m)}
                       className={`flex items-center justify-between p-sm rounded-lg border transition-colors ${testMode
@@ -568,7 +580,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
                     >
                       <span className="flex items-center gap-sm font-label-sm text-[11px]">
                         <span className="material-symbols-outlined text-[16px]">science</span>
-                        Mode Testing (bypass geofencing)
+                        Bypass Mode (deployment testing)
                       </span>
                       <span className={`w-9 h-5 rounded-full relative transition-colors ${testMode ? 'bg-amber-500' : 'bg-outline-variant'}`}>
                         <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${testMode ? 'left-4' : 'left-0.5'}`} />
@@ -578,15 +590,15 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
 
                   <button
                     onClick={handleStartTracking}
-                    disabled={!gpsPos || !withinGeofence}
+                    disabled={!testMode && (!gpsPos || !withinGeofence)}
                     className={`w-full text-on-primary font-body-lg font-semibold h-[48px] rounded-lg flex items-center justify-center gap-sm shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all ${testMode ? 'bg-amber-500 hover:bg-amber-600' : 'bg-primary hover:bg-surface-tint'
                       }`}
                   >
                     <span className="material-symbols-outlined">play_circle</span>
-                    {!gpsPos
-                      ? 'Menunggu GPS...'
-                      : testMode
-                        ? 'Mulai Tracking (Test Mode)'
+                    {testMode
+                      ? 'Mulai Tracking (Bypass)'
+                      : !gpsPos
+                        ? 'Menunggu GPS...'
                         : !withinGeofence
                           ? `Mendekat ke Titik Awal (${Math.round(distanceToStart ?? 0)}m)`
                           : 'Mulai Tracking'
@@ -853,8 +865,8 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
                 </div>
               </div>
 
-              {/* Dev test mode */}
-              {isDevEnv && (
+              {/* Temporary deployment testing bypass */}
+              {bypassAvailable && (
                 <button
                   onClick={() => setTestMode(m => !m)}
                   className={`flex items-center justify-between p-sm rounded-lg border transition-colors ${testMode
@@ -864,7 +876,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
                 >
                   <span className="flex items-center gap-sm font-label-sm text-[11px]">
                     <span className="material-symbols-outlined text-[16px]">science</span>
-                    Mode Testing (bypass geofencing)
+                    Bypass Mode (deployment testing)
                   </span>
                   <span className={`w-9 h-5 rounded-full relative transition-colors ${testMode ? 'bg-amber-500' : 'bg-outline-variant'}`}>
                     <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${testMode ? 'left-4' : 'left-0.5'}`} />
@@ -877,8 +889,15 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
                 Batal
               </button>
               <button
-                onClick={() => { confirmEndVerification(); if (endSelfieDataUrl) handleStopTracking(); }}
-                disabled={!endSelfieDataUrl || !withinEndGeofence || isStopping}
+                onClick={() => {
+                  if (testMode) {
+                    handleStopTracking();
+                    return;
+                  }
+                  confirmEndVerification();
+                  if (endSelfieDataUrl) handleStopTracking();
+                }}
+                disabled={(!testMode && (!endSelfieDataUrl || !withinEndGeofence)) || isStopping}
                 className="flex-[2] py-3 rounded-xl bg-error text-on-error font-label-sm flex items-center justify-center gap-sm shadow-sm disabled:opacity-50"
               >
                 <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>stop_circle</span>
