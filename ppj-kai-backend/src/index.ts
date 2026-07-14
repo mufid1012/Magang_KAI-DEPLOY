@@ -8,6 +8,7 @@ import trackingRoutes from './routes/tracking.routes';
 import laporanRoutes from './routes/laporan.routes';
 import adminRoutes from './routes/admin.routes';
 import guestRoutes from './routes/guest.routes';
+import railwayRoutes from './routes/railway.routes';
 import { getActiveKategoriTemuan } from './controllers/admin.controller';
 
 dotenv.config();
@@ -35,6 +36,7 @@ app.use('/api/tracking', trackingRoutes);
 app.use('/api/laporan', laporanRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/guest', guestRoutes);
+app.use('/api/railway', railwayRoutes);
 
 // Public: active emergency categories (no auth required)
 app.get('/api/kategori-temuan', getActiveKategoriTemuan);

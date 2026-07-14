@@ -21,6 +21,10 @@ interface OverpassElement {
 }
 interface OverpassResponse { elements?: OverpassElement[] }
 
+type RailwayProxyRequest =
+  | { mode: 'bbox'; minLat: number; minLng: number; maxLat: number; maxLng: number }
+  | { mode: 'nearby'; lat: number; lng: number; radius: number };
+
 interface Graph {
   coords: Map<NodeId, [number, number]>;
   edges: Map<NodeId, { id: NodeId; dist: number }[]>;
@@ -269,6 +273,37 @@ async function fetchOverpass(query: string, timeoutMs = 12000): Promise<Overpass
   throw new Error('All Overpass API endpoints failed');
 }
 
+/**
+ * Browsers cannot reliably call every Overpass mirror because some do not
+ * expose CORS headers. Prefer our backend proxy and retain direct mirrors only
+ * as a compatibility fallback while old backend deployments are replaced.
+ */
+async function fetchRailwayData(
+  request: RailwayProxyRequest,
+  fallbackQuery: string,
+  timeoutMs = 16000
+): Promise<OverpassResponse> {
+  const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api').replace(/\/$/, '');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${apiUrl}/railway/geometry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`Railway proxy returned ${response.status}`);
+    return await response.json();
+  } catch (error) {
+    console.warn('Railway backend proxy failed, trying direct Overpass mirrors:', error);
+    return fetchOverpass(fallbackQuery, timeoutMs);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // ─── Public API ──────────────────────────────────────────────────────
 
 /**
@@ -309,7 +344,13 @@ export async function fetchRailwayGeometry(
   } else {
     const query = `[out:json][timeout:15];way[railway~"^(rail|light_rail|subway|tram|narrow_gauge|monorail)$"](${bbox});out geom;`;
     try {
-      const data = await fetchOverpass(query);
+      const data = await fetchRailwayData({
+        mode: 'bbox',
+        minLat: bMinLat,
+        minLng: bMinLng,
+        maxLat: bMaxLat,
+        maxLng: bMaxLng,
+      }, query);
       elements = data.elements || [];
       if (elements.length > 0) setCachedOverpass(cacheKey, elements);
     } catch (err) {
@@ -363,7 +404,7 @@ export async function snapToRailwayPoint(
 out geom;`;
 
   try {
-    const data = await fetchOverpass(query, 10000);
+    const data = await fetchRailwayData({ mode: 'nearby', lat, lng, radius: RADIUS }, query, 10000);
     if (!data.elements || data.elements.length === 0) return null;
 
     let minDist = Infinity;
