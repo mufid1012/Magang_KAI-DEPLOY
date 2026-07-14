@@ -18,6 +18,7 @@ model User {
   division       String?    @db.VarChar(100) // e.g. "DAOP 1 Jakarta"
   workArea       String?    @map("work_area") @db.VarChar(100) // e.g. "Sektor 4 (GMR-JAKK)"
   phone          String?    @db.VarChar(30) // e.g. "+62 812-3456-7890"
+  alertSound     String?    @map("alert_sound") @db.VarChar(20) // siren | beep | chime | off
   isActive       Boolean    @default(true) @map("is_active")
   managerId      Int?       @map("manager_id") // ID of the admin who manages this petugas
   tugasPpj       TugasPpj[]

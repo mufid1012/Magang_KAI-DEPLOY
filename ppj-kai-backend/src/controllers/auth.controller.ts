@@ -41,6 +41,7 @@ export const login = async (req: Request, res: Response) => {
         division: user.division,
         workArea: user.workArea,
         phone: user.phone,
+        alertSound: user.alertSound,
         isActive: user.isActive,
       },
     });
@@ -119,6 +120,7 @@ export const getMe = async (req: Request, res: Response) => {
         division: true,
         workArea: true,
         phone: true,
+        alertSound: true,
         isActive: true,
         wilayahAssignments: {
           include: { wilayah: true },
@@ -168,7 +170,7 @@ export const updateProfile = async (req: Request, res: Response) => {
       return res.status(401).json({ success: false, message: 'Not authenticated' });
     }
 
-    const { nama, foto, phone, password } = req.body;
+    const { nama, foto, phone, password, alertSound } = req.body;
 
     // Build update data — only include fields that were provided
     const updateData: any = {};
@@ -176,6 +178,12 @@ export const updateProfile = async (req: Request, res: Response) => {
     if (nama !== undefined) updateData.nama = nama;
     if (foto !== undefined) updateData.foto = foto;
     if (phone !== undefined) updateData.phone = phone;
+    if (alertSound !== undefined) {
+      if (!['siren', 'beep', 'chime', 'off'].includes(alertSound)) {
+        return res.status(400).json({ success: false, message: 'Invalid alert sound' });
+      }
+      updateData.alertSound = alertSound;
+    }
 
     // Hash password if provided
     if (password) {
@@ -198,6 +206,7 @@ export const updateProfile = async (req: Request, res: Response) => {
         division: true,
         workArea: true,
         phone: true,
+        alertSound: true,
         isActive: true,
       },
     });

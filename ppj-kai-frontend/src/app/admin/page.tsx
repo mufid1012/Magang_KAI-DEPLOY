@@ -60,6 +60,13 @@ const ROLE_LABEL: Record<string, string> = { admin: 'Admin', qc: 'QC', kupt: 'KU
 const STATUS_COLOR: Record<string, string> = { pending: 'bg-surface-container text-on-surface-variant border-outline-variant', in_progress: 'bg-primary-container/20 text-primary border-primary/30', completed: 'bg-primary-fixed text-on-primary-fixed-variant border-transparent' };
 const STATUS_LABEL: Record<string, string> = { pending: 'Pending', in_progress: 'Berlangsung', completed: 'Selesai' };
 
+const ALERT_SOUND_STORAGE_KEY = 'admin_alert_sound';
+const ALERT_SOUND_OPTIONS: NotificationSound[] = ['off', 'siren', 'beep', 'chime'];
+
+function isNotificationSound(value: unknown): value is NotificationSound {
+  return typeof value === 'string' && ALERT_SOUND_OPTIONS.includes(value as NotificationSound);
+}
+
 // Predefined icon options for admin to pick from when creating categories
 const ICON_OPTIONS = [
   'construction', 'broken_image', 'block', 'more_horiz', 'warning', 'error',
@@ -70,7 +77,7 @@ const ICON_OPTIONS = [
 
 export default function AdminPage() {
   const router = useRouter();
-  const [user, setUser] = useState<{ nama: string; role: string } | null>(null);
+  const [user, setUser] = useState<{ id?: number; nama: string; role: string } | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
   const [petugas, setPetugas] = useState<Petugas[]>([]);
   const [tugas, setTugas] = useState<Tugas[]>([]);
@@ -126,6 +133,7 @@ export default function AdminPage() {
 
   // Audio Notification State
   const [alertSound, setAlertSound] = useState<NotificationSound>('off');
+  const [savingAlertSound, setSavingAlertSound] = useState(false);
   const [isAlarmActive, setIsAlarmActive] = useState(false);
   const lastEmergencyId = React.useRef(0);
 
@@ -170,9 +178,9 @@ export default function AdminPage() {
 
   // Load alert sound preference
   useEffect(() => {
-    const savedSound = localStorage.getItem('admin_alert_sound');
-    if (savedSound) {
-      setAlertSound(savedSound as NotificationSound);
+    const savedSound = localStorage.getItem(ALERT_SOUND_STORAGE_KEY);
+    if (isNotificationSound(savedSound)) {
+      setAlertSound(savedSound);
     }
   }, []);
 
@@ -211,6 +219,25 @@ export default function AdminPage() {
   const handleStopAlarm = () => {
     stopLoopingNotification();
     setIsAlarmActive(false);
+  };
+
+  const handleAlertSoundChange = async (sound: NotificationSound) => {
+    const previousSound = alertSound;
+    setAlertSound(sound);
+    localStorage.setItem(ALERT_SOUND_STORAGE_KEY, sound);
+    setSavingAlertSound(true);
+
+    try {
+      await api.patch('/auth/profile', { alertSound: sound });
+      if (sound !== 'off') playNotification(sound);
+      showToast('Pengaturan sirine berhasil disimpan.', 'success');
+    } catch (error) {
+      setAlertSound(previousSound);
+      localStorage.setItem(ALERT_SOUND_STORAGE_KEY, previousSound);
+      showToast(getApiErrorMessage(error, 'Gagal menyimpan pengaturan sirine.'), 'error');
+    } finally {
+      setSavingAlertSound(false);
+    }
   };
 
   const fetchAvailablePetugas = async () => {
@@ -291,6 +318,21 @@ export default function AdminPage() {
     // Fetch user profile for wilayah info
     api.get('/auth/me').then(res => {
       const me = res.data.user;
+      if (me) setUser({ id: me.id, nama: me.nama, role: me.role });
+
+      if (isNotificationSound(me?.alertSound)) {
+        setAlertSound(me.alertSound);
+        localStorage.setItem(ALERT_SOUND_STORAGE_KEY, me.alertSound);
+      } else {
+        // One-time migration for existing installations that only stored this
+        // preference in the browser before the database field was introduced.
+        const cachedSound = localStorage.getItem(ALERT_SOUND_STORAGE_KEY);
+        if (isNotificationSound(cachedSound)) {
+          setAlertSound(cachedSound);
+          api.patch('/auth/profile', { alertSound: cachedSound }).catch(() => {});
+        }
+      }
+
       if (me?.wilayahAssignments) {
         const stationNames: string[] = [];
         for (const wa of me.wilayahAssignments) {
@@ -1096,18 +1138,15 @@ export default function AdminPage() {
                       ]).map(s => (
                         <button
                           key={s.value}
-                          onClick={() => {
-                            setAlertSound(s.value);
-                            localStorage.setItem('admin_alert_sound', s.value);
-                            if (s.value !== 'off') playNotification(s.value);
-                          }}
+                          onClick={() => handleAlertSoundChange(s.value)}
+                          disabled={savingAlertSound}
                           className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all duration-200 min-h-[100px] ${
                             alertSound === s.value
                               ? s.value === 'off'
                                 ? 'border-slate-400 bg-slate-50 text-slate-700 shadow-md'
                                 : 'border-rose-500 bg-rose-50 text-rose-700 shadow-md shadow-rose-100'
                               : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:border-slate-300'
-                          }`}
+                          } disabled:opacity-60 disabled:cursor-wait`}
                         >
                           <span className="material-symbols-outlined text-[28px] mb-1.5" style={alertSound === s.value ? { fontVariationSettings: "'FILL' 1" } : {}}>{s.icon}</span>
                           <span className="text-sm font-bold leading-tight">{s.label}</span>
