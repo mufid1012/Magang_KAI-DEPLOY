@@ -120,7 +120,7 @@ export const stopTracking = async (req: Request, res: Response) => {
         endLat: lat || 0,
         endLong: lng || 0,
         durasi: durasiDetik,
-        status: 'completed',
+        status: 'stopped',
         fotoSelesai: fotoSelesai || null,
         routePath: routePathStr,
       }
