@@ -115,7 +115,7 @@ tugas_ppj (TugasPpj)
 ├── start_point_name, end_point_name: String?
 ├── jam_mulai, jam_selesai: String?
 ├── assigned_to: Int (FK → users.id)
-├── status: String (20) → "pending" | "in_progress" | "completed" | "cancelled"
+├── status: String (20) → "pending" | "in_progress" | "completed" | "cancelled" | "missed"
 └── Relasi: tracking
 
 tracking (Tracking)
@@ -271,6 +271,18 @@ kategori_temuan (KategoriTemuan)
 
 ### 15. Z-Index Strategy (Leaflet vs Modal)
 - Leaflet = z-index 400. Modal overlay = `z-[9999]`. Map container dipisahkan dengan `isolation: isolate`.
+
+### 16. Time-Window Tracking (Baru)
+- Tombol "Mulai Tracking" hanya bisa ditekan dalam rentang **1 jam sebelum** sampai **1 jam sesudah** `jam_mulai`.
+- Validasi dilakukan di **frontend** (disable button + pesan) DAN **backend** (`startTracking` return 400 jika di luar window).
+- Jika `jamMulai` null, time-window dilewati (backward compatible).
+- Waktu dihitung dalam WIB (UTC+7). `tanggal` dari Prisma berupa Date (UTC midnight), `jamMulai` dalam format `"HH:MM"` WIB.
+
+### 17. Auto-Missed Scheduler (Baru)
+- `src/lib/scheduler.ts` — `setInterval` setiap 5 menit.
+- Cari tugas `pending` hari ini yang `jam_mulai + 1 jam` sudah terlewat → update status ke `missed`.
+- Dijalankan saat server start via `startMissedTaskScheduler()` di `index.ts`.
+- Status `missed` ditampilkan di frontend dengan warna rose/merah muda dan card disabled.
 
 ---
 

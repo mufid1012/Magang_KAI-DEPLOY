@@ -10,6 +10,7 @@ import adminRoutes from './routes/admin.routes';
 import guestRoutes from './routes/guest.routes';
 import railwayRoutes from './routes/railway.routes';
 import { getActiveKategoriTemuan } from './controllers/admin.controller';
+import { startMissedTaskScheduler } from './lib/scheduler';
 
 dotenv.config();
 
@@ -65,4 +66,5 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 // Start server
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
+  startMissedTaskScheduler();
 });

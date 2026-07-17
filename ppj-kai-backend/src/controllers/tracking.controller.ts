@@ -32,15 +32,56 @@ export const startTracking = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Tugas not found' });
     }
 
-    if (!useBypass && tugas.tanggal && tugas.jamMulai) {
-      const jadwal = new Date(tugas.tanggal);
-      const [hh, mm] = tugas.jamMulai.split(':');
-      jadwal.setHours(parseInt(hh, 10), parseInt(mm, 10), 0, 0);
-      
-      if (new Date() < jadwal) {
-        return res.status(400).json({ success: false, message: 'Belum waktunya inspeksi! Silakan tunggu jadwal Anda.' });
+    // Reject if task is already missed or cancelled
+    if (!useBypass && tugas.status === 'missed') {
+      return res.status(400).json({ success: false, message: 'Tugas sudah melewati batas waktu (missed). Tidak dapat memulai tracking.' });
+    }
+    if (tugas.status === 'cancelled') {
+      return res.status(400).json({ success: false, message: 'Tugas sudah dibatalkan.' });
+    }
+
+    // Time-window validation: only allow start within 1 hour before and 1 hour after jam_mulai
+    if (!useBypass && tugas.jamMulai) {
+      const [hours, minutes] = tugas.jamMulai.split(':').map(Number);
+      const tugasDate = new Date(tugas.tanggal);
+
+      // Build scheduled start time in WIB (UTC+7)
+      // tugas.tanggal is a Date object from Prisma — use its UTC date parts since it's stored as DATE
+      const scheduledTime = new Date(Date.UTC(
+        tugasDate.getUTCFullYear(),
+        tugasDate.getUTCMonth(),
+        tugasDate.getUTCDate(),
+        hours - 7, // Convert WIB to UTC
+        minutes
+      ));
+
+      const windowStart = new Date(scheduledTime.getTime() - 60 * 60 * 1000); // 1 hour before
+      const windowEnd = new Date(scheduledTime.getTime() + 60 * 60 * 1000);   // 1 hour after
+      const now = new Date();
+
+      if (now < windowStart) {
+        const windowStartWIB = new Date(windowStart.getTime() + 7 * 60 * 60 * 1000);
+        const timeStr = windowStartWIB.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false });
+        return res.status(400).json({
+          success: false,
+          message: `Tracking belum bisa dimulai. Dibuka mulai pukul ${timeStr} WIB.`,
+          code: 'TOO_EARLY',
+          windowStart: windowStart.toISOString(),
+          windowEnd: windowEnd.toISOString()
+        });
+      }
+
+      if (now > windowEnd) {
+        return res.status(400).json({
+          success: false,
+          message: 'Waktu tracking telah berakhir. Tugas akan ditandai sebagai tidak selesai.',
+          code: 'TOO_LATE',
+          windowStart: windowStart.toISOString(),
+          windowEnd: windowEnd.toISOString()
+        });
       }
     }
+
 
 
     // Create tracking session with proper schema fields
@@ -119,12 +160,12 @@ export const stopTracking = async (req: Request, res: Response) => {
 
     await prisma.tracking.update({
       where: { id: tracking.id },
-      data: { 
+      data: {
         endTime: new Date(),
         endLat: lat || 0,
         endLong: lng || 0,
         durasi: durasiDetik,
-        status: 'completed',
+        status: 'stopped',
         fotoSelesai: fotoSelesai || null,
         routePath: routePathStr,
       }

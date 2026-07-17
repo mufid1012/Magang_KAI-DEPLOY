@@ -1,8 +1,19 @@
 /**
  * Server-side static map renderer using node-canvas + OSM tiles.
  * Renders a map image with a GPS track polyline — no browser needed.
+ * NOTE: 'canvas' is loaded lazily so the server still boots if the package is missing.
  */
-import { createCanvas, loadImage, CanvasRenderingContext2D } from 'canvas';
+let createCanvas: any;
+let loadImage: any;
+let canvasAvailable = false;
+try {
+  const canvasModule = require('canvas');
+  createCanvas = canvasModule.createCanvas;
+  loadImage = canvasModule.loadImage;
+  canvasAvailable = true;
+} catch {
+  console.warn('[staticMap] "canvas" package not found — PDF map rendering will be disabled. Install with: npm install canvas');
+}
 
 // --- Tile math helpers ---
 function lng2tile(lng: number, zoom: number) { return Math.floor(((lng + 180) / 360) * Math.pow(2, zoom)); }
@@ -115,6 +126,7 @@ export async function renderStaticMap(
   height = 400
 ): Promise<string | null> {
   if (!routePath || routePath.length < 2) return null;
+  if (!canvasAvailable) return null;
 
   try {
     // Calculate bounding box with padding
@@ -183,7 +195,7 @@ export async function renderStaticMap(
 
     // Create output canvas
     const outputCanvas = createCanvas(width, height);
-    const ctx = outputCanvas.getContext('2d') as CanvasRenderingContext2D;
+    const ctx = outputCanvas.getContext('2d');
 
     // Fill bg
     ctx.fillStyle = '#e8e8e8';

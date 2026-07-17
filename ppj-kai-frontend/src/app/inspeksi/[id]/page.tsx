@@ -5,6 +5,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
+import axios from 'axios';
 import api from '../../../lib/api';
 import { showToast } from '../../../lib/toast';
 
@@ -28,6 +29,10 @@ interface EmergencyCategory {
   icon: string;
   label: string;
   color: string;
+}
+
+interface ApiErrorResponse {
+  message?: string;
 }
 
 // GPS Hook with improved accuracy and reliability
@@ -87,8 +92,10 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   const [isVerified, setIsVerified] = useState(false);
   const [verifyModalOpen, setVerifyModalOpen] = useState(false);
   const [selfieDataUrl, setSelfieDataUrl] = useState<string | null>(null);
+  const [cameraActive, setCameraActive] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Emergency Modal
   const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
@@ -115,8 +122,10 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   const [showStopModal, setShowStopModal] = useState(false);
   const [, setEndVerified] = useState(false);
   const [endSelfieDataUrl, setEndSelfieDataUrl] = useState<string | null>(null);
+  const [endCameraActive, setEndCameraActive] = useState(false);
   const endVideoRef = useRef<HTMLVideoElement>(null);
   const endStreamRef = useRef<MediaStream | null>(null);
+  const endFileInputRef = useRef<HTMLInputElement>(null);
   const [isStopping, setIsStopping] = useState(false);
 
   // Temporary deployment-testing bypass. Set
@@ -173,10 +182,13 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
       const data = res.data.data;
       setTugas(data);
 
-      // If already completed, redirect directly to selesai
+      // If already completed or missed, redirect or show status
       if (data?.status === 'completed') {
         router.replace(`/inspeksi/${params.id}/selesai`);
         return;
+      }
+      if (data?.status === 'missed') {
+        // Stay on page but don't allow tracking
       }
 
       // If tugas is in_progress, ALWAYS try to restore tracking from backend
@@ -214,17 +226,12 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
     if (!testMode && !isVerified) { setVerifyModalOpen(true); return; }
     if (!gpsPos && !(testMode && tugas)) { showToast('Menunggu sinyal GPS...', 'warning'); return; }
 
-    // Validasi jadwal inspeksi
-    if (!testMode && tugas?.tanggal && tugas?.jamMulai) {
-      const jadwal = new Date(tugas.tanggal);
-      const [hh, mm] = tugas.jamMulai.split(':');
-      jadwal.setHours(parseInt(hh, 10), parseInt(mm, 10), 0, 0);
-      
-      if (Date.now() < jadwal.getTime()) {
-        const waktuTampil = jadwal.toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' });
-        showToast(`Belum waktunya inspeksi! Jadwal Anda: ${waktuTampil}`, 'error');
-        return;
-      }
+    if (!testMode && isTimeBlocked) {
+      const message = timeWindowStatus === 'too_early'
+        ? `Tracking baru dibuka pukul ${windowOpenTimeStr} WIB.`
+        : 'Waktu tracking telah berakhir.';
+      showToast(message, 'error');
+      return;
     }
 
     try {
@@ -251,9 +258,12 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
         startedAt,
         trackPath: initialPath,
       }));
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Failed to start tracking', err);
-      showToast('Gagal memulai inspeksi.', 'error');
+      const msg = axios.isAxiosError<ApiErrorResponse>(err)
+        ? err.response?.data?.message || 'Gagal memulai inspeksi.'
+        : 'Gagal memulai inspeksi.';
+      showToast(msg, 'error');
     }
   };
 
@@ -339,7 +349,10 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
       streamRef.current = stream;
-      if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play(); }
+      setCameraActive(true);
+      setTimeout(() => {
+        if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play(); }
+      }, 100);
     } catch { showToast('Tidak dapat mengakses kamera.', 'error'); }
   };
 
@@ -356,12 +369,25 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   const stopCamera = () => {
     streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null;
+    setCameraActive(false);
+  };
+
+  const handleGalleryUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setSelfieDataUrl(reader.result as string);
+      stopCamera();
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   const confirmVerification = () => {
-    if (!selfieDataUrl) { showToast('Silakan ambil foto terlebih dahulu.', 'warning'); return; }
     setIsVerified(true);
     setVerifyModalOpen(false);
+    stopCamera();
   };
 
   // End verification camera functions
@@ -369,6 +395,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
       endStreamRef.current = stream;
+      setEndCameraActive(true);
       setTimeout(() => {
         if (endVideoRef.current) { endVideoRef.current.srcObject = stream; endVideoRef.current.play(); }
       }, 100);
@@ -388,10 +415,22 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   const stopEndCamera = () => {
     endStreamRef.current?.getTracks().forEach(t => t.stop());
     endStreamRef.current = null;
+    setEndCameraActive(false);
+  };
+
+  const handleEndGalleryUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setEndSelfieDataUrl(reader.result as string);
+      stopEndCamera();
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   const confirmEndVerification = () => {
-    if (!endSelfieDataUrl) { showToast('Silakan ambil foto terlebih dahulu.', 'warning'); return; }
     setEndVerified(true);
   };
 
@@ -433,6 +472,44 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
     ? haversineM(gpsPos.lat, gpsPos.lng, tugas.endPointLat, tugas.endPointLong)
     : null;
   const withinEndGeofence = testMode || (distanceToEnd !== null && distanceToEnd <= GEOFENCE_RADIUS);
+
+  // Time-window logic: 1 hour before jam_mulai → 1 hour after jam_mulai
+  const isMissed = tugas?.status === 'missed';
+  let timeWindowStatus: 'too_early' | 'within' | 'too_late' | 'no_schedule' = 'no_schedule';
+  let windowOpenTimeStr = '';
+  let windowCloseTimeStr = '';
+  let scheduledTimeStr = '';
+
+  if (tugas?.tanggal && tugas?.jamMulai) {
+    const [twHours, twMinutes] = tugas.jamMulai.split(':').map(Number);
+    const tugasDate = new Date(tugas.tanggal);
+    const scheduledTimeUTC = new Date(Date.UTC(
+      tugasDate.getUTCFullYear(),
+      tugasDate.getUTCMonth(),
+      tugasDate.getUTCDate(),
+      twHours - 7,
+      twMinutes
+    ));
+    const windowStart = new Date(scheduledTimeUTC.getTime() - 60 * 60 * 1000);
+    const windowEnd = new Date(scheduledTimeUTC.getTime() + 60 * 60 * 1000);
+    const now = new Date();
+
+    scheduledTimeStr = tugas.jamMulai;
+    const wsWIB = new Date(windowStart.getTime() + 7 * 60 * 60 * 1000);
+    const weWIB = new Date(windowEnd.getTime() + 7 * 60 * 60 * 1000);
+    windowOpenTimeStr = wsWIB.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false });
+    windowCloseTimeStr = weWIB.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+    if (isMissed || now > windowEnd) {
+      timeWindowStatus = 'too_late';
+    } else if (now < windowStart) {
+      timeWindowStatus = 'too_early';
+    } else {
+      timeWindowStatus = 'within';
+    }
+  }
+
+  const isTimeBlocked = timeWindowStatus === 'too_early' || timeWindowStatus === 'too_late';
 
   if (loading) return (
     <div className="flex h-screen items-center justify-center bg-background">
@@ -480,7 +557,14 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
               <div className="flex items-center justify-between p-md">
                 <div className="flex items-center gap-sm">
                   <h2 className="font-h3 text-h3 text-on-surface">Inspection Setup</h2>
-                  <span className="bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm px-2 py-1 rounded-full uppercase tracking-wider">Pending</span>
+                  <span className={`font-label-sm text-label-sm px-2 py-1 rounded-full uppercase tracking-wider ${
+                    isMissed ? 'bg-rose-500/10 text-rose-600'
+                    : timeWindowStatus === 'too_late' ? 'bg-rose-500/10 text-rose-600'
+                    : timeWindowStatus === 'too_early' ? 'bg-surface-container-high text-on-surface-variant'
+                    : 'bg-primary-container/20 text-primary'
+                  }`}>
+                    {isMissed ? 'Tidak Selesai' : timeWindowStatus === 'too_late' ? 'Terlewat' : timeWindowStatus === 'too_early' ? 'Belum Waktunya' : 'Siap'}
+                  </span>
                 </div>
                 <button
                   onClick={() => setCardMinimized(m => !m)}
@@ -514,11 +598,11 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
 
                     {/* Verifikasi Identitas */}
                     <button
-                      onClick={() => { setVerifyModalOpen(true); openCamera(); }}
-                      className={`flex items-center justify-between p-sm rounded-lg border transition-colors focus:outline-none ${isVerified ? 'bg-surface-container-low border-outline-variant/30' : 'bg-surface-container-low hover:bg-surface-container border-error-container/50'}`}
+                      onClick={() => { setVerifyModalOpen(true); }}
+                      className={`flex items-center justify-between p-sm rounded-lg border transition-colors focus:outline-none ${isVerified ? 'bg-surface-container-low border-outline-variant/30' : 'bg-surface-container-low hover:bg-surface-container border-outline-variant/50'}`}
                     >
                       <div className="flex items-center gap-md">
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isVerified ? 'bg-primary-container text-on-primary-container' : 'bg-error-container text-on-error-container'}`}>
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isVerified ? 'bg-primary-container text-on-primary-container' : 'bg-surface-container-high text-on-surface-variant'}`}>
                           <span className="material-symbols-outlined text-sm">{isVerified ? 'check' : 'photo_camera'}</span>
                         </div>
                         <span className="font-body-md text-body-md text-on-surface">Verifikasi Identitas</span>
@@ -526,8 +610,8 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
                       {isVerified ? (
                         <span className="text-primary font-label-sm text-label-sm uppercase flex items-center gap-xs">Terverifikasi ✓</span>
                       ) : (
-                        <span className="text-error font-label-sm text-label-sm uppercase flex items-center gap-xs">
-                          Wajib <span className="material-symbols-outlined text-[16px]">chevron_right</span>
+                        <span className="text-on-surface-variant font-label-sm text-label-sm uppercase flex items-center gap-xs">
+                          Opsional <span className="material-symbols-outlined text-[16px]">chevron_right</span>
                         </span>
                       )}
                     </button>
@@ -541,6 +625,41 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
                         <p className="font-label-sm text-[11px] text-on-surface-variant uppercase">Jarak Jalur</p>
                         <p className="font-data-heavy text-on-surface">{routeKm} km</p>
                         <p className="font-label-sm text-[10px] text-on-surface-variant">{tugas.startPointName} → {tugas.endPointName}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Schedule Info */}
+                  {scheduledTimeStr && (
+                    <div className={`rounded-lg p-sm border flex items-center gap-sm ${
+                      timeWindowStatus === 'within' ? 'bg-primary-container/10 border-primary/30'
+                      : timeWindowStatus === 'too_late' || isMissed ? 'bg-rose-50 border-rose-200'
+                      : 'bg-amber-50 border-amber-200'
+                    }`}>
+                      <span className={`material-symbols-outlined text-[20px] ${
+                        timeWindowStatus === 'within' ? 'text-primary'
+                        : timeWindowStatus === 'too_late' || isMissed ? 'text-rose-500'
+                        : 'text-amber-500'
+                      }`} style={{ fontVariationSettings: "'FILL' 1" }}>
+                        {timeWindowStatus === 'within' ? 'check_circle' : timeWindowStatus === 'too_late' || isMissed ? 'event_busy' : 'schedule'}
+                      </span>
+                      <div className="flex-1">
+                        <p className="font-label-sm text-[11px] text-on-surface-variant uppercase">Jadwal Inspeksi</p>
+                        <p className="font-data-heavy text-on-surface">{scheduledTimeStr} WIB</p>
+                        <p className={`font-label-sm text-[10px] ${
+                          timeWindowStatus === 'within' ? 'text-primary'
+                          : timeWindowStatus === 'too_late' || isMissed ? 'text-rose-500'
+                          : 'text-amber-600'
+                        }`}>
+                          {isMissed
+                            ? 'Tugas tidak selesai — waktu tracking telah berakhir'
+                            : timeWindowStatus === 'too_late'
+                            ? `Waktu tracking berakhir pada ${windowCloseTimeStr} WIB`
+                            : timeWindowStatus === 'too_early'
+                            ? `Tracking dibuka mulai ${windowOpenTimeStr} WIB`
+                            : `Tracking tersedia sampai ${windowCloseTimeStr} WIB`
+                          }
+                        </p>
                       </div>
                     </div>
                   )}
@@ -590,18 +709,29 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
 
                   <button
                     onClick={handleStartTracking}
-                    disabled={!testMode && (!gpsPos || !withinGeofence)}
-                    className={`w-full text-on-primary font-body-lg font-semibold h-[48px] rounded-lg flex items-center justify-center gap-sm shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all ${testMode ? 'bg-amber-500 hover:bg-amber-600' : 'bg-primary hover:bg-surface-tint'
+                    disabled={!testMode && (!gpsPos || !withinGeofence || isTimeBlocked)}
+                    className={`w-full text-on-primary font-body-lg font-semibold h-[48px] rounded-lg flex items-center justify-center gap-sm shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all ${
+                      isTimeBlocked && !testMode
+                        ? 'bg-slate-400'
+                        : testMode ? 'bg-amber-500 hover:bg-amber-600' : 'bg-primary hover:bg-surface-tint'
                       }`}
                   >
-                    <span className="material-symbols-outlined">play_circle</span>
+                    <span className="material-symbols-outlined">
+                      {isTimeBlocked && !testMode ? (timeWindowStatus === 'too_late' ? 'event_busy' : 'lock_clock') : 'play_circle'}
+                    </span>
                     {testMode
                       ? 'Mulai Tracking (Bypass)'
-                      : !gpsPos
-                        ? 'Menunggu GPS...'
-                        : !withinGeofence
-                          ? `Mendekat ke Titik Awal (${Math.round(distanceToStart ?? 0)}m)`
-                          : 'Mulai Tracking'
+                      : isMissed
+                        ? 'Tugas Tidak Selesai'
+                        : timeWindowStatus === 'too_late'
+                        ? 'Waktu Tracking Berakhir'
+                        : timeWindowStatus === 'too_early'
+                          ? `Dibuka Pukul ${windowOpenTimeStr} WIB`
+                          : !gpsPos
+                            ? 'Menunggu GPS...'
+                            : !withinGeofence
+                              ? `Mendekat ke Titik Awal (${Math.round(distanceToStart ?? 0)}m)`
+                              : 'Mulai Tracking'
                     }
                   </button>
                 </div>
@@ -660,22 +790,47 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
               </button>
             </div>
             <div className="p-md flex flex-col gap-md">
-              {/* Camera preview or captured photo */}
-              {!selfieDataUrl ? (
+              {/* Hidden file input for gallery */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleGalleryUpload}
+              />
+              {/* Camera preview, captured photo, or choose options */}
+              {selfieDataUrl ? (
+                <div className="relative w-full aspect-[4/3] rounded-xl overflow-hidden">
+                  <img src={selfieDataUrl} alt="Selfie" className="w-full h-full object-cover" />
+                  <button onClick={() => { setSelfieDataUrl(null); }} className="absolute top-2 right-2 bg-surface/80 backdrop-blur-sm rounded-full p-1.5">
+                    <span className="material-symbols-outlined text-error">refresh</span>
+                  </button>
+                </div>
+              ) : cameraActive ? (
                 <div className="relative w-full aspect-[4/3] bg-black rounded-xl overflow-hidden">
                   <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-                  <div className="absolute bottom-3 left-0 right-0 flex justify-center">
+                  <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-md">
                     <button onClick={capturePhoto} className="w-16 h-16 bg-white rounded-full border-4 border-primary shadow-lg flex items-center justify-center active:scale-90 transition-transform">
                       <span className="material-symbols-outlined text-primary text-[32px]">photo_camera</span>
+                    </button>
+                    <button onClick={stopCamera} className="w-10 h-10 bg-surface/80 backdrop-blur rounded-full flex items-center justify-center self-center">
+                      <span className="material-symbols-outlined text-error text-[20px]">close</span>
                     </button>
                   </div>
                 </div>
               ) : (
-                <div className="relative w-full aspect-[4/3] rounded-xl overflow-hidden">
-                  <img src={selfieDataUrl} alt="Selfie" className="w-full h-full object-cover" />
-                  <button onClick={() => { setSelfieDataUrl(null); openCamera(); }} className="absolute top-2 right-2 bg-surface/80 backdrop-blur-sm rounded-full p-1.5">
-                    <span className="material-symbols-outlined text-error">refresh</span>
-                  </button>
+                <div className="flex flex-col gap-sm">
+                  <p className="font-body-md text-body-md text-on-surface-variant text-center">Ambil foto selfie untuk verifikasi identitas (opsional)</p>
+                  <div className="flex gap-sm">
+                    <button onClick={openCamera} className="flex-1 h-28 rounded-xl border-2 border-dashed border-primary/40 bg-primary-container/10 flex flex-col items-center justify-center text-primary hover:bg-primary-container/20 transition-colors cursor-pointer gap-1">
+                      <span className="material-symbols-outlined text-[32px]">photo_camera</span>
+                      <span className="font-label-sm text-label-sm">Buka Kamera</span>
+                    </button>
+                    <button onClick={() => fileInputRef.current?.click()} className="flex-1 h-28 rounded-xl border-2 border-dashed border-primary/40 bg-primary-container/10 flex flex-col items-center justify-center text-primary hover:bg-primary-container/20 transition-colors cursor-pointer gap-1">
+                      <span className="material-symbols-outlined text-[32px]">photo_library</span>
+                      <span className="font-label-sm text-label-sm">Pilih dari Galeri</span>
+                    </button>
+                  </div>
                 </div>
               )}
               {/* GPS info */}
@@ -690,8 +845,8 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
               <button onClick={() => { setVerifyModalOpen(false); stopCamera(); setSelfieDataUrl(null); }} className="flex-1 py-3 rounded-xl border border-outline text-on-surface font-label-sm hover:bg-surface-container-low">
                 Batal
               </button>
-              <button onClick={confirmVerification} disabled={!selfieDataUrl} className="flex-[2] py-3 rounded-xl bg-primary text-on-primary font-label-sm flex items-center justify-center gap-sm shadow-sm disabled:opacity-50">
-                <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>check</span> Konfirmasi
+              <button onClick={confirmVerification} className="flex-[2] py-3 rounded-xl bg-primary text-on-primary font-label-sm flex items-center justify-center gap-sm shadow-sm">
+                <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>check</span> {selfieDataUrl ? 'Konfirmasi' : 'Lewati Verifikasi'}
               </button>
             </div>
           </div>
@@ -828,32 +983,48 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
 
               {/* End Identity Verification */}
               <div className="flex flex-col gap-sm">
-                <p className="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Verifikasi Identitas Akhir</p>
-                {!endSelfieDataUrl ? (
-                  <div className="relative w-full aspect-[4/3] bg-black rounded-xl overflow-hidden">
-                    <video ref={endVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-                    <div className="absolute bottom-3 left-0 right-0 flex justify-center">
-                      <button onClick={captureEndPhoto} className="w-16 h-16 bg-white rounded-full border-4 border-error shadow-lg flex items-center justify-center active:scale-90 transition-transform">
-                        <span className="material-symbols-outlined text-error text-[32px]">photo_camera</span>
-                      </button>
-                    </div>
-                    {!endStreamRef.current && (
-                      <button onClick={openEndCamera} className="absolute inset-0 flex flex-col items-center justify-center bg-surface-container gap-sm text-on-surface-variant">
-                        <span className="material-symbols-outlined text-[40px]">photo_camera</span>
-                        <span className="font-label-sm text-label-sm">Tap untuk buka kamera</span>
-                      </button>
-                    )}
-                  </div>
-                ) : (
+                <p className="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Verifikasi Identitas Akhir <span className="normal-case text-[10px]">(opsional)</span></p>
+                {/* Hidden file input for gallery */}
+                <input
+                  ref={endFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleEndGalleryUpload}
+                />
+                {endSelfieDataUrl ? (
                   <div className="relative w-full aspect-[4/3] rounded-xl overflow-hidden">
                     <img src={endSelfieDataUrl} alt="Selfie akhir" className="w-full h-full object-cover" />
-                    <button onClick={() => { setEndSelfieDataUrl(null); setEndVerified(false); openEndCamera(); }} className="absolute top-2 right-2 bg-surface/80 backdrop-blur-sm rounded-full p-1.5">
+                    <button onClick={() => { setEndSelfieDataUrl(null); setEndVerified(false); }} className="absolute top-2 right-2 bg-surface/80 backdrop-blur-sm rounded-full p-1.5">
                       <span className="material-symbols-outlined text-error">refresh</span>
                     </button>
                     <div className="absolute bottom-2 left-2 bg-primary/90 text-on-primary px-2 py-1 rounded-full flex items-center gap-1">
                       <span className="material-symbols-outlined text-[14px]">check</span>
                       <span className="font-label-sm text-[10px]">Foto terverifikasi</span>
                     </div>
+                  </div>
+                ) : endCameraActive ? (
+                  <div className="relative w-full aspect-[4/3] bg-black rounded-xl overflow-hidden">
+                    <video ref={endVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+                    <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-md">
+                      <button onClick={captureEndPhoto} className="w-16 h-16 bg-white rounded-full border-4 border-error shadow-lg flex items-center justify-center active:scale-90 transition-transform">
+                        <span className="material-symbols-outlined text-error text-[32px]">photo_camera</span>
+                      </button>
+                      <button onClick={stopEndCamera} className="w-10 h-10 bg-surface/80 backdrop-blur rounded-full flex items-center justify-center self-center">
+                        <span className="material-symbols-outlined text-error text-[20px]">close</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-sm">
+                    <button onClick={openEndCamera} className="flex-1 h-24 rounded-xl border-2 border-dashed border-error/40 bg-error-container/10 flex flex-col items-center justify-center text-error hover:bg-error-container/20 transition-colors cursor-pointer gap-1">
+                      <span className="material-symbols-outlined text-[28px]">photo_camera</span>
+                      <span className="font-label-sm text-label-sm">Buka Kamera</span>
+                    </button>
+                    <button onClick={() => endFileInputRef.current?.click()} className="flex-1 h-24 rounded-xl border-2 border-dashed border-error/40 bg-error-container/10 flex flex-col items-center justify-center text-error hover:bg-error-container/20 transition-colors cursor-pointer gap-1">
+                      <span className="material-symbols-outlined text-[28px]">photo_library</span>
+                      <span className="font-label-sm text-label-sm">Pilih dari Galeri</span>
+                    </button>
                   </div>
                 )}
                 {/* GPS info */}
