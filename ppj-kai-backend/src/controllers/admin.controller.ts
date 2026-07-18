@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import prisma from '../config/database';
 import * as XLSX from 'xlsx';
 import { findStationMatch, normalizeNipp } from '../utils/importMatching';
+import { ensureMapLocationsTable } from '../lib/mapLocationsTable';
 
 // Extend Request type to include user (set by auth middleware)
 interface AuthRequest extends Request {
@@ -276,18 +277,68 @@ export const createTugas = async (req: AuthRequest, res: Response) => {
   try {
     const managerId = req.user!.id;
     const role = req.user!.role;
-    const { jalur, tanggal, startPointLat, startPointLong, endPointLat, endPointLong, startPointName, endPointName, jamMulai, jamSelesai, assignedTo } = req.body;
+    const {
+      jalur, tanggal, startPointLat, startPointLong, endPointLat, endPointLong,
+      startPointName, endPointName, startMapLocationId, endMapLocationId,
+      jamMulai, jamSelesai, assignedTo,
+    } = req.body;
 
     if (!jalur || !tanggal || !startPointLat || !startPointLong || !endPointLat || !endPointLong || !assignedTo) {
       return res.status(400).json({ success: false, message: 'Field wajib tidak lengkap' });
+    }
+
+    let resolvedStart = {
+      name: String(startPointName || ''),
+      latitude: Number(startPointLat),
+      longitude: Number(startPointLong),
+    };
+    let resolvedEnd = {
+      name: String(endPointName || ''),
+      latitude: Number(endPointLat),
+      longitude: Number(endPointLong),
+    };
+
+    const requestedMapLocationIds = [startMapLocationId, endMapLocationId]
+      .filter((value): value is string | number => value !== undefined && value !== null && value !== '')
+      .map(value => Number(value));
+
+    if (requestedMapLocationIds.length > 0) {
+      if (role !== 'admin' || requestedMapLocationIds.some(id => !Number.isInteger(id))) {
+        return res.status(400).json({ success: false, message: 'Titik MAP tidak valid' });
+      }
+
+      await ensureMapLocationsTable();
+      const registeredLocations = await prisma.mapLocation.findMany({
+        where: { id: { in: requestedMapLocationIds }, createdBy: managerId },
+      });
+      const locationById = new Map(registeredLocations.map(location => [location.id, location]));
+
+      if (startMapLocationId) {
+        const location = locationById.get(Number(startMapLocationId));
+        if (!location) return res.status(400).json({ success: false, message: 'Titik MAP awal tidak ditemukan' });
+        resolvedStart = { name: location.name, latitude: location.latitude, longitude: location.longitude };
+      }
+      if (endMapLocationId) {
+        const location = locationById.get(Number(endMapLocationId));
+        if (!location) return res.status(400).json({ success: false, message: 'Titik MAP akhir tidak ditemukan' });
+        resolvedEnd = { name: location.name, latitude: location.latitude, longitude: location.longitude };
+      }
+    }
+
+    if (
+      ![resolvedStart.latitude, resolvedStart.longitude, resolvedEnd.latitude, resolvedEnd.longitude].every(Number.isFinite) ||
+      Math.abs(resolvedStart.latitude) > 90 || Math.abs(resolvedEnd.latitude) > 90 ||
+      Math.abs(resolvedStart.longitude) > 180 || Math.abs(resolvedEnd.longitude) > 180
+    ) {
+      return res.status(400).json({ success: false, message: 'Koordinat titik pengecekan tidak valid' });
     }
 
     // KUPT: validate that station names are within their wilayah
     if (role === 'kupt') {
       const stations = await getStationsForUser(managerId, role);
       if (stations) {
-        const startOk = !startPointName || stations.includes(startPointName);
-        const endOk = !endPointName || stations.includes(endPointName);
+        const startOk = !resolvedStart.name || stations.includes(resolvedStart.name);
+        const endOk = !resolvedEnd.name || stations.includes(resolvedEnd.name);
         if (!startOk || !endOk) {
           return res.status(403).json({ success: false, message: 'Stasiun di luar wilayah Anda' });
         }
@@ -305,12 +356,12 @@ export const createTugas = async (req: AuthRequest, res: Response) => {
       data: {
         jalur,
         tanggal: new Date(tanggal),
-        startPointLat: parseFloat(startPointLat),
-        startPointLong: parseFloat(startPointLong),
-        endPointLat: parseFloat(endPointLat),
-        endPointLong: parseFloat(endPointLong),
-        startPointName: startPointName || '',
-        endPointName: endPointName || '',
+        startPointLat: resolvedStart.latitude,
+        startPointLong: resolvedStart.longitude,
+        endPointLat: resolvedEnd.latitude,
+        endPointLong: resolvedEnd.longitude,
+        startPointName: resolvedStart.name,
+        endPointName: resolvedEnd.name,
         jamMulai: jamMulai || null,
         jamSelesai: jamSelesai || null,
         assignedTo: parseInt(assignedTo),

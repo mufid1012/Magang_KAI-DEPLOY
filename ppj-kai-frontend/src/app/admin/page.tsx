@@ -47,6 +47,7 @@ interface Petugas { id: number; nipp: string; nama: string; tugasPpj: { id: numb
 interface Tugas { id: number; jalur: string; tanggal: string; startPointLat: number; startPointLong: number; endPointLat: number; endPointLong: number; startPointName: string; endPointName: string; status: string; user: { nama: string; nipp: string; jabatan?: string | null; division?: string | null; workArea?: string | null }, tracking?: { startTime: string | null; endTime: string | null; durasi: number | null; status: string; fotoAwal?: string | null; fotoSelesai?: string | null; laporan: Emergency[] }[] }
 interface Emergency { id: number; latitude: number; longitude: number; jenisTemuan: string; deskripsi: string; foto: string | null; createdAt: string; tracking?: { tugas: { jalur: string; user: { nama: string; nipp: string } } } }
 interface LivePosition { petugasNama: string; petugasNipp: string; tugasId: number; jalur: string; latitude: number; longitude: number; updatedAt: string }
+interface RegisteredMapLocation { id: number; name: string; address: string | null; latitude: number; longitude: number }
 interface Stats { totalPetugas: number; tugasAktif: number; tugasSelesai: number; laporanDarurat: number }
 interface ManagedUser { id: number; nipp: string; nama: string; role: string; isActive: boolean; jabatan?: string; division?: string; workArea?: string; phone?: string; managerId?: number; createdAt: string; wilayahAssignments: { id: number; wilayah: { id: number; kode: string; nama: string; stations: string } }[] }
 interface WilayahItem { id: number; kode: string; nama: string; stations: string }
@@ -122,8 +123,10 @@ export default function AdminPage() {
   const [downloadingTugasId, setDownloadingTugasId] = useState<number | null>(null);
 
   // Task form state
-  const [form, setForm] = useState({ jalur: '', tanggal: '', assignedTo: '', startPointName: '', endPointName: '', startPointLat: '', startPointLong: '', endPointLat: '', endPointLong: '', jamMulai: '', jamSelesai: '' });
+  const [form, setForm] = useState({ jalur: '', tanggal: '', assignedTo: '', startPointName: '', endPointName: '', startPointLat: '', startPointLong: '', endPointLat: '', endPointLong: '', startMapLocationId: '', endMapLocationId: '', jamMulai: '', jamSelesai: '' });
   const [submitting, setSubmitting] = useState(false);
+  const [registeredMapLocations, setRegisteredMapLocations] = useState<RegisteredMapLocation[]>([]);
+  const [loadingTaskLocations, setLoadingTaskLocations] = useState(false);
 
   const [showAddPetugasModal, setShowAddPetugasModal] = useState(false);
   const [availablePetugas, setAvailablePetugas] = useState<{id: number, nipp: string, nama: string}[]>([]);
@@ -416,46 +419,77 @@ export default function AdminPage() {
     } catch (e: unknown) { showToast(getApiErrorMessage(e, 'Gagal.'), 'error'); }
   };
 
-  // Station dropdown handlers
-  const handleStartStationChange = (stationName: string) => {
-    const station = STATIONS.find(s => s.name === stationName);
-    if (station) {
-      setForm(f => {
-        const newForm = {
-          ...f,
-          startPointName: station.name,
-          startPointLat: station.lat.toFixed(6),
-          startPointLong: station.lng.toFixed(6),
-        };
-        // Auto-fill jalur if both stations are selected
-        if (newForm.endPointName) {
-          newForm.jalur = `${station.name} → ${newForm.endPointName}`;
-        }
-        return newForm;
-      });
-    } else {
-      setForm(f => ({ ...f, startPointName: '', startPointLat: '', startPointLong: '' }));
+  const fetchTaskMapLocations = async () => {
+    if (!isAdmin) return;
+    try {
+      setLoadingTaskLocations(true);
+      const response = await api.get('/admin/map-locations');
+      setRegisteredMapLocations(Array.isArray(response.data.data) ? response.data.data : []);
+    } catch (error: unknown) {
+      showToast(getApiErrorMessage(error, 'Gagal mengambil titik MAP untuk penugasan.'), 'error');
+    } finally {
+      setLoadingTaskLocations(false);
     }
   };
 
-  const handleEndStationChange = (stationName: string) => {
-    const station = STATIONS.find(s => s.name === stationName);
-    if (station) {
+  const handleOpenTaskModal = () => {
+    setShowTaskModal(true);
+    if (isAdmin) void fetchTaskMapLocations();
+  };
+
+  const findInspectionPoint = (selection: string) => {
+    if (selection.startsWith('map:')) {
+      const id = Number(selection.slice(4));
+      const location = registeredMapLocations.find(item => item.id === id);
+      return location ? { name: location.name, lat: location.latitude, lng: location.longitude, mapLocationId: String(location.id) } : null;
+    }
+    if (selection.startsWith('station:')) {
+      const station = STATIONS.find(item => item.name === selection.slice(8));
+      return station ? { name: station.name, lat: station.lat, lng: station.lng, mapLocationId: '' } : null;
+    }
+    return null;
+  };
+
+  // Station and registered MAP point dropdown handlers
+  const handleStartPointChange = (selection: string) => {
+    const point = findInspectionPoint(selection);
+    if (point) {
       setForm(f => {
         const newForm = {
           ...f,
-          endPointName: station.name,
-          endPointLat: station.lat.toFixed(6),
-          endPointLong: station.lng.toFixed(6),
+          startPointName: point.name,
+          startPointLat: point.lat.toFixed(6),
+          startPointLong: point.lng.toFixed(6),
+          startMapLocationId: point.mapLocationId,
         };
-        // Auto-fill jalur if both stations are selected
-        if (newForm.startPointName) {
-          newForm.jalur = `${newForm.startPointName} → ${station.name}`;
+        if (newForm.endPointName) {
+          newForm.jalur = `${point.name} → ${newForm.endPointName}`;
         }
         return newForm;
       });
     } else {
-      setForm(f => ({ ...f, endPointName: '', endPointLat: '', endPointLong: '' }));
+      setForm(f => ({ ...f, startPointName: '', startPointLat: '', startPointLong: '', startMapLocationId: '' }));
+    }
+  };
+
+  const handleEndPointChange = (selection: string) => {
+    const point = findInspectionPoint(selection);
+    if (point) {
+      setForm(f => {
+        const newForm = {
+          ...f,
+          endPointName: point.name,
+          endPointLat: point.lat.toFixed(6),
+          endPointLong: point.lng.toFixed(6),
+          endMapLocationId: point.mapLocationId,
+        };
+        if (newForm.startPointName) {
+          newForm.jalur = `${newForm.startPointName} → ${point.name}`;
+        }
+        return newForm;
+      });
+    } else {
+      setForm(f => ({ ...f, endPointName: '', endPointLat: '', endPointLong: '', endMapLocationId: '' }));
     }
   };
 
@@ -471,7 +505,7 @@ export default function AdminPage() {
       setSubmitting(true);
       await api.post('/admin/tugas', form);
       setShowTaskModal(false);
-      setForm({ jalur: '', tanggal: '', assignedTo: '', startPointName: '', endPointName: '', startPointLat: '', startPointLong: '', endPointLat: '', endPointLong: '', jamMulai: '', jamSelesai: '' });
+      setForm({ jalur: '', tanggal: '', assignedTo: '', startPointName: '', endPointName: '', startPointLat: '', startPointLong: '', endPointLat: '', endPointLong: '', startMapLocationId: '', endMapLocationId: '', jamMulai: '', jamSelesai: '' });
       fetchAll();
     } catch (e: unknown) { console.error(e); showToast(getApiErrorMessage(e, 'Gagal membuat tugas.'), 'error'); }
     finally { setSubmitting(false); }
@@ -904,7 +938,7 @@ export default function AdminPage() {
                       />
                     </div>
                     {/* Create Single Task Button */}
-                    <button onClick={() => setShowTaskModal(true)} className="w-full py-2.5 bg-primary text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-primary/90 shadow-sm transition-all active:scale-[0.98]">
+                    <button onClick={handleOpenTaskModal} className="w-full py-2.5 bg-primary text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-primary/90 shadow-sm transition-all active:scale-[0.98]">
                       <span className="material-symbols-outlined text-[18px]">add</span> Tugaskan Pemeriksa
                     </button>
                   </div>
@@ -1560,28 +1594,39 @@ export default function AdminPage() {
                 </select>
               </div>
 
-              {/* Station Dropdowns */}
+              {/* Inspection point dropdowns: stations + registered MAP locations */}
               <div className="bg-white p-4 border border-slate-200 rounded-xl shadow-sm">
                 <label className="text-[10px] font-bold text-slate-700 uppercase tracking-widest block mb-3 flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-primary text-[16px]">train</span> Titik Lokasi Pengecekan
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {/* Start Station */}
+                  {/* Start inspection point */}
                   <div className="flex flex-col gap-2">
                     <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[14px]">trip_origin</span> Stasiun Awal
+                      <span className="material-symbols-outlined text-[14px]">trip_origin</span> Titik Awal
                     </label>
                     <select
-                      value={form.startPointName}
-                      onChange={e => handleStartStationChange(e.target.value)}
+                      value={form.startMapLocationId ? `map:${form.startMapLocationId}` : form.startPointName ? `station:${form.startPointName}` : ''}
+                      onChange={e => handleStartPointChange(e.target.value)}
                       className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none shadow-sm font-medium"
                     >
-                      <option value="">-- Pilih Stasiun Awal --</option>
-                      {filteredStations.map(s => (
-                        <option key={s.name} value={s.name}>
-                          {s.name} ({s.lat.toFixed(4)}, {s.lng.toFixed(4)})
-                        </option>
-                      ))}
+                      <option value="">-- Pilih Titik Awal --</option>
+                      <optgroup label="Stasiun">
+                        {filteredStations.map(s => (
+                          <option key={s.name} value={`station:${s.name}`}>
+                            {s.name} ({s.lat.toFixed(4)}, {s.lng.toFixed(4)})
+                          </option>
+                        ))}
+                      </optgroup>
+                      {isAdmin && registeredMapLocations.length > 0 && (
+                        <optgroup label="Titik MAP Terdaftar">
+                          {registeredMapLocations.map(location => (
+                            <option key={location.id} value={`map:${location.id}`}>
+                              {location.name} ({location.latitude.toFixed(4)}, {location.longitude.toFixed(4)})
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
                     </select>
 
                     {form.startPointLat && (
@@ -1591,22 +1636,33 @@ export default function AdminPage() {
                       </div>
                     )}
                   </div>
-                  {/* End Station */}
+                  {/* End inspection point */}
                   <div className="flex flex-col gap-2">
                     <label className="text-[10px] font-bold text-rose-600 uppercase tracking-widest flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[14px]">location_on</span> Stasiun Akhir
+                      <span className="material-symbols-outlined text-[14px]">location_on</span> Titik Akhir
                     </label>
                     <select
-                      value={form.endPointName}
-                      onChange={e => handleEndStationChange(e.target.value)}
+                      value={form.endMapLocationId ? `map:${form.endMapLocationId}` : form.endPointName ? `station:${form.endPointName}` : ''}
+                      onChange={e => handleEndPointChange(e.target.value)}
                       className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none shadow-sm font-medium"
                     >
-                      <option value="">-- Pilih Stasiun Akhir --</option>
-                      {filteredStations.map(s => (
-                        <option key={s.name} value={s.name}>
-                          {s.name} ({s.lat.toFixed(4)}, {s.lng.toFixed(4)})
-                        </option>
-                      ))}
+                      <option value="">-- Pilih Titik Akhir --</option>
+                      <optgroup label="Stasiun">
+                        {filteredStations.map(s => (
+                          <option key={s.name} value={`station:${s.name}`}>
+                            {s.name} ({s.lat.toFixed(4)}, {s.lng.toFixed(4)})
+                          </option>
+                        ))}
+                      </optgroup>
+                      {isAdmin && registeredMapLocations.length > 0 && (
+                        <optgroup label="Titik MAP Terdaftar">
+                          {registeredMapLocations.map(location => (
+                            <option key={location.id} value={`map:${location.id}`}>
+                              {location.name} ({location.latitude.toFixed(4)}, {location.longitude.toFixed(4)})
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
                     </select>
                     {form.endPointLat && (
                       <div className="flex items-center gap-1.5 text-[10px] text-rose-600 font-semibold bg-rose-50 rounded-lg px-3 py-1.5 border border-rose-100">
@@ -1622,12 +1678,18 @@ export default function AdminPage() {
                     <span className="text-sm font-extrabold text-blue-700">{haversineKm(parseFloat(form.startPointLat), parseFloat(form.startPointLong), parseFloat(form.endPointLat), parseFloat(form.endPointLong))} km</span>
                   </div>
                 )}
+                {isAdmin && (
+                  <p className="mt-3 text-[10px] text-slate-500 flex items-center gap-1.5">
+                    <span className={`material-symbols-outlined text-[14px] ${loadingTaskLocations ? 'animate-spin' : 'text-primary'}`}>{loadingTaskLocations ? 'progress_activity' : 'add_location_alt'}</span>
+                    {loadingTaskLocations ? 'Mengambil titik MAP terdaftar...' : `${registeredMapLocations.length} titik dari menu MAP tersedia untuk penugasan.`}
+                  </p>
+                )}
               </div>
 
               {/* Nama Jalur */}
               <div>
                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Nama Jalur Inspeksi</label>
-                <input value={form.jalur} onChange={e => setForm(f => ({ ...f, jalur: e.target.value }))} placeholder="Otomatis terisi dari stasiun yang dipilih" className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-medium" />
+                <input value={form.jalur} onChange={e => setForm(f => ({ ...f, jalur: e.target.value }))} placeholder="Otomatis terisi dari titik yang dipilih" className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-medium" />
               </div>
 
               {/* Tanggal */}
