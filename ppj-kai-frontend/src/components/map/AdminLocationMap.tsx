@@ -15,6 +15,7 @@ interface SavedLocation {
   description: string | null;
   latitude: number;
   longitude: number;
+  createdAt?: string;
 }
 
 interface SearchResult {
@@ -73,6 +74,8 @@ export default function AdminLocationMap() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [loadingLocations, setLoadingLocations] = useState(true);
+  const [locationLoadError, setLocationLoadError] = useState('');
 
   const updateDraftCoordinates = useCallback((latitude: number, longitude: number, address = '') => {
     setDraft({ latitude, longitude, address });
@@ -100,10 +103,16 @@ export default function AdminLocationMap() {
 
   const fetchLocations = useCallback(async () => {
     try {
+      setLoadingLocations(true);
+      setLocationLoadError('');
       const response = await api.get('/admin/map-locations');
-      setLocations(response.data.data);
+      setLocations(Array.isArray(response.data.data) ? response.data.data : []);
     } catch (error: unknown) {
-      showToast(getApiErrorMessage(error, 'Gagal memuat titik lokasi.'), 'error');
+      const message = getApiErrorMessage(error, 'Gagal memuat titik lokasi.');
+      setLocationLoadError(message);
+      showToast(message, 'error');
+    } finally {
+      setLoadingLocations(false);
     }
   }, []);
 
@@ -247,7 +256,7 @@ export default function AdminLocationMap() {
     try {
       await api.delete(`/admin/map-locations/${location.id}`);
       setLocations(current => current.filter(item => item.id !== location.id));
-      setSelectedLocation(null);
+      setSelectedLocation(current => current?.id === location.id ? null : current);
       showToast('Titik lokasi berhasil dihapus.', 'success');
     } catch (error: unknown) {
       showToast(getApiErrorMessage(error, 'Gagal menghapus titik lokasi.'), 'error');
@@ -260,8 +269,16 @@ export default function AdminLocationMap() {
     mapRef.current.fitBounds(bounds, { padding: [60, 60], maxZoom: 16 });
   };
 
+  const focusLocation = (location: SavedLocation) => {
+    setDraft(null);
+    setSearchResults([]);
+    setSelectedLocation(location);
+    mapRef.current?.flyTo([location.latitude, location.longitude], 17, { duration: 0.7 });
+  };
+
   return (
-    <div className="w-full h-full relative bg-slate-100">
+    <div className="w-full h-full flex flex-col bg-slate-100">
+      <div className="relative flex-1 min-h-[260px] md:min-h-[360px]">
       <div ref={containerRef} className="absolute inset-0" />
 
       <div className="absolute top-3 left-3 right-3 md:right-auto md:w-[420px] z-[1000]">
@@ -334,6 +351,80 @@ export default function AdminLocationMap() {
           </div>
         </div>
       )}
+      </div>
+
+      <section className="h-[260px] md:h-[280px] shrink-0 bg-white border-t border-slate-200 flex flex-col relative z-[1100]">
+        <div className="px-4 md:px-5 py-3 border-b border-slate-200 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-sm font-extrabold text-slate-800 flex items-center gap-2">
+              <span className="material-symbols-outlined text-primary text-[20px]">table_rows</span>
+              Daftar Titik MAP Terdaftar
+            </h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">{locations.length} titik lokasi tersimpan</p>
+          </div>
+          <button type="button" onClick={fetchLocations} disabled={loadingLocations} className="shrink-0 px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-primary hover:bg-blue-50 disabled:opacity-50 flex items-center gap-1.5">
+            <span className={`material-symbols-outlined text-[17px] ${loadingLocations ? 'animate-spin' : ''}`}>refresh</span>
+            Muat Ulang
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-auto">
+          {loadingLocations ? (
+            <div className="h-full flex items-center justify-center gap-2 text-sm text-slate-500">
+              <span className="material-symbols-outlined animate-spin text-primary">progress_activity</span>
+              Mengambil titik lokasi...
+            </div>
+          ) : locationLoadError ? (
+            <div className="h-full flex flex-col items-center justify-center text-center px-4">
+              <span className="material-symbols-outlined text-rose-500 text-[30px]">cloud_off</span>
+              <p className="text-sm font-bold text-slate-700 mt-1">Gagal mengambil titik lokasi</p>
+              <p className="text-xs text-slate-500 mt-0.5 max-w-lg">{locationLoadError}</p>
+              <button type="button" onClick={fetchLocations} className="mt-2 px-4 py-2 rounded-xl bg-primary text-white text-xs font-bold">Coba Lagi</button>
+            </div>
+          ) : locations.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-center px-4 text-slate-500">
+              <span className="material-symbols-outlined text-slate-300 text-[34px]">location_off</span>
+              <p className="text-sm font-bold mt-1">Belum ada titik terdaftar</p>
+              <p className="text-xs mt-0.5">Klik peta atau gunakan Input Koordinat untuk menambahkan titik.</p>
+            </div>
+          ) : (
+            <table className="w-full min-w-[820px] text-left">
+              <thead className="sticky top-0 bg-slate-50 z-10 text-[10px] uppercase tracking-wider text-slate-500">
+                <tr>
+                  <th className="px-4 py-2.5 font-bold w-12">No.</th>
+                  <th className="px-4 py-2.5 font-bold">Nama Lokasi</th>
+                  <th className="px-4 py-2.5 font-bold">Alamat / Catatan</th>
+                  <th className="px-4 py-2.5 font-bold">Koordinat</th>
+                  <th className="px-4 py-2.5 font-bold">Terdaftar</th>
+                  <th className="px-4 py-2.5 font-bold text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {locations.map((location, index) => (
+                  <tr key={location.id} className={`text-xs hover:bg-blue-50/50 transition-colors ${selectedLocation?.id === location.id ? 'bg-blue-50' : 'bg-white'}`}>
+                    <td className="px-4 py-3 text-slate-400 font-semibold">{index + 1}</td>
+                    <td className="px-4 py-3">
+                      <button type="button" onClick={() => focusLocation(location)} className="font-bold text-slate-800 hover:text-primary text-left">{location.name}</button>
+                    </td>
+                    <td className="px-4 py-3 max-w-[320px]">
+                      <p className="text-slate-600 truncate">{location.address || '-'}</p>
+                      {location.description && <p className="text-[10px] text-slate-400 truncate mt-0.5">{location.description}</p>}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-[11px] text-slate-600 whitespace-nowrap">{location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}</td>
+                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{location.createdAt ? new Date(location.createdAt).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end gap-1.5">
+                        <button type="button" onClick={() => focusLocation(location)} className="px-2.5 py-1.5 rounded-lg bg-blue-50 text-primary font-bold hover:bg-blue-100 flex items-center gap-1"><span className="material-symbols-outlined text-[15px]">my_location</span>Lihat</button>
+                        <button type="button" onClick={() => handleDelete(location)} className="px-2.5 py-1.5 rounded-lg bg-rose-50 text-rose-600 font-bold hover:bg-rose-100 flex items-center gap-1"><span className="material-symbols-outlined text-[15px]">delete</span>Hapus</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

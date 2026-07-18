@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../config/database';
+import { ensureMapLocationsTable } from '../lib/mapLocationsTable';
 
 interface AuthRequest extends Request {
   user?: { id: number; role: string };
@@ -21,6 +22,7 @@ const GEOCODING_MIN_INTERVAL_MS = 1100;
 
 export const getMapLocations = async (req: AuthRequest, res: Response) => {
   try {
+    await ensureMapLocationsTable();
     const data = await prisma.mapLocation.findMany({
       where: { createdBy: req.user!.id },
       orderBy: { createdAt: 'desc' },
@@ -34,6 +36,7 @@ export const getMapLocations = async (req: AuthRequest, res: Response) => {
 
 export const createMapLocation = async (req: AuthRequest, res: Response) => {
   try {
+    await ensureMapLocationsTable();
     const name = String(req.body.name || '').trim();
     const address = String(req.body.address || '').trim();
     const description = String(req.body.description || '').trim();
@@ -68,6 +71,7 @@ export const createMapLocation = async (req: AuthRequest, res: Response) => {
 
 export const deleteMapLocation = async (req: AuthRequest, res: Response) => {
   try {
+    await ensureMapLocationsTable();
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) return res.status(400).json({ success: false, message: 'ID lokasi tidak valid' });
 
