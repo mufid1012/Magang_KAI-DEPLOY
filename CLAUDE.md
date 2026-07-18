@@ -16,9 +16,10 @@ npm install
 npx prisma db push && npx prisma generate   # sync schema + regenerate client
 npx tsx seed-user.ts                         # REQUIRED: seeds Wilayah, admin/QC/KUPT/PPJ accounts, sample tugas
 npx tsx seed-kategori.ts                     # REQUIRED: seeds default kategori_temuan
+npm test                                     # unit tests (termasuk pencocokan import Excel)
 npm run dev                                  # tsx watch src/index.ts, port from .env (default 5001)
 ```
-There is no backend test runner (`npm test` is a stub). `.env` needs `DATABASE_URL`, `PORT`, `JWT_SECRET`.
+`.env` needs `DATABASE_URL`, `PORT`, `JWT_SECRET`.
 
 Frontend (`cd ppj-kai-frontend`):
 ```bash

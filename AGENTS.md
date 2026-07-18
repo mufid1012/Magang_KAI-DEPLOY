@@ -203,7 +203,9 @@ kategori_temuan (KategoriTemuan)
 - `DELETE /api/admin/tugas/:id` → hapus tugas
 - `GET /api/admin/emergency` → list laporan darurat dari petugas kelolaan admin
 - `GET /api/admin/kategori-temuan`, `POST`, `PUT`, `DELETE` → CRUD Kategori Temuan
-- `POST /api/admin/import/preview`, `/import/process` → Preview dan proses Import Excel
+- `GET /api/admin/tugas/template`, `POST /api/admin/tugas/import` → Template dan proses Import Excel
+  - Import menerima petugas aktif yang belum masuk kelolaan dan otomatis mengaitkannya ke admin/KUPT setelah baris valid berhasil disimpan.
+  - NIPP mengabaikan kapital/spasi; nama stasiun mengabaikan kapital/spasi/tanda baca dan menoleransi typo kecil yang tidak ambigu.
 
 ### Guest / QC / KUPT (requireRole('guest', 'qc', 'kupt'))
 - `GET /api/guest/stats`
@@ -226,7 +228,7 @@ kategori_temuan (KategoriTemuan)
 
 ### 3. Excel Import/Export Penugasan (Baru)
 - Admin bisa import jadwal bulanan melalui Excel.
-- Template mencakup titik mulai, titik selesai, NIPP, dan Nama Petugas. Parser excel ditangani di backend (`import.controller.ts`).
+- Template mencakup titik mulai, titik selesai, NIPP, dan Nama Petugas. Parser endpoint aktif ditangani di backend (`admin.controller.ts`).
 
 ### 4. Emergency Loop Sound (Baru)
 - Saat petugas mengirimkan laporan berstatus "emergency" atau "berat" (tergantung *flag* di db), frontend QC/Admin akan memutar suara alarm darurat secara berulang (looping) hingga ada interaksi klik dari user untuk mematikannya.

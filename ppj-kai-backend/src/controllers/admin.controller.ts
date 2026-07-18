@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import prisma from '../config/database';
 import * as XLSX from 'xlsx';
+import { findStationMatch, normalizeNipp } from '../utils/importMatching';
 
 // Extend Request type to include user (set by auth middleware)
 interface AuthRequest extends Request {
@@ -689,9 +690,14 @@ export const downloadTugasTemplate = async (req: AuthRequest, res: Response) => 
   try {
     const managerId = req.user!.id;
 
-    // Fetch petugas managed by this admin/kupt
+    // Template juga menampilkan petugas yang belum dikelola agar dapat langsung
+    // dipakai untuk import; petugas tersebut otomatis dikaitkan saat import sukses.
     const petugasList = await prisma.user.findMany({
-      where: { managerId, role: 'ppj', isActive: true },
+      where: {
+        role: 'ppj',
+        isActive: true,
+        OR: [{ managerId }, { managerId: null }],
+      },
       select: { nipp: true, nama: true },
       orderBy: { nama: 'asc' },
     });
@@ -769,20 +775,19 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ success: false, message: 'File tidak memiliki data (hanya header)' });
     }
 
-    // Fetch managed petugas for validation
-    const managedPetugas = await prisma.user.findMany({
-      where: { managerId, role: 'ppj', isActive: true },
-      select: { id: true, nipp: true, nama: true },
+    // Petugas yang belum dikelola akan otomatis dikaitkan ke pengimpor ketika
+    // baris pertamanya berhasil. Petugas milik manager lain tidak diambil alih.
+    const activePetugas = await prisma.user.findMany({
+      where: { role: 'ppj', isActive: true },
+      select: { id: true, nipp: true, nama: true, managerId: true },
     });
-    const nippMap = new Map(managedPetugas.map(p => [p.nipp.trim().toUpperCase(), p]));
+    const nippMap = new Map(activePetugas.map(p => [normalizeNipp(p.nipp), p]));
 
     // KUPT station validation
     let allowedStations: string[] | null = null;
     if (role === 'kupt') {
       allowedStations = await getStationsForUser(managerId, role);
     }
-
-    const stationMap = new Map(STATIONS.map(s => [s.name.trim().toLowerCase(), s]));
 
     const results: { row: number; status: 'success' | 'error'; message: string; jalur?: string }[] = [];
     let created = 0;
@@ -824,23 +829,29 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
       }
 
       // Validate NIPP
-      const petugas = nippMap.get(rawNipp.toUpperCase());
+      const petugas = nippMap.get(normalizeNipp(rawNipp));
       if (!petugas) {
-        results.push({ row: rowNum, status: 'error', message: `NIPP "${rawNipp}" tidak ditemukan di daftar petugas kelolaan Anda` });
+        results.push({ row: rowNum, status: 'error', message: `NIPP "${rawNipp}" tidak ditemukan pada petugas PPJ aktif` });
+        continue;
+      }
+      if (petugas.managerId !== null && petugas.managerId !== managerId) {
+        results.push({ row: rowNum, status: 'error', message: `NIPP "${rawNipp}" sudah dikelola admin lain` });
         continue;
       }
 
       // Validate stations
-      const startStation = stationMap.get(rawStart.toLowerCase());
-      const endStation = stationMap.get(rawEnd.toLowerCase());
-      if (!startStation) {
+      const startMatch = findStationMatch(rawStart, STATIONS);
+      const endMatch = findStationMatch(rawEnd, STATIONS);
+      if (!startMatch) {
         results.push({ row: rowNum, status: 'error', message: `Stasiun Awal "${rawStart}" tidak ditemukan` });
         continue;
       }
-      if (!endStation) {
+      if (!endMatch) {
         results.push({ row: rowNum, status: 'error', message: `Stasiun Akhir "${rawEnd}" tidak ditemukan` });
         continue;
       }
+      const startStation = startMatch.station;
+      const endStation = endMatch.station;
       if (startStation.name === endStation.name) {
         results.push({ row: rowNum, status: 'error', message: 'Stasiun Awal dan Akhir tidak boleh sama' });
         continue;
@@ -872,26 +883,45 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
 
       // Create tugas
       try {
-        await prisma.tugasPpj.create({
-          data: {
-            jalur,
-            tanggal: parsedDate,
-            startPointLat: startStation.lat,
-            startPointLong: startStation.lng,
-            endPointLat: endStation.lat,
-            endPointLong: endStation.lng,
-            startPointName: startStation.name,
-            endPointName: endStation.name,
-            jamMulai: rawJamMulai || null,
-            jamSelesai: rawJamSelesai || null,
-            assignedTo: petugas.id,
-            status: 'pending',
-          },
+        await prisma.$transaction(async tx => {
+          if (petugas.managerId === null) {
+            const claimed = await tx.user.updateMany({
+              where: { id: petugas.id, managerId: null },
+              data: { managerId },
+            });
+            if (claimed.count !== 1) throw new Error('PETUGAS_ALREADY_MANAGED');
+          }
+
+          await tx.tugasPpj.create({
+            data: {
+              jalur,
+              tanggal: parsedDate,
+              startPointLat: startStation.lat,
+              startPointLong: startStation.lng,
+              endPointLat: endStation.lat,
+              endPointLong: endStation.lng,
+              startPointName: startStation.name,
+              endPointName: endStation.name,
+              jamMulai: rawJamMulai || null,
+              jamSelesai: rawJamSelesai || null,
+              assignedTo: petugas.id,
+              status: 'pending',
+            },
+          });
         });
+        petugas.managerId = managerId;
         created++;
-        results.push({ row: rowNum, status: 'success', message: 'Berhasil', jalur });
+        const corrections = [
+          startMatch.distance > 0 ? `"${rawStart}" → "${startStation.name}"` : null,
+          endMatch.distance > 0 ? `"${rawEnd}" → "${endStation.name}"` : null,
+        ].filter(Boolean);
+        const correctionMessage = corrections.length > 0 ? `; typo dikenali: ${corrections.join(', ')}` : '';
+        results.push({ row: rowNum, status: 'success', message: `Berhasil${correctionMessage}`, jalur });
       } catch (err: any) {
-        results.push({ row: rowNum, status: 'error', message: `Gagal menyimpan: ${err.message}` });
+        const message = err.message === 'PETUGAS_ALREADY_MANAGED'
+          ? `NIPP "${rawNipp}" baru saja dikelola admin lain`
+          : `Gagal menyimpan: ${err.message}`;
+        results.push({ row: rowNum, status: 'error', message });
       }
     }
 
