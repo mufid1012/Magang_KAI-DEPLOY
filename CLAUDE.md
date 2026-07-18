@@ -19,7 +19,7 @@ npx tsx seed-kategori.ts                     # REQUIRED: seeds default kategori_
 npm test                                     # unit tests (termasuk pencocokan import Excel)
 npm run dev                                  # tsx watch src/index.ts, port from .env (default 5001)
 ```
-`.env` needs `DATABASE_URL`, `PORT`, `JWT_SECRET`.
+`.env` needs `DATABASE_URL`, `PORT`, `JWT_SECRET`. Map search optionally uses a Nominatim-compatible `GEOCODING_API_URL` (defaults to the public OSM endpoint) and `APP_URL` for provider identification. Search is submit-only, cached, and globally throttled.
 
 Frontend (`cd ppj-kai-frontend`):
 ```bash

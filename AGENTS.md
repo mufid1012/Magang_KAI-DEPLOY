@@ -47,10 +47,10 @@ src/
     ├── admin.routes.ts          # /api/admin/* (auth + role: admin)
     └── guest.routes.ts          # /api/guest/* (auth + role: guest/qc/kupt)
 
-prisma/schema.prisma             # Skema DB (9 Tabel: User, Tugas, Tracking, Laporan, Wilayah, Kategori dll)
+prisma/schema.prisma             # Skema DB (User, Tugas, Tracking, Laporan, Wilayah, Kategori, MapLocation, dll.)
 seed-user.ts                     # Seeder: Wilayah, Roles (Admin, QC, KUPT, PPJ) + Sample Tugas
 seed-kategori.ts                 # Seeder: Kategori temuan default
-.env                             # DATABASE_URL, PORT, JWT_SECRET
+.env                             # DATABASE_URL, PORT, JWT_SECRET, opsional GEOCODING_API_URL & APP_URL
 ```
 
 ### Frontend (`ppj-kai-frontend/`)
@@ -66,7 +66,7 @@ src/
 │   │   ├── page.tsx            # Task selector / empty state "Tugas Belum Tersedia"
 │   │   ├── [id]/page.tsx       # ⭐ HALAMAN TERBESAR. Tracking GPS + Map + Kamera + Emergency
 │   │   └── [id]/selesai/page.tsx # Halaman ringkasan setelah inspeksi selesai
-│   ├── admin/page.tsx          # ⭐ Dashboard Admin: 2-menu sidebar, Kelola Penugasan, Petugas, Template, Kategori
+│   ├── admin/page.tsx          # ⭐ Dashboard Admin: Tugas, Live, Map Lokasi, Akun, Setting
 │   ├── qc/page.tsx             # Dashboard QC (Monitoring & Laporan berdasar Wilayah JR)
 │   ├── guest/page.tsx          # Dashboard Guest (Live View saja)
 │   └── globals.css             # Design tokens Material Design 3 (warna, spacing, typography)
@@ -160,6 +160,13 @@ template_item (TemplateItem)
 ├── start_point_name, end_point_name, start/end lat/long
 └── jam_mulai, jam_selesai
 
+map_locations (MapLocation)
+├── id: Int (PK, auto)
+├── name, address?, description?
+├── latitude, longitude
+├── created_by: Int (FK → users.id)
+└── Titik lokasi custom milik admin pembuat
+
 kategori_temuan (KategoriTemuan)
 ├── id: Int (PK, auto)
 ├── key: String (unique) — e.g. "berat", "ringan"
@@ -203,6 +210,10 @@ kategori_temuan (KategoriTemuan)
 - `DELETE /api/admin/tugas/:id` → hapus tugas
 - `GET /api/admin/emergency` → list laporan darurat dari petugas kelolaan admin
 - `GET /api/admin/kategori-temuan`, `POST`, `PUT`, `DELETE` → CRUD Kategori Temuan
+- `GET /api/admin/live-positions` → posisi PPJ dengan tracking dan tugas yang masih aktif
+- `GET`, `POST`, `DELETE /api/admin/map-locations` → kelola titik lokasi custom admin
+  - Titik baru dapat dipilih lewat klik peta, input latitude/longitude manual, atau hasil pencarian; marker draft dapat digeser sebelum disimpan.
+- `GET /api/admin/map-search?q=...` → pencarian lokasi submit-only melalui proxy geocoding
 - `GET /api/admin/tugas/template`, `POST /api/admin/tugas/import` → Template dan proses Import Excel
   - Import menerima petugas aktif yang belum masuk kelolaan dan otomatis mengaitkannya ke admin/KUPT setelah baris valid berhasil disimpan.
   - NIPP mengabaikan kapital/spasi; nama stasiun mengabaikan kapital/spasi/tanda baca dan menoleransi typo kecil yang tidak ambigu.
@@ -251,8 +262,10 @@ kategori_temuan (KategoriTemuan)
 ### 7. Geometry Cache (AdminMap)
 - Railway geometry di-cache dalam `useRef<Map>` keyed by koordinat start-end agar polling tidak menembak Overpass berkali-kali. Hanya cache hasil non-empty.
 
-### 8. Admin Page — 2-Menu Sidebar
-- Halaman admin memiliki **sidebar vertikal** dengan 2 menu: **Tugas** (CRUD tugas & petugas, tanpa peta) & **Live** (Full-screen AdminMap).
+### 8. Admin Page — Sidebar
+- Halaman admin memiliki menu **Tugas**, **Live**, **Map**, **Akun** (admin), dan **Setting**.
+- **Live** hanya menggambar tugas `in_progress` dan posisi tracking `started`; tugas selesai hilang pada polling berikutnya.
+- **Map** khusus admin untuk mencari tempat, klik peta, menyimpan, dan menghapus titik lokasi custom.
 
 ### 9. Task Selection Flow (`/inspeksi`) — Halaman Utama Petugas
 - **Ini adalah satu-satunya halaman petugas** (dashboard, riwayat, profile sudah dihapus).
@@ -350,7 +363,7 @@ npm run dev                # Menjalankan Next.js dev server di port 3000
 15. **Overpass API** — JANGAN hardcode 1 endpoint. Selalu pakai `fetchOverpass()` dari `railway.ts` yang punya failover 3 mirror.
 16. **Geometry cache** — AdminMap cache geometry di `useRef`. Jangan cache hasil kosong agar bisa retry.
 17. **Semua redirect petugas** → `/inspeksi`. JANGAN redirect ke `/dashboard` (sudah tidak ada).
-18. **Admin sidebar** — 2 menu: Tugas (penugasan) dan Live (live view peta). State `activeMenu`. JANGAN tambah menu baru tanpa alasan.
+18. **Admin sidebar** — Tugas, Live, Map (admin only), Akun (admin only), dan Setting. State `activeMenu`.
 19. **Station dropdown** — Koordinat stasiun hardcoded di `STATIONS` array di `admin/page.tsx`. JANGAN pakai map-click untuk pilih lokasi tugas. Jika perlu tambah stasiun, edit `STATIONS` constant.
 20. **AdminMap read-only** — AdminMap TIDAK punya `pickMode`, `onMapClick`, `tempStart`, `tempEnd`. Hanya display task routes + emergency. JANGAN tambah click handler ke AdminMap.
 21. **Kategori Temuan (Baru)** — Kategori temuan bersifat dinamis dari `kategori_temuan` db. JANGAN lagi gunakan list *hardcode* jika API CRUD telah tersedia.

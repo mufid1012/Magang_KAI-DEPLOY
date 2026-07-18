@@ -22,6 +22,7 @@ function petugasColor(nipp: string): string {
 }
 
 const AdminMap = dynamic(() => import('../../components/map/AdminMap'), { ssr: false });
+const AdminLocationMap = dynamic(() => import('../../components/map/AdminLocationMap'), { ssr: false });
 
 // ─── Station Data (DAOP 6 Yogyakarta region) ────────────────────────────────
 const STATIONS = [
@@ -45,6 +46,7 @@ const STATIONS = [
 interface Petugas { id: number; nipp: string; nama: string; tugasPpj: { id: number; jalur: string; status: string }[] }
 interface Tugas { id: number; jalur: string; tanggal: string; startPointLat: number; startPointLong: number; endPointLat: number; endPointLong: number; startPointName: string; endPointName: string; status: string; user: { nama: string; nipp: string; jabatan?: string | null; division?: string | null; workArea?: string | null }, tracking?: { startTime: string | null; endTime: string | null; durasi: number | null; status: string; fotoAwal?: string | null; fotoSelesai?: string | null; laporan: Emergency[] }[] }
 interface Emergency { id: number; latitude: number; longitude: number; jenisTemuan: string; deskripsi: string; foto: string | null; createdAt: string; tracking?: { tugas: { jalur: string; user: { nama: string; nipp: string } } } }
+interface LivePosition { petugasNama: string; petugasNipp: string; tugasId: number; jalur: string; latitude: number; longitude: number; updatedAt: string }
 interface Stats { totalPetugas: number; tugasAktif: number; tugasSelesai: number; laporanDarurat: number }
 interface ManagedUser { id: number; nipp: string; nama: string; role: string; isActive: boolean; jabatan?: string; division?: string; workArea?: string; phone?: string; managerId?: number; createdAt: string; wilayahAssignments: { id: number; wilayah: { id: number; kode: string; nama: string; stations: string } }[] }
 interface WilayahItem { id: number; kode: string; nama: string; stations: string }
@@ -83,12 +85,13 @@ export default function AdminPage() {
   const [petugas, setPetugas] = useState<Petugas[]>([]);
   const [tugas, setTugas] = useState<Tugas[]>([]);
   const [emergencies, setEmergencies] = useState<Emergency[]>([]);
+  const [livePositions, setLivePositions] = useState<LivePosition[]>([]);
   const [selectedEmergency, setSelectedEmergency] = useState<Emergency | null>(null);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'map' | 'tasks' | 'emergency'>('map');
 
   // Sidebar menu state
-  const [activeMenu, setActiveMenu] = useState<'penugasan' | 'liveview' | 'akun' | 'settings'>('penugasan');
+  const [activeMenu, setActiveMenu] = useState<'penugasan' | 'liveview' | 'locationmap' | 'akun' | 'settings'>('penugasan');
 
   // Role-derived permissions
   const userRole = user?.role || 'admin';
@@ -259,13 +262,14 @@ export default function AdminPage() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [statsRes, petugasRes, tugasRes, emRes] = await Promise.all([
-        api.get('/admin/stats'), api.get('/admin/petugas'), api.get('/admin/tugas'), api.get('/admin/emergency'),
+      const [statsRes, petugasRes, tugasRes, emRes, liveRes] = await Promise.all([
+        api.get('/admin/stats'), api.get('/admin/petugas'), api.get('/admin/tugas'), api.get('/admin/emergency'), api.get('/admin/live-positions'),
       ]);
       setStats(statsRes.data.data);
       setPetugas(petugasRes.data.data);
       setTugas(tugasRes.data.data);
       setEmergencies(emRes.data.data);
+      setLivePositions(liveRes.data.data);
     } catch (e) { console.error(e); }
   }, []);
 
@@ -555,7 +559,9 @@ export default function AdminPage() {
   };
 
   const mapEmergencies = emergencies.map(e => ({ id: e.id, latitude: e.latitude, longitude: e.longitude, jenisTemuan: e.jenisTemuan, deskripsi: e.deskripsi, foto: e.foto, createdAt: e.createdAt, petugasNama: e.tracking?.tugas?.user?.nama, jalur: e.tracking?.tugas?.jalur }));
-  const mapTasks = tugas.map(t => ({ id: t.id, jalur: t.jalur, startPointLat: t.startPointLat, startPointLong: t.startPointLong, endPointLat: t.endPointLat, endPointLong: t.endPointLong, startPointName: t.startPointName, endPointName: t.endPointName, status: t.status, petugasNama: t.user?.nama, petugasNipp: t.user?.nipp }));
+  const mapTasks = tugas
+    .filter(t => t.status === 'in_progress')
+    .map(t => ({ id: t.id, jalur: t.jalur, startPointLat: t.startPointLat, startPointLong: t.startPointLong, endPointLat: t.endPointLat, endPointLong: t.endPointLong, startPointName: t.startPointName, endPointName: t.endPointName, status: t.status, petugasNama: t.user?.nama, petugasNipp: t.user?.nipp }));
 
   return (
     <div className="h-screen flex flex-col bg-[#F8FAFC] font-sans overflow-hidden">
@@ -677,6 +683,20 @@ export default function AdminPage() {
             <span className="material-symbols-outlined text-[20px] md:text-[22px]">map</span>
             <span className="text-[9px] font-bold uppercase tracking-wider leading-none">Live</span>
           </button>
+          {isAdmin && (
+            <button
+              onClick={() => setActiveMenu('locationmap')}
+              className={`w-16 h-12 md:w-14 md:h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
+                activeMenu === 'locationmap'
+                  ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                  : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+              }`}
+              title="Kelola Titik Lokasi"
+            >
+              <span className="material-symbols-outlined text-[20px] md:text-[22px]">add_location_alt</span>
+              <span className="text-[9px] font-bold uppercase tracking-wider leading-none">Map</span>
+            </button>
+          )}
           {isAdmin && (
             <button
               onClick={() => { setActiveMenu('akun'); fetchUsers(); }}
@@ -1037,6 +1057,7 @@ export default function AdminPage() {
             <AdminMap
               emergencies={mapEmergencies}
               tasks={mapTasks}
+              livePositions={livePositions}
               onEmergencyClick={(em) => { setSelectedEmergency(emergencies.find(e => e.id === em.id) || null); }}
             />
 
@@ -1044,7 +1065,7 @@ export default function AdminPage() {
             <div className="absolute bottom-6 left-6 bg-white/95 backdrop-blur-md rounded-xl p-3 shadow-md border border-slate-200 z-[1000]">
               <p className="text-slate-500 uppercase font-bold text-[9px] tracking-widest mb-2">Legenda Visual</p>
               <div className="flex flex-col gap-2">
-                {[['#94a3b8','Tugas Pending'],['#005bac','Tugas Aktif'],['#22c55e','Selesai']].map(([c,l]) => (
+                {[['#005bac','Rute Tugas Aktif']].map(([c,l]) => (
                   <div key={l} className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-sm shadow-sm" style={{ background: c }} />
                     <span className="text-slate-700 text-[11px] font-semibold">{l}</span>
@@ -1062,6 +1083,13 @@ export default function AdminPage() {
               <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
               <span className="text-slate-600 text-[10px] font-bold tracking-widest uppercase">Live Sync</span>
             </div>
+          </main>
+        )}
+
+        {/* ── LOCATION MAP (Admin Only) ───────────────────── */}
+        {activeMenu === 'locationmap' && isAdmin && (
+          <main className="flex-1 overflow-hidden relative isolate m-3 md:m-4 bg-white rounded-xl border border-slate-200 shadow-sm">
+            <AdminLocationMap />
           </main>
         )}
 

@@ -29,8 +29,25 @@ model User {
   // Self-relation
   manager        User?      @relation("ManagerPetugas", fields: [managerId], references: [id])
   petugasManaged User[]     @relation("ManagerPetugas")
+  mapLocations   MapLocation[]
 
   @@map("users")
+}
+
+model MapLocation {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(150)
+  address     String?  @db.Text
+  description String?  @db.Text
+  latitude    Float
+  longitude   Float
+  createdBy   Int      @map("created_by")
+  creator     User     @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([createdBy])
+  @@map("map_locations")
 }
 
 model TugasPpj {

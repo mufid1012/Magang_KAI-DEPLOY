@@ -417,15 +417,19 @@ export const getLivePositions = async (req: AuthRequest, res: Response) => {
       ? buildStationFilter(stations)
       : { user: { managerId: userId } };
 
-    // Find all active tracking sessions (not stopped) with their tugas + user
+    // Posisi live hanya berasal dari sesi tracking dan tugas yang masih aktif.
     const activeTrackings = await prisma.tracking.findMany({
       where: {
-        status: { not: 'stopped' },
-        endLat: { not: null },
-        endLong: { not: null },
-        tugas: tugasFilter,
+        status: 'started',
+        tugas: { ...tugasFilter, status: 'in_progress' },
+        OR: [
+          { endLat: { not: null }, endLong: { not: null } },
+          { startLat: { not: null }, startLong: { not: null } },
+        ],
       },
       select: {
+        startLat: true,
+        startLong: true,
         endLat: true,
         endLong: true,
         updatedAt: true,
@@ -440,14 +444,14 @@ export const getLivePositions = async (req: AuthRequest, res: Response) => {
     });
 
     const data = activeTrackings
-      .filter(t => t.endLat != null && t.endLong != null)
+      .filter(t => (t.endLat != null && t.endLong != null) || (t.startLat != null && t.startLong != null))
       .map(t => ({
         petugasNama: t.tugas.user.nama,
         petugasNipp: t.tugas.user.nipp,
         tugasId: t.tugas.id,
         jalur: t.tugas.jalur,
-        latitude: t.endLat!,
-        longitude: t.endLong!,
+        latitude: t.endLat ?? t.startLat!,
+        longitude: t.endLong ?? t.startLong!,
         updatedAt: t.updatedAt,
       }));
 

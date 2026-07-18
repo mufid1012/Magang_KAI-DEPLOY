@@ -9,6 +9,7 @@ import {
   getKategoriTemuan, createKategoriTemuan, updateKategoriTemuan, deleteKategoriTemuan,
   reorderKategoriTemuan,
 } from '../controllers/admin.controller';
+import { createMapLocation, deleteMapLocation, getMapLocations, searchMapLocations } from '../controllers/mapLocation.controller';
 
 // Multer memory storage for Excel file uploads
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB max
@@ -46,5 +47,11 @@ router.post('/users', requireAuth, requireAdmin, createUser);
 router.patch('/users/:id', requireAuth, requireAdmin, updateUser);
 router.delete('/users/:id', requireAuth, requireAdmin, deleteUser);
 router.get('/wilayah', requireAuth, requireAdmin, getAllWilayah);
+
+// ── Admin custom map locations ──
+router.get('/map-locations', requireAuth, requireAdmin, getMapLocations);
+router.post('/map-locations', requireAuth, requireAdmin, createMapLocation);
+router.delete('/map-locations/:id', requireAuth, requireAdmin, deleteMapLocation);
+router.get('/map-search', requireAuth, requireAdmin, searchMapLocations);
 
 export default router;

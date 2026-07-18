@@ -24,7 +24,7 @@ KAI RailTrack PPJ adalah prototipe aplikasi web yang digunakan untuk:
 |-------|-------|
 | 🔐 **Autentikasi** | Login berbasis NIPP + JWT, role-based access (admin/petugas) |
 | 📍 **GPS Tracking** | Pelacakan posisi real-time saat inspeksi, visualisasi jalur yang sudah dilalui |
-| 🗺️ **Peta Interaktif** | Visualisasi jalur rel dari OpenStreetMap (Overpass API), marker A/B, route pathfinding (Dijkstra) |
+| 🗺️ **Peta Interaktif** | Visualisasi jalur rel, live PPJ aktif, serta titik lokasi admin melalui klik peta, input koordinat manual, marker geser, atau pencarian lokasi |
 | 🚧 **Geofencing** | Petugas hanya bisa mulai inspeksi jika berada dalam radius 500m dari titik awal |
 | 📸 **Verifikasi Selfie** | Foto verifikasi identitas sebelum memulai inspeksi |
 | 🚨 **Laporan Darurat** | Kirim temuan ringan/berat/darurat disertai foto dan koordinat GPS |
@@ -125,6 +125,8 @@ cat > .env << EOF
 DATABASE_URL="mysql://root:@localhost:3306/ppjkai"
 PORT=5001
 JWT_SECRET="ppj-kai-secret-key-development"
+GEOCODING_API_URL="https://nominatim.openstreetmap.org/search"
+APP_URL="http://localhost:3000"
 EOF
 
 # Buat database MySQL
