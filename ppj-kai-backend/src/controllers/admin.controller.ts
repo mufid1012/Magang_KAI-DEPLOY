@@ -252,7 +252,7 @@ export const getAllTugas = async (req: AuthRequest, res: Response) => {
     const tugas = await prisma.tugasPpj.findMany({
       where: whereClause,
       include: {
-        user: { select: { id: true, nama: true, nipp: true } },
+        user: { select: { id: true, nama: true, nipp: true, jabatan: true, division: true, workArea: true } },
         tracking: {
           orderBy: { createdAt: 'desc' as const },
           take: 1,

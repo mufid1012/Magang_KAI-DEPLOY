@@ -98,12 +98,45 @@ export const getTugasSummary = async (req: Request, res: Response) => {
 export const downloadTugasReport = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const userId = (req as any).user.id;
+    const requester = (req as any).user as { id: number; role: string };
+    const tugasId = parseInt(id);
+
+    let accessFilter: any;
+    if (requester.role === 'ppj') {
+      accessFilter = { id: tugasId, assignedTo: requester.id };
+    } else if (requester.role === 'admin' || requester.role === 'kupt') {
+      accessFilter = { id: tugasId, user: { managerId: requester.id } };
+    } else if (requester.role === 'qc') {
+      const assignments = await prisma.userWilayah.findMany({
+        where: { userId: requester.id },
+        include: { wilayah: true },
+      });
+      const stations = assignments.flatMap(assignment => {
+        try {
+          const parsed = JSON.parse(assignment.wilayah.stations);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      });
+      accessFilter = {
+        id: tugasId,
+        OR: [
+          { startPointName: { in: stations } },
+          { endPointName: { in: stations } },
+        ],
+      };
+    } else {
+      return res.status(403).json({ success: false, message: 'Anda tidak memiliki akses ke laporan tugas' });
+    }
 
     // Ambil data tugas beserta tracking & laporan
     const tugas = await prisma.tugasPpj.findFirst({
-      where: { id: parseInt(id), assignedTo: userId },
+      where: accessFilter,
       include: {
+        user: {
+          select: { nama: true, nipp: true, jabatan: true, division: true, workArea: true },
+        },
         tracking: {
           orderBy: { createdAt: 'desc' },
           include: {
@@ -185,12 +218,18 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
 
     // Build info table rows
     const infoRows: any[][] = [
+      ['Petugas', `: ${tugas.user.nama}`],
+      ['NIPP', `: ${tugas.user.nipp}`],
+    ];
+    if (tugas.user.jabatan) infoRows.push(['Jabatan', `: ${tugas.user.jabatan}`]);
+    if (tugas.user.workArea || tugas.user.division) infoRows.push(['Unit/Wilayah', `: ${tugas.user.workArea || tugas.user.division}`]);
+    infoRows.push(
       ['Jalur', `: ${tugas.jalur}`],
       ['Tanggal', `: ${formatDate(tugas.tanggal)}`],
       ['Waktu', `: ${formatTime(latestTracking?.startTime || null)} — ${formatTime(latestTracking?.endTime || null)} (${formatDurasi(latestTracking?.durasi || null)})`],
       ['Status', `: ${tugas.status.toUpperCase()}`],
       ['ID Tugas', `: #PPJ-${String(tugas.id).padStart(6, '0')}`],
-    ];
+    );
     if (routePath.length >= 2) {
       infoRows.push(['Jarak Tempuh', `: ${totalDistanceKm} km (${routePath.length} titik GPS)`]);
     }
@@ -275,8 +314,13 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
 
     docDefinition.content.push({ text: 'DAFTAR TEMUAN', style: 'sectionHeader', margin: [0, 10, 0, 10] });
 
-    if (laporanList.length === 0) {
-      docDefinition.content.push({ text: 'Inspeksi berlangsung tanpa ada temuan kendala.', italics: true, color: '#555555' });
+    if (!latestTracking) {
+      docDefinition.content.push({ text: 'Petugas belum memulai inspeksi untuk tugas ini.', italics: true, color: '#8a5a00' });
+    } else if (laporanList.length === 0) {
+      const emptyMessage = tugas.status === 'completed'
+        ? 'Inspeksi selesai tanpa ada temuan kendala.'
+        : 'Belum ada temuan kendala yang dilaporkan.';
+      docDefinition.content.push({ text: emptyMessage, italics: true, color: '#555555' });
     } else {
       laporanList.forEach((lap, idx) => {
         docDefinition.content.push({

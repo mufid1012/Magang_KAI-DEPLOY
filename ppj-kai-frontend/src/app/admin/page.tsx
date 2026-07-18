@@ -9,6 +9,7 @@ import { playNotification, NotificationSound, speakEmergencyAnnouncement, startL
 import { showToast } from '../../lib/toast';
 import { showConfirm } from '../../lib/confirm';
 import { getApiErrorMessage } from '../../lib/utils';
+import TaskDetailModal from '../../components/admin/TaskDetailModal';
 
 // Same deterministic color as AdminMap — NIPP → unique HSL color
 function petugasColor(nipp: string): string {
@@ -42,7 +43,7 @@ const STATIONS = [
 ] as const;
 
 interface Petugas { id: number; nipp: string; nama: string; tugasPpj: { id: number; jalur: string; status: string }[] }
-interface Tugas { id: number; jalur: string; tanggal: string; startPointLat: number; startPointLong: number; endPointLat: number; endPointLong: number; startPointName: string; endPointName: string; status: string; user: { nama: string; nipp: string }, tracking?: { startTime: string, endTime: string, durasi: number, status: string, laporan: Emergency[] }[] }
+interface Tugas { id: number; jalur: string; tanggal: string; startPointLat: number; startPointLong: number; endPointLat: number; endPointLong: number; startPointName: string; endPointName: string; status: string; user: { nama: string; nipp: string; jabatan?: string | null; division?: string | null; workArea?: string | null }, tracking?: { startTime: string | null; endTime: string | null; durasi: number | null; status: string; fotoAwal?: string | null; fotoSelesai?: string | null; laporan: Emergency[] }[] }
 interface Emergency { id: number; latitude: number; longitude: number; jenisTemuan: string; deskripsi: string; foto: string | null; createdAt: string; tracking?: { tugas: { jalur: string; user: { nama: string; nipp: string } } } }
 interface Stats { totalPetugas: number; tugasAktif: number; tugasSelesai: number; laporanDarurat: number }
 interface ManagedUser { id: number; nipp: string; nama: string; role: string; isActive: boolean; jabatan?: string; division?: string; workArea?: string; phone?: string; managerId?: number; createdAt: string; wilayahAssignments: { id: number; wilayah: { id: number; kode: string; nama: string; stations: string } }[] }
@@ -112,6 +113,10 @@ export default function AdminPage() {
   // Task list filter state
   const [tugasSearchQuery, setTugasSearchQuery] = useState('');
   const [tugasStatusFilter, setTugasStatusFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed'>('all');
+  const [tugasDateFrom, setTugasDateFrom] = useState('');
+  const [tugasDateTo, setTugasDateTo] = useState('');
+  const [selectedTugasDetail, setSelectedTugasDetail] = useState<Tugas | null>(null);
+  const [downloadingTugasId, setDownloadingTugasId] = useState<number | null>(null);
 
   // Task form state
   const [form, setForm] = useState({ jalur: '', tanggal: '', assignedTo: '', startPointName: '', endPointName: '', startPointLat: '', startPointLong: '', endPointLat: '', endPointLong: '', jamMulai: '', jamSelesai: '' });
@@ -162,11 +167,14 @@ export default function AdminPage() {
     return map;
   }, [kategoriList]);
 
-  // Filtered task list (search by jalur/nama/nipp + status)
+  // Filtered task list (search by jalur/nama/nipp + status + inclusive date range)
   const filteredTugas = React.useMemo(() => {
     const q = tugasSearchQuery.trim().toLowerCase();
     return tugas.filter(t => {
       if (tugasStatusFilter !== 'all' && t.status !== tugasStatusFilter) return false;
+      const taskDate = t.tanggal.slice(0, 10);
+      if (tugasDateFrom && taskDate < tugasDateFrom) return false;
+      if (tugasDateTo && taskDate > tugasDateTo) return false;
       if (!q) return true;
       return (
         t.jalur.toLowerCase().includes(q) ||
@@ -174,7 +182,7 @@ export default function AdminPage() {
         (t.user?.nipp?.toLowerCase().includes(q) ?? false)
       );
     });
-  }, [tugas, tugasSearchQuery, tugasStatusFilter]);
+  }, [tugas, tugasSearchQuery, tugasStatusFilter, tugasDateFrom, tugasDateTo]);
 
   // Load alert sound preference
   useEffect(() => {
@@ -527,6 +535,25 @@ export default function AdminPage() {
     }
   };
 
+  const handleDownloadTugasPdf = async (tugasId: number) => {
+    try {
+      setDownloadingTugasId(tugasId);
+      const res = await api.get(`/tugas/${tugasId}/report`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `Laporan_Inspeksi_PPJ_${tugasId}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e: unknown) {
+      showToast(getApiErrorMessage(e, 'Gagal mengunduh laporan PDF.'), 'error');
+    } finally {
+      setDownloadingTugasId(null);
+    }
+  };
+
   const mapEmergencies = emergencies.map(e => ({ id: e.id, latitude: e.latitude, longitude: e.longitude, jenisTemuan: e.jenisTemuan, deskripsi: e.deskripsi, foto: e.foto, createdAt: e.createdAt, petugasNama: e.tracking?.tugas?.user?.nama, jalur: e.tracking?.tugas?.jalur }));
   const mapTasks = tugas.map(t => ({ id: t.id, jalur: t.jalur, startPointLat: t.startPointLat, startPointLong: t.startPointLong, endPointLat: t.endPointLat, endPointLong: t.endPointLong, startPointName: t.startPointName, endPointName: t.endPointName, status: t.status, petugasNama: t.user?.nama, petugasNipp: t.user?.nipp }));
 
@@ -770,11 +797,11 @@ export default function AdminPage() {
                     <div className="space-y-3">
                       {tugas.length === 0 && <p className="text-center text-slate-400 text-sm py-4">Belum ada tugas dibuat.</p>}
                       {tugas.map(t => (
-                        <div key={t.id} className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                        <div key={t.id} onClick={() => setSelectedTugasDetail(t)} className="bg-slate-50 rounded-xl p-4 border border-slate-200 cursor-pointer hover:border-primary/40 hover:bg-blue-50/30 transition-all group" role="button" tabIndex={0} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setSelectedTugasDetail(t); }}>
                           <div className="flex justify-between items-start gap-2 mb-1">
-                            <p className="font-bold text-slate-800 text-sm leading-snug">{t.jalur}</p>
+                            <p className="font-bold text-slate-800 text-sm leading-snug group-hover:text-primary transition-colors">{t.jalur}</p>
                             {canWrite && (
-                              <button onClick={() => handleDeleteTugas(t.id)} className="text-slate-400 hover:text-rose-600 transition-colors p-1 rounded hover:bg-rose-100 shrink-0">
+                              <button onClick={e => { e.stopPropagation(); handleDeleteTugas(t.id); }} className="text-slate-400 hover:text-rose-600 transition-colors p-1 rounded hover:bg-rose-100 shrink-0">
                                 <span className="material-symbols-outlined text-[16px]">delete</span>
                               </button>
                             )}
@@ -871,45 +898,70 @@ export default function AdminPage() {
 
                 {/* Filter bar */}
                 {tugas.length > 0 && (
-                  <div className="flex flex-col sm:flex-row gap-3 mb-6">
-                    <div className="relative flex-1">
-                      <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">search</span>
-                      <input
-                        value={tugasSearchQuery}
-                        onChange={e => setTugasSearchQuery(e.target.value)}
-                        placeholder="Cari jalur, nama, atau NIPP petugas..."
-                        className="w-full pl-9 pr-9 py-2.5 border border-slate-300 rounded-xl text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none font-medium"
-                      />
-                      {tugasSearchQuery && (
+                  <div className="space-y-3 mb-6">
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <div className="relative flex-1">
+                        <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">search</span>
+                        <input
+                          value={tugasSearchQuery}
+                          onChange={e => setTugasSearchQuery(e.target.value)}
+                          placeholder="Cari jalur, nama, atau NIPP petugas..."
+                          className="w-full pl-9 pr-9 py-2.5 border border-slate-300 rounded-xl text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none font-medium"
+                        />
+                        {tugasSearchQuery && (
+                          <button
+                            onClick={() => setTugasSearchQuery('')}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                            title="Bersihkan pencarian"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">close</span>
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1 shrink-0 overflow-x-auto">
+                        {([
+                          ['all', 'Semua'],
+                          ['pending', 'Pending'],
+                          ['in_progress', 'Berlangsung'],
+                          ['completed', 'Selesai'],
+                        ] as const).map(([value, label]) => (
+                          <button
+                            key={value}
+                            onClick={() => setTugasStatusFilter(value)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+                              tugasStatusFilter === value
+                                ? 'bg-white text-primary shadow-sm'
+                                : 'text-slate-500 hover:text-slate-700'
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex flex-col sm:flex-row sm:items-end gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <div className="flex items-center gap-2 text-slate-600 sm:mr-1">
+                        <span className="material-symbols-outlined text-[19px]">date_range</span>
+                        <span className="text-xs font-bold uppercase tracking-wider">Rentang Tanggal</span>
+                      </div>
+                      <label className="flex-1 min-w-0">
+                        <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Dari</span>
+                        <input type="date" value={tugasDateFrom} max={tugasDateTo || undefined} onChange={e => setTugasDateFrom(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold text-slate-700 bg-white focus:ring-2 focus:ring-primary outline-none" />
+                      </label>
+                      <label className="flex-1 min-w-0">
+                        <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Sampai</span>
+                        <input type="date" value={tugasDateTo} min={tugasDateFrom || undefined} onChange={e => setTugasDateTo(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold text-slate-700 bg-white focus:ring-2 focus:ring-primary outline-none" />
+                      </label>
+                      {(tugasDateFrom || tugasDateTo) && (
                         <button
-                          onClick={() => setTugasSearchQuery('')}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                          title="Bersihkan pencarian"
+                          onClick={() => { setTugasDateFrom(''); setTugasDateTo(''); }}
+                          className="h-[34px] px-3 rounded-lg text-xs font-bold text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition-colors"
                         >
-                          <span className="material-symbols-outlined text-[18px]">close</span>
+                          Hapus tanggal
                         </button>
                       )}
                     </div>
-                    <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1 shrink-0">
-                      {([
-                        ['all', 'Semua'],
-                        ['pending', 'Pending'],
-                        ['in_progress', 'Berlangsung'],
-                        ['completed', 'Selesai'],
-                      ] as const).map(([value, label]) => (
-                        <button
-                          key={value}
-                          onClick={() => setTugasStatusFilter(value)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                            tugasStatusFilter === value
-                              ? 'bg-white text-primary shadow-sm'
-                              : 'text-slate-500 hover:text-slate-700'
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
+                    <p className="text-[11px] font-semibold text-slate-500">Menampilkan {filteredTugas.length} dari {tugas.length} tugas</p>
                   </div>
                 )}
 
@@ -924,7 +976,7 @@ export default function AdminPage() {
                     <span className="material-symbols-outlined text-slate-200 text-6xl mb-4">search_off</span>
                     <p className="text-slate-500 font-medium">Tidak ada tugas yang cocok dengan filter.</p>
                     <button
-                      onClick={() => { setTugasSearchQuery(''); setTugasStatusFilter('all'); }}
+                      onClick={() => { setTugasSearchQuery(''); setTugasStatusFilter('all'); setTugasDateFrom(''); setTugasDateTo(''); }}
                       className="text-primary text-sm font-semibold mt-2 hover:underline"
                     >
                       Reset filter
@@ -936,7 +988,7 @@ export default function AdminPage() {
                       const latestTracking = t.tracking?.[0];
                       const laporanCount = latestTracking?.laporan?.length ?? 0;
                       return (
-                        <div key={t.id} className="bg-slate-50 rounded-2xl border border-slate-200 p-5 hover:border-primary/30 transition-all group relative overflow-hidden">
+                        <button key={t.id} type="button" onClick={() => setSelectedTugasDetail(t)} className="w-full text-left bg-slate-50 rounded-2xl border border-slate-200 p-5 hover:border-primary/50 hover:shadow-md transition-all group relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-primary/40">
                           <div className={`absolute top-0 left-0 w-1.5 h-full ${t.status === 'completed' ? 'bg-emerald-500' : t.status === 'in_progress' ? 'bg-primary' : 'bg-slate-300'}`}></div>
                           <div className="pl-3">
                             <div className="flex justify-between items-start mb-2">
@@ -965,8 +1017,11 @@ export default function AdminPage() {
                                 <span className="font-semibold">{laporanCount} laporan</span>
                               </div>
                             </div>
+                            <div className="mt-3 flex items-center justify-end gap-1 text-[11px] font-bold text-primary opacity-70 group-hover:opacity-100">
+                              Lihat detail <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
+                            </div>
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -1761,6 +1816,18 @@ export default function AdminPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Task Detail Modal ───────────────────────────── */}
+      {selectedTugasDetail && (
+        <TaskDetailModal
+          tugas={selectedTugasDetail}
+          jenisLabel={JENIS_LABEL}
+          jenisColor={JENIS_COLOR}
+          isDownloading={downloadingTugasId === selectedTugasDetail.id}
+          onDownloadPdf={() => handleDownloadTugasPdf(selectedTugasDetail.id)}
+          onClose={() => setSelectedTugasDetail(null)}
+        />
       )}
 
       {/* ── Import Result Modal ──────────────────────────── */}

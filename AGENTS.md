@@ -230,6 +230,11 @@ kategori_temuan (KategoriTemuan)
 - Admin bisa import jadwal bulanan melalui Excel.
 - Template mencakup titik mulai, titik selesai, NIPP, dan Nama Petugas. Parser endpoint aktif ditangani di backend (`admin.controller.ts`).
 
+### 3a. Daftar dan Detail Penugasan Admin
+- Daftar Penugasan PPJ mendukung pencarian, filter status, dan rentang tanggal inklusif.
+- Kartu tugas dapat dibuka untuk melihat data petugas, waktu/foto verifikasi, serta laporan kendala.
+- PDF laporan dapat diunduh oleh PPJ pemilik tugas, admin/KUPT pengelola petugas, dan QC sesuai wilayah stasiunnya.
+
 ### 4. Emergency Loop Sound (Baru)
 - Saat petugas mengirimkan laporan berstatus "emergency" atau "berat" (tergantung *flag* di db), frontend QC/Admin akan memutar suara alarm darurat secara berulang (looping) hingga ada interaksi klik dari user untuk mematikannya.
 
