@@ -209,6 +209,7 @@ kategori_temuan (KategoriTemuan)
 - `POST /api/admin/tugas` → buat tugas baru
 - `DELETE /api/admin/tugas/:id` → hapus tugas
 - `GET /api/admin/emergency` → list laporan darurat dari petugas kelolaan admin
+  - Tingkat kategori `error` berarti Darurat dan boleh memicu sirine; kategori selain `error` berarti Ringan dan tetap tercatat tanpa sirine.
 - `GET /api/admin/kategori-temuan`, `POST`, `PUT`, `DELETE` → CRUD Kategori Temuan
 - `GET /api/admin/live-positions` → posisi PPJ dengan tracking dan tugas yang masih aktif
 - `GET`, `POST`, `DELETE /api/admin/map-locations` → kelola titik lokasi custom admin

@@ -202,30 +202,40 @@ export default function AdminPage() {
     };
   }, []);
 
-  // Play looping sound + TTS on new emergency
+  // Play looping sound + TTS only for new reports whose category is marked
+  // Darurat (red/error). Ringan reports remain visible without sounding an alarm.
   useEffect(() => {
-    if (emergencies.length > 0) {
-      const latestId = Math.max(...emergencies.map(e => e.id));
-      if (lastEmergencyId.current > 0 && latestId > lastEmergencyId.current) {
-        // Start looping alert sound
-        startLoopingNotification(alertSound);
-        if (alertSound !== 'off') {
-          setIsAlarmActive(true);
-        }
+    if (emergencies.length === 0 || kategoriList.length === 0) return;
 
-        // Find the newest emergency for TTS announcement
-        const newEmergency = emergencies.find(e => e.id === latestId);
-        if (newEmergency && alertSound !== 'off') {
-          // Delay TTS slightly so the alert sound plays first
-          setTimeout(() => {
-            const petugasNama = newEmergency.tracking?.tugas?.user?.nama || 'Petugas';
-            speakEmergencyAnnouncement(newEmergency.jenisTemuan, newEmergency.deskripsi, petugasNama);
-          }, 2500);
-        }
-      }
-      lastEmergencyId.current = Math.max(lastEmergencyId.current, latestId);
+    const latestId = Math.max(...emergencies.map(e => e.id));
+    if (lastEmergencyId.current === 0) {
+      lastEmergencyId.current = latestId;
+      return;
     }
-  }, [emergencies, alertSound]);
+
+    const categorySeverity = new Map(kategoriList.map(category => [category.key, category.color]));
+    const newestDarurat = emergencies
+      .filter(report => report.id > lastEmergencyId.current)
+      .filter(report => {
+        const configuredSeverity = categorySeverity.get(report.jenisTemuan);
+        if (configuredSeverity) return configuredSeverity === 'error';
+        return report.jenisTemuan === 'emergency' || report.jenisTemuan === 'berat';
+      })
+      .sort((a, b) => b.id - a.id)[0];
+
+    lastEmergencyId.current = Math.max(lastEmergencyId.current, latestId);
+    if (!newestDarurat || alertSound === 'off') return;
+
+    startLoopingNotification(alertSound);
+    setIsAlarmActive(true);
+
+    const announcementTimer = window.setTimeout(() => {
+      const petugasNama = newestDarurat.tracking?.tugas?.user?.nama || 'Petugas';
+      speakEmergencyAnnouncement(newestDarurat.jenisTemuan, newestDarurat.deskripsi, petugasNama);
+    }, 2500);
+
+    return () => window.clearTimeout(announcementTimer);
+  }, [emergencies, alertSound, kategoriList]);
 
   const handleStopAlarm = () => {
     stopLoopingNotification();
@@ -1242,7 +1252,7 @@ export default function AdminPage() {
                     <span className="material-symbols-outlined text-slate-400 text-[20px] mt-0.5 shrink-0">info</span>
                     <div className="text-xs text-slate-600 leading-relaxed">
                       <p className="font-semibold text-slate-700 mb-1">Bagaimana alarm bekerja?</p>
-                      <p>Saat petugas PPJ mengirim laporan darurat baru, sistem akan memutar suara alarm secara <strong>berulang (looping)</strong> hingga Anda menekan tombol &quot;Matikan Alarm&quot;. Sistem juga akan membacakan detail laporan melalui Text-to-Speech.</p>
+                      <p>Hanya laporan dengan tingkat <strong>Darurat (merah)</strong> yang memutar alarm secara berulang dan dibacakan melalui Text-to-Speech. Laporan <strong>Ringan (biru)</strong> tetap tercatat tanpa suara sirine.</p>
                     </div>
                   </div>
                 </div>
@@ -1971,7 +1981,7 @@ export default function AdminPage() {
               </div>
               {/* Color */}
               <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Warna Kategori</label>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Tingkat Kategori</label>
                 <div className="flex gap-3">
                   <button
                     onClick={() => setKategoriForm(f => ({ ...f, color: 'error' }))}
@@ -1983,7 +1993,7 @@ export default function AdminPage() {
                     onClick={() => setKategoriForm(f => ({ ...f, color: 'primary' }))}
                     className={`flex-1 py-3 rounded-xl border-2 text-sm font-bold flex items-center justify-center gap-2 transition-all ${kategoriForm.color === 'primary' ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-md' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'}`}
                   >
-                    <div className="w-4 h-4 rounded-full bg-blue-500"></div> Normal (Biru)
+                    <div className="w-4 h-4 rounded-full bg-blue-500"></div> Ringan (Biru)
                   </button>
                 </div>
               </div>

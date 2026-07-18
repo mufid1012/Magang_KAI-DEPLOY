@@ -94,6 +94,7 @@ function buildRailAlignedTrack(gpsTrack: RailPoint[], railwaySegments: RailPoint
 }
 
 export default function DynamicMap({ lat, lng, zoom = 16, trackPath, routeStart, routeEnd }: DynamicMapProps) {
+  const routeOpacity = trackPath && trackPath.length > 0 ? 0.25 : 0.75;
   const routeStartLat = routeStart?.lat;
   const routeStartLng = routeStart?.lng;
   const routeStartName = routeStart?.name;
@@ -212,14 +213,14 @@ export default function DynamicMap({ lat, lng, zoom = 16, trackPath, routeStart,
         // Remove any existing straight line and draw real track
         if (segments.length > 0) {
           segments.forEach(seg => {
-            L.polyline(seg, { color: '#005bac', weight: 4, opacity: 0.75 }).addTo(layer);
+            L.polyline(seg, { color: '#005bac', weight: 4, opacity: routeOpacity }).addTo(layer);
           });
         }
       })
       .finally(() => { if (!cancelled) setLoadingRoute(false); });
 
     return () => { cancelled = true; };
-  }, [routeStartLat, routeStartLng, routeStartName, routeEndLat, routeEndLng, routeEndName]);
+  }, [routeStartLat, routeStartLng, routeStartName, routeEndLat, routeEndLng, routeEndName, routeOpacity]);
 
   return (
     <div className="w-full h-full relative">
