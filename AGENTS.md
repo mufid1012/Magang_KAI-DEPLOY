@@ -216,6 +216,7 @@ kategori_temuan (KategoriTemuan)
   - Titik baru dapat dipilih lewat klik peta, input latitude/longitude manual, atau hasil pencarian; marker draft dapat digeser sebelum disimpan.
   - Menu MAP menampilkan tabel titik terdaftar di bawah peta. Endpoint memastikan tabel `map_locations` tersedia secara idempoten untuk deployment lama yang sebelumnya memakai `prisma db push`.
   - Titik MAP terdaftar terintegrasi dengan form penugasan sebagai pilihan titik awal/akhir pengecekan. Backend memvalidasi ID dan mengambil ulang koordinat milik admin sebelum membuat tugas.
+  - Daftar stasiun frontend bersumber dari `src/lib/stations.ts`; menu MAP menampilkan seluruh stasiun sebagai marker titik pengecekan bersama titik MAP admin.
 - `GET /api/admin/map-search?q=...` → pencarian lokasi submit-only melalui proxy geocoding
 - `GET /api/admin/tugas/template`, `POST /api/admin/tugas/import` → Template dan proses Import Excel
   - Import menerima petugas aktif yang belum masuk kelolaan dan otomatis mengaitkannya ke admin/KUPT setelah baris valid berhasil disimpan.

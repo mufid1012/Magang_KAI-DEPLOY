@@ -9,6 +9,7 @@ import { playNotification, NotificationSound, speakEmergencyAnnouncement, startL
 import { showToast } from '../../lib/toast';
 import { showConfirm } from '../../lib/confirm';
 import { getApiErrorMessage } from '../../lib/utils';
+import { STATIONS } from '../../lib/stations';
 import TaskDetailModal from '../../components/admin/TaskDetailModal';
 
 // Same deterministic color as AdminMap — NIPP → unique HSL color
@@ -23,25 +24,6 @@ function petugasColor(nipp: string): string {
 
 const AdminMap = dynamic(() => import('../../components/map/AdminMap'), { ssr: false });
 const AdminLocationMap = dynamic(() => import('../../components/map/AdminLocationMap'), { ssr: false });
-
-// ─── Station Data (DAOP 6 Yogyakarta region) ────────────────────────────────
-const STATIONS = [
-  { name: 'Sta. Maguwo', lat: -7.785040, lng: 110.436899 },
-  { name: 'Sta. Lempuyangan', lat: -7.789961, lng: 110.375275 },
-  { name: 'Sta. Yogyakarta', lat: -7.788870, lng: 110.363213 },
-  { name: 'Sta. Patukan', lat: -7.790771, lng: 110.325332 },
-  { name: 'Sta. Wojo', lat: -7.862278, lng: 110.041092 },
-  { name: 'Sta. Jenar', lat: -7.802037, lng: 110.000797 },
-  { name: 'Sta. Wates', lat: -7.859248, lng: 110.158247 },
-  { name: 'Sta. Brambanan', lat: -7.756641, lng: 110.500415 },
-  { name: 'Sta. Klaten', lat: -7.712576, lng: 110.602980 },
-  { name: 'Sta. Delanggu', lat: -7.622398, lng: 110.706588 },
-  { name: 'Sta. Solo Balapan', lat: -7.557184, lng: 110.819394 },
-  { name: 'Sta. Wonogiri', lat: -7.815882, lng: 110.921733 },
-  { name: 'Sta. Sumberlawang', lat: -7.327810, lng: 110.863565 },
-  { name: 'Sta. Palur', lat: -7.568030, lng: 110.875387 },
-  { name: 'Sta. Sragen', lat: -7.429623, lng: 111.016701 },
-] as const;
 
 interface Petugas { id: number; nipp: string; nama: string; tugasPpj: { id: number; jalur: string; status: string }[] }
 interface Tugas { id: number; jalur: string; tanggal: string; startPointLat: number; startPointLong: number; endPointLat: number; endPointLong: number; startPointName: string; endPointName: string; status: string; user: { nama: string; nipp: string; jabatan?: string | null; division?: string | null; workArea?: string | null }, tracking?: { startTime: string | null; endTime: string | null; durasi: number | null; status: string; fotoAwal?: string | null; fotoSelesai?: string | null; laporan: Emergency[] }[] }

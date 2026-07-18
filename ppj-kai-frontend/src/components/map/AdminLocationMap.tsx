@@ -7,6 +7,7 @@ import api from '../../lib/api';
 import { showToast } from '../../lib/toast';
 import { showConfirm } from '../../lib/confirm';
 import { getApiErrorMessage } from '../../lib/utils';
+import { STATIONS, type StationPoint } from '../../lib/stations';
 
 interface SavedLocation {
   id: number;
@@ -48,6 +49,15 @@ function savedLocationIcon() {
   });
 }
 
+function stationIcon() {
+  return L.divIcon({
+    className: '',
+    html: '<div style="width:34px;height:34px;background:#0f766e;border:3px solid white;border-radius:50%;box-shadow:0 3px 10px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center"><span class="material-symbols-outlined" style="color:white;font-size:19px;font-variation-settings:\'FILL\' 1">train</span></div>',
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+  });
+}
+
 function draftLocationIcon() {
   return L.divIcon({
     className: '',
@@ -60,10 +70,12 @@ function draftLocationIcon() {
 export default function AdminLocationMap() {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
+  const stationLayerRef = useRef<L.LayerGroup | null>(null);
   const savedLayerRef = useRef<L.LayerGroup | null>(null);
   const draftLayerRef = useRef<L.LayerGroup | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [locations, setLocations] = useState<SavedLocation[]>([]);
+  const [selectedStation, setSelectedStation] = useState<StationPoint | null>(null);
   const [selectedLocation, setSelectedLocation] = useState<SavedLocation | null>(null);
   const [draft, setDraft] = useState<DraftLocation | null>(null);
   const [manualLatitude, setManualLatitude] = useState('');
@@ -125,9 +137,11 @@ export default function AdminLocationMap() {
       attribution: '&copy; OpenStreetMap contributors',
       maxZoom: 19,
     }).addTo(map);
+    stationLayerRef.current = L.layerGroup().addTo(map);
     savedLayerRef.current = L.layerGroup().addTo(map);
     draftLayerRef.current = L.layerGroup().addTo(map);
     map.on('click', event => {
+      setSelectedStation(null);
       setSelectedLocation(null);
       setSearchResults([]);
       updateDraftCoordinates(event.latlng.lat, event.latlng.lng);
@@ -144,6 +158,22 @@ export default function AdminLocationMap() {
   }, [updateDraftCoordinates]);
 
   useEffect(() => {
+    if (!mapReady || !stationLayerRef.current) return;
+    stationLayerRef.current.clearLayers();
+    STATIONS.forEach(station => {
+      L.marker([station.lat, station.lng], { icon: stationIcon(), zIndexOffset: 100 })
+        .bindTooltip(`<b>${escapeHtml(station.name)}</b><br><span style="font-size:10px;color:#64748b">Stasiun · Titik pengecekan</span>`)
+        .on('click', () => {
+          setDraft(null);
+          setSelectedLocation(null);
+          setSearchResults([]);
+          setSelectedStation(station);
+        })
+        .addTo(stationLayerRef.current!);
+    });
+  }, [mapReady]);
+
+  useEffect(() => {
     if (!mapReady || !savedLayerRef.current) return;
     savedLayerRef.current.clearLayers();
     locations.forEach(location => {
@@ -151,6 +181,7 @@ export default function AdminLocationMap() {
         .bindTooltip(`<b>${escapeHtml(location.name)}</b>${location.address ? `<br><span style="font-size:10px;color:#64748b">${escapeHtml(location.address)}</span>` : ''}`)
         .on('click', () => {
           setDraft(null);
+          setSelectedStation(null);
           setSearchResults([]);
           setSelectedLocation(location);
         });
@@ -183,6 +214,7 @@ export default function AdminLocationMap() {
     }
     try {
       setSearching(true);
+      setSelectedStation(null);
       setSelectedLocation(null);
       const response = await api.get('/admin/map-search', { params: { q: query.trim() } });
       setSearchResults(response.data.data);
@@ -195,6 +227,7 @@ export default function AdminLocationMap() {
   };
 
   const selectSearchResult = (result: SearchResult) => {
+    setSelectedStation(null);
     setSelectedLocation(null);
     setSearchResults([]);
     updateDraftCoordinates(result.latitude, result.longitude, result.displayName);
@@ -205,6 +238,7 @@ export default function AdminLocationMap() {
 
   const beginManualEntry = () => {
     const center = mapRef.current?.getCenter() || L.latLng(-7.6, 110.4);
+    setSelectedStation(null);
     setSelectedLocation(null);
     setSearchResults([]);
     updateDraftCoordinates(center.lat, center.lng);
@@ -264,13 +298,18 @@ export default function AdminLocationMap() {
   };
 
   const showAllLocations = () => {
-    if (!mapRef.current || locations.length === 0) return;
-    const bounds = L.latLngBounds(locations.map(location => [location.latitude, location.longitude] as [number, number]));
+    if (!mapRef.current) return;
+    const allPoints: [number, number][] = [
+      ...STATIONS.map(station => [station.lat, station.lng] as [number, number]),
+      ...locations.map(location => [location.latitude, location.longitude] as [number, number]),
+    ];
+    const bounds = L.latLngBounds(allPoints);
     mapRef.current.fitBounds(bounds, { padding: [60, 60], maxZoom: 16 });
   };
 
   const focusLocation = (location: SavedLocation) => {
     setDraft(null);
+    setSelectedStation(null);
     setSearchResults([]);
     setSelectedLocation(location);
     mapRef.current?.flyTo([location.latitude, location.longitude], 17, { duration: 0.7 });
@@ -309,12 +348,15 @@ export default function AdminLocationMap() {
           <span className="material-symbols-outlined text-[18px]">edit_location_alt</span>Input Koordinat
         </button>
         <div className="bg-white/95 backdrop-blur rounded-xl shadow-md border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 flex items-center gap-2">
-          <span className="material-symbols-outlined text-primary text-[18px]">pin_drop</span>{locations.length} titik
+          <span className="material-symbols-outlined text-teal-700 text-[18px]">train</span>{STATIONS.length} stasiun
         </div>
-        {locations.length > 0 && <button type="button" onClick={showAllLocations} className="bg-white/95 rounded-xl shadow-md border border-slate-200 px-3 py-2 text-xs font-bold text-primary hover:bg-blue-50">Lihat Semua</button>}
+        <div className="bg-white/95 backdrop-blur rounded-xl shadow-md border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 flex items-center gap-2">
+          <span className="material-symbols-outlined text-primary text-[18px]">pin_drop</span>{locations.length} titik MAP
+        </div>
+        <button type="button" onClick={showAllLocations} className="bg-white/95 rounded-xl shadow-md border border-slate-200 px-3 py-2 text-xs font-bold text-primary hover:bg-blue-50">Lihat Semua</button>
       </div>
 
-      {!draft && !selectedLocation && (
+      {!draft && !selectedLocation && !selectedStation && (
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[900] bg-slate-900/90 text-white rounded-full px-4 py-2.5 shadow-lg text-xs font-semibold flex items-center gap-2 whitespace-nowrap">
           <span className="material-symbols-outlined text-amber-400 text-[18px]">add_location_alt</span>Klik peta atau gunakan Input Koordinat
         </div>
@@ -351,6 +393,22 @@ export default function AdminLocationMap() {
           </div>
         </div>
       )}
+
+      {selectedStation && (
+        <div className="absolute bottom-3 left-3 right-3 md:left-auto md:w-[380px] z-[1000] bg-white rounded-2xl shadow-2xl border border-teal-200 overflow-hidden">
+          <div className="p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-full bg-teal-700 text-white flex items-center justify-center shrink-0"><span className="material-symbols-outlined">train</span></div>
+                <div className="min-w-0"><p className="text-[10px] uppercase tracking-widest font-bold text-teal-700">Stasiun · Titik Pengecekan</p><p className="text-base font-extrabold text-slate-800 mt-0.5">{selectedStation.name}</p></div>
+              </div>
+              <button type="button" onClick={() => setSelectedStation(null)} className="text-slate-400"><span className="material-symbols-outlined">close</span></button>
+            </div>
+            <p className="text-[11px] text-slate-500 font-mono mt-3 bg-slate-50 rounded-xl p-3">{selectedStation.lat.toFixed(6)}, {selectedStation.lng.toFixed(6)}</p>
+            <p className="text-xs text-slate-500 mt-2">Stasiun ini tersedia sebagai titik awal atau akhir pada form penugasan.</p>
+          </div>
+        </div>
+      )}
       </div>
 
       <section className="h-[260px] md:h-[280px] shrink-0 bg-white border-t border-slate-200 flex flex-col relative z-[1100]">
@@ -360,7 +418,7 @@ export default function AdminLocationMap() {
               <span className="material-symbols-outlined text-primary text-[20px]">table_rows</span>
               Daftar Titik MAP Terdaftar
             </h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">{locations.length} titik lokasi tersimpan</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">{STATIONS.length} stasiun ditampilkan pada peta · {locations.length} titik MAP tersimpan</p>
           </div>
           <button type="button" onClick={fetchLocations} disabled={loadingLocations} className="shrink-0 px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-primary hover:bg-blue-50 disabled:opacity-50 flex items-center gap-1.5">
             <span className={`material-symbols-outlined text-[17px] ${loadingLocations ? 'animate-spin' : ''}`}>refresh</span>
