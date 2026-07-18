@@ -315,6 +315,14 @@ export default function AdminLocationMap() {
     mapRef.current?.flyTo([location.latitude, location.longitude], 17, { duration: 0.7 });
   };
 
+  const focusStation = (station: StationPoint) => {
+    setDraft(null);
+    setSelectedLocation(null);
+    setSearchResults([]);
+    setSelectedStation(station);
+    mapRef.current?.flyTo([station.lat, station.lng], 17, { duration: 0.7 });
+  };
+
   return (
     <div className="w-full h-full flex flex-col bg-slate-100">
       <div className="relative flex-1 min-h-[260px] md:min-h-[360px]">
@@ -418,7 +426,7 @@ export default function AdminLocationMap() {
               <span className="material-symbols-outlined text-primary text-[20px]">table_rows</span>
               Daftar Titik MAP Terdaftar
             </h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">{STATIONS.length} stasiun ditampilkan pada peta · {locations.length} titik MAP tersimpan</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">{STATIONS.length + locations.length} titik pengecekan · {STATIONS.length} stasiun · {locations.length} titik MAP admin</p>
           </div>
           <button type="button" onClick={fetchLocations} disabled={loadingLocations} className="shrink-0 px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-primary hover:bg-blue-50 disabled:opacity-50 flex items-center gap-1.5">
             <span className={`material-symbols-outlined text-[17px] ${loadingLocations ? 'animate-spin' : ''}`}>refresh</span>
@@ -427,29 +435,22 @@ export default function AdminLocationMap() {
         </div>
 
         <div className="flex-1 overflow-auto">
-          {loadingLocations ? (
-            <div className="h-full flex items-center justify-center gap-2 text-sm text-slate-500">
-              <span className="material-symbols-outlined animate-spin text-primary">progress_activity</span>
-              Mengambil titik lokasi...
+          {loadingLocations && (
+            <div className="px-4 py-2 bg-blue-50 border-b border-blue-100 text-xs text-primary font-semibold flex items-center gap-2">
+              <span className="material-symbols-outlined animate-spin text-[16px]">progress_activity</span>Mengambil titik MAP admin...
             </div>
-          ) : locationLoadError ? (
-            <div className="h-full flex flex-col items-center justify-center text-center px-4">
-              <span className="material-symbols-outlined text-rose-500 text-[30px]">cloud_off</span>
-              <p className="text-sm font-bold text-slate-700 mt-1">Gagal mengambil titik lokasi</p>
-              <p className="text-xs text-slate-500 mt-0.5 max-w-lg">{locationLoadError}</p>
-              <button type="button" onClick={fetchLocations} className="mt-2 px-4 py-2 rounded-xl bg-primary text-white text-xs font-bold">Coba Lagi</button>
+          )}
+          {locationLoadError && (
+            <div className="px-4 py-2 bg-rose-50 border-b border-rose-100 text-xs text-rose-700 flex items-center justify-between gap-3">
+              <span className="flex items-center gap-2 min-w-0"><span className="material-symbols-outlined text-[17px]">cloud_off</span><span className="truncate">Titik MAP admin gagal dimuat: {locationLoadError}</span></span>
+              <button type="button" onClick={fetchLocations} className="font-bold whitespace-nowrap">Coba Lagi</button>
             </div>
-          ) : locations.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center px-4 text-slate-500">
-              <span className="material-symbols-outlined text-slate-300 text-[34px]">location_off</span>
-              <p className="text-sm font-bold mt-1">Belum ada titik terdaftar</p>
-              <p className="text-xs mt-0.5">Klik peta atau gunakan Input Koordinat untuk menambahkan titik.</p>
-            </div>
-          ) : (
+          )}
             <table className="w-full min-w-[820px] text-left">
               <thead className="sticky top-0 bg-slate-50 z-10 text-[10px] uppercase tracking-wider text-slate-500">
                 <tr>
                   <th className="px-4 py-2.5 font-bold w-12">No.</th>
+                  <th className="px-4 py-2.5 font-bold">Jenis</th>
                   <th className="px-4 py-2.5 font-bold">Nama Lokasi</th>
                   <th className="px-4 py-2.5 font-bold">Alamat / Catatan</th>
                   <th className="px-4 py-2.5 font-bold">Koordinat</th>
@@ -458,9 +459,21 @@ export default function AdminLocationMap() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
+                {STATIONS.map((station, index) => (
+                  <tr key={`station:${station.name}`} className={`text-xs hover:bg-teal-50/60 transition-colors ${selectedStation?.name === station.name ? 'bg-teal-50' : 'bg-white'}`}>
+                    <td className="px-4 py-3 text-slate-400 font-semibold">{index + 1}</td>
+                    <td className="px-4 py-3"><span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-teal-50 text-teal-700 font-bold text-[10px]"><span className="material-symbols-outlined text-[13px]">train</span>Stasiun</span></td>
+                    <td className="px-4 py-3"><button type="button" onClick={() => focusStation(station)} className="font-bold text-slate-800 hover:text-teal-700 text-left">{station.name}</button></td>
+                    <td className="px-4 py-3 text-slate-500">Stasiun bawaan sistem · tersedia untuk penugasan</td>
+                    <td className="px-4 py-3 font-mono text-[11px] text-slate-600 whitespace-nowrap">{station.lat.toFixed(6)}, {station.lng.toFixed(6)}</td>
+                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap">Sistem</td>
+                    <td className="px-4 py-3"><div className="flex justify-end"><button type="button" onClick={() => focusStation(station)} className="px-2.5 py-1.5 rounded-lg bg-teal-50 text-teal-700 font-bold hover:bg-teal-100 flex items-center gap-1"><span className="material-symbols-outlined text-[15px]">my_location</span>Lihat</button></div></td>
+                  </tr>
+                ))}
                 {locations.map((location, index) => (
                   <tr key={location.id} className={`text-xs hover:bg-blue-50/50 transition-colors ${selectedLocation?.id === location.id ? 'bg-blue-50' : 'bg-white'}`}>
-                    <td className="px-4 py-3 text-slate-400 font-semibold">{index + 1}</td>
+                    <td className="px-4 py-3 text-slate-400 font-semibold">{STATIONS.length + index + 1}</td>
+                    <td className="px-4 py-3"><span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-50 text-primary font-bold text-[10px]"><span className="material-symbols-outlined text-[13px]">pin_drop</span>Titik MAP</span></td>
                     <td className="px-4 py-3">
                       <button type="button" onClick={() => focusLocation(location)} className="font-bold text-slate-800 hover:text-primary text-left">{location.name}</button>
                     </td>
@@ -480,7 +493,6 @@ export default function AdminLocationMap() {
                 ))}
               </tbody>
             </table>
-          )}
         </div>
       </section>
     </div>
