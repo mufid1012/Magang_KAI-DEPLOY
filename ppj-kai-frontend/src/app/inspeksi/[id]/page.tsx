@@ -141,9 +141,9 @@ export default function TrackingPage() {
   const endFileInputRef = useRef<HTMLInputElement>(null);
   const [isStopping, setIsStopping] = useState(false);
 
-  // Temporary deployment-testing bypass. It is disabled unless explicitly enabled.
+  // Temporary deployment-testing bypass. Set the environment variable to false to hide it.
   const [testMode, setTestMode] = useState(false);
-  const bypassAvailable = process.env.NEXT_PUBLIC_TRACKING_BYPASS_ENABLED === 'true';
+  const bypassAvailable = process.env.NEXT_PUBLIC_TRACKING_BYPASS_ENABLED !== 'false';
 
   // localStorage key for persisting tracking session
   const STORAGE_KEY = `tracking_session_${params.id}`;

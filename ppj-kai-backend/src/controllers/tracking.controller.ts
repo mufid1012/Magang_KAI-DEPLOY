@@ -46,7 +46,7 @@ export const startTracking = async (req: Request, res: Response) => {
     if (fotoAwal !== undefined && fotoAwal !== null && (typeof fotoAwal !== 'string' || fotoAwal.length > 7_000_000)) {
       return res.status(413).json({ success: false, message: 'Foto awal terlalu besar' });
     }
-    const bypassEnabled = process.env.TRACKING_BYPASS_ENABLED === 'true';
+    const bypassEnabled = process.env.TRACKING_BYPASS_ENABLED !== 'false';
     const useBypass = bypassEnabled && bypassMode === true;
 
     const tugas = await prisma.tugasPpj.findFirst({
@@ -64,7 +64,7 @@ export const startTracking = async (req: Request, res: Response) => {
     if (tugas.status === 'cancelled') {
       return res.status(400).json({ success: false, message: 'Tugas sudah dibatalkan.' });
     }
-    if (tugas.status !== 'pending') {
+    if (tugas.status !== 'pending' && !(useBypass && tugas.status === 'missed')) {
       return res.status(409).json({ success: false, message: 'Tugas tidak dapat memulai tracking pada status saat ini' });
     }
 
@@ -117,7 +117,11 @@ export const startTracking = async (req: Request, res: Response) => {
 
     const tracking = await prisma.$transaction(async tx => {
       const claimed = await tx.tugasPpj.updateMany({
-        where: { id: tugas.id, assignedTo: userId, status: 'pending' },
+        where: {
+          id: tugas.id,
+          assignedTo: userId,
+          status: useBypass ? { in: ['pending', 'missed'] } : 'pending',
+        },
         data: { status: 'in_progress' },
       });
       if (claimed.count !== 1) throw new Error('TRACKING_ALREADY_STARTED');

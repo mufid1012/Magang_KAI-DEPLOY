@@ -79,13 +79,16 @@ test('active tracking lookup is scoped to the logged-in PPJ', async () => {
   assert.equal(res.body.trackingId, null);
 });
 
-test('tracking bypass stays disabled when the environment flag is absent', async () => {
+test('tracking bypass is enabled when the environment flag is absent', async () => {
   delete process.env.TRACKING_BYPASS_ENABLED;
   prisma.tugasPpj.findFirst = (async (args: any) => {
     assert.deepEqual(args.where, { id: 12, assignedTo: 7 });
     return { id: 12, assignedTo: 7, status: 'missed', jamMulai: null };
   }) as any;
-  prisma.$transaction = (async () => assert.fail('must not start a missed task')) as any;
+  prisma.$transaction = (async (operation: any) => operation({
+    tugasPpj: { updateMany: async () => ({ count: 1 }) },
+    tracking: { create: async () => ({ id: 91 }) },
+  })) as any;
 
   const res = response();
   await startTracking({
@@ -93,5 +96,5 @@ test('tracking bypass stays disabled when the environment flag is absent', async
     user: { id: 7, role: 'ppj' },
     body: { lat: -7.8, lng: 110.3, bypassMode: true },
   } as any, res);
-  assert.equal(res.statusCode, 400);
+  assert.equal(res.statusCode, 200);
 });
