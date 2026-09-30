@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import axios from 'axios';
 import api from '../../../lib/api';
@@ -78,7 +78,8 @@ function useGPS() {
   return { position, error };
 }
 
-export default function TrackingPage({ params }: { params: { id: string } }) {
+export default function TrackingPage() {
+  const params = useParams<{ id: string }>();
   const router = useRouter();
   const { position: gpsPos, error: gpsError } = useGPS();
 
@@ -140,10 +141,9 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   const endFileInputRef = useRef<HTMLInputElement>(null);
   const [isStopping, setIsStopping] = useState(false);
 
-  // Temporary deployment-testing bypass. Set
-  // NEXT_PUBLIC_TRACKING_BYPASS_ENABLED=false to remove it from the UI.
+  // Temporary deployment-testing bypass. It is disabled unless explicitly enabled.
   const [testMode, setTestMode] = useState(false);
-  const bypassAvailable = process.env.NEXT_PUBLIC_TRACKING_BYPASS_ENABLED !== 'false';
+  const bypassAvailable = process.env.NEXT_PUBLIC_TRACKING_BYPASS_ENABLED === 'true';
 
   // localStorage key for persisting tracking session
   const STORAGE_KEY = `tracking_session_${params.id}`;

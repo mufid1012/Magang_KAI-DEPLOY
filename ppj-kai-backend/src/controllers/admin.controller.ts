@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import prisma from '../config/database';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { findStationMatch, normalizeNipp, normalizeStationName, parseImportTime } from '../utils/importMatching';
 import { ensureMapLocationsTable } from '../lib/mapLocationsTable';
 import { resolveTugasStatus } from '../utils/tugasStatus';
@@ -9,6 +9,32 @@ import { resolveTugasStatus } from '../utils/tugasStatus';
 // Extend Request type to include user (set by auth middleware)
 interface AuthRequest extends Request {
   user?: { id: number; role: string };
+}
+
+function excelCellValue(value: ExcelJS.CellValue): unknown {
+  if (value instanceof Date) return value;
+  if (value && typeof value === 'object') {
+    if ('result' in value) return value.result;
+    if ('text' in value && typeof value.text === 'string') return value.text;
+    if ('richText' in value && Array.isArray(value.richText)) {
+      return value.richText.map(part => part.text).join('');
+    }
+  }
+  return value;
+}
+
+function worksheetRows(worksheet: ExcelJS.Worksheet): unknown[][] {
+  if (worksheet.rowCount > 5_000 || worksheet.columnCount > 50) {
+    throw new Error('EXCEL_LIMIT_EXCEEDED');
+  }
+  const rows: unknown[][] = [];
+  worksheet.eachRow({ includeEmpty: true }, row => {
+    rows.push(Array.from(
+      { length: worksheet.columnCount },
+      (_, index) => excelCellValue(row.getCell(index + 1).value),
+    ));
+  });
+  return rows;
 }
 
 function parseUniquePositiveIds(value: unknown): number[] | null {
@@ -582,9 +608,12 @@ export const createUser = async (req: AuthRequest, res: Response) => {
     }
 
     // Validate role
-    const validRoles = ['qc', 'kupt', 'ppj'];
+    const validRoles = ['qc', 'kupt', 'guest', 'ppj'];
     if (!validRoles.includes(role)) {
-      return res.status(400).json({ success: false, message: 'Role harus: qc, kupt, atau ppj' });
+      return res.status(400).json({ success: false, message: 'Role harus: qc, kupt, guest, atau ppj' });
+    }
+    if (typeof password !== 'string' || password.length < 6 || password.length > 128) {
+      return res.status(400).json({ success: false, message: 'Password minimal 6 dan maksimal 128 karakter' });
     }
 
     const selectedWilayahIds = parseUniquePositiveIds(wilayahIds);
@@ -671,9 +700,9 @@ export const updateUser = async (req: AuthRequest, res: Response) => {
 
     // Validate role if changing
     if (role) {
-      const validRoles = ['qc', 'kupt', 'ppj'];
+      const validRoles = ['qc', 'kupt', 'guest', 'ppj'];
       if (!validRoles.includes(role)) {
-        return res.status(400).json({ success: false, message: 'Role harus: qc, kupt, atau ppj' });
+        return res.status(400).json({ success: false, message: 'Role harus: qc, kupt, guest, atau ppj' });
       }
     }
 
@@ -719,6 +748,9 @@ export const updateUser = async (req: AuthRequest, res: Response) => {
     if (role !== undefined) updateData.role = role;
     if (isActive !== undefined) updateData.isActive = isActive;
     if (password) {
+      if (typeof password !== 'string' || password.length < 6 || password.length > 128) {
+        return res.status(400).json({ success: false, message: 'Password minimal 6 dan maksimal 128 karakter' });
+      }
       updateData.password = await bcrypt.hash(password, 10);
     }
 
@@ -908,7 +940,7 @@ export const downloadTugasTemplate = async (req: AuthRequest, res: Response) => 
       orderBy: { nama: 'asc' },
     });
 
-    const wb = XLSX.utils.book_new();
+    const workbook = new ExcelJS.Workbook();
     const inspectionPoints = await getImportInspectionPoints(managerId, role);
 
     // Sheet 1: Template with headers + example row
@@ -916,33 +948,30 @@ export const downloadTugasTemplate = async (req: AuthRequest, res: Response) => 
       ['NIPP Petugas', 'Nama Petugas', 'Titik Awal', 'Titik Akhir', 'Tanggal (YYYY-MM-DD)', 'Jam Mulai (HH:mm)', 'Jam Selesai (HH:mm)'],
       [petugasList[0]?.nipp || 'KAI-1234', petugasList[0]?.nama || 'Nama Petugas', 'Sta. Yogyakarta', 'Sta. Solo Balapan', '2026-07-10', '08:00', '16:00'],
     ];
-    const wsTemplate = XLSX.utils.aoa_to_sheet(templateData);
-    // Set column widths
-    wsTemplate['!cols'] = [
-      { wch: 18 }, { wch: 28 }, { wch: 22 }, { wch: 22 }, { wch: 22 }, { wch: 18 }, { wch: 18 },
-    ];
-    XLSX.utils.book_append_sheet(wb, wsTemplate, 'Template Penugasan');
+    const wsTemplate = workbook.addWorksheet('Template Penugasan');
+    wsTemplate.addRows(templateData);
+    [18, 28, 22, 22, 22, 18, 18].forEach((width, index) => { wsTemplate.getColumn(index + 1).width = width; });
 
     // Sheet 2: all inspection points available to this importer
     const stationData = [
       ['Jenis', 'Nama Titik', 'Latitude', 'Longitude'],
       ...inspectionPoints.map(point => [point.type, point.name, point.lat, point.lng]),
     ];
-    const wsStations = XLSX.utils.aoa_to_sheet(stationData);
-    wsStations['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 14 }, { wch: 14 }];
-    XLSX.utils.book_append_sheet(wb, wsStations, 'Daftar Titik Pengecekan');
+    const wsStations = workbook.addWorksheet('Daftar Titik Pengecekan');
+    wsStations.addRows(stationData);
+    [14, 28, 14, 14].forEach((width, index) => { wsStations.getColumn(index + 1).width = width; });
 
     // Sheet 3: Daftar Petugas Kelolaan
     const petugasData = [
       ['NIPP', 'Nama'],
       ...petugasList.map(p => [p.nipp, p.nama]),
     ];
-    const wsPetugas = XLSX.utils.aoa_to_sheet(petugasData);
-    wsPetugas['!cols'] = [{ wch: 18 }, { wch: 30 }];
-    XLSX.utils.book_append_sheet(wb, wsPetugas, 'Daftar Petugas');
+    const wsPetugas = workbook.addWorksheet('Daftar Petugas');
+    wsPetugas.addRows(petugasData);
+    [18, 30].forEach((width, index) => { wsPetugas.getColumn(index + 1).width = width; });
 
     // Generate buffer
-    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const buf = await workbook.xlsx.writeBuffer();
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename="template_penugasan_ppj.xlsx"');
@@ -968,14 +997,16 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
     }
 
     // Parse Excel from buffer (multer memoryStorage)
-    const wb = XLSX.read(file.buffer, { type: 'buffer' });
-    const sheetName = wb.SheetNames[0];
-    if (!sheetName) {
+    if (!file.originalname?.toLowerCase().endsWith('.xlsx')) {
+      return res.status(400).json({ success: false, message: 'Gunakan file .xlsx dari template terbaru' });
+    }
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(file.buffer);
+    const worksheet = workbook.worksheets[0];
+    if (!worksheet) {
       return res.status(400).json({ success: false, message: 'File Excel kosong' });
     }
-
-    const ws = wb.Sheets[sheetName];
-    const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+    const rows = worksheetRows(worksheet);
 
     // Skip header row
     if (rows.length < 2) {
@@ -1157,6 +1188,9 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
       },
     });
   } catch (error) {
+    if (error instanceof Error && error.message === 'EXCEL_LIMIT_EXCEEDED') {
+      return res.status(400).json({ success: false, message: 'File Excel melebihi 5.000 baris atau 50 kolom' });
+    }
     console.error('Import tugas error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });
   }

@@ -12,9 +12,22 @@ import {
 import { approveTracking } from '../controllers/tracking.controller';
 import { createTrainSchedule, deleteTrainSchedule, getTrainSchedules, updateTrainSchedule } from '../controllers/trainSchedule.controller';
 import { createMapLocation, deleteMapLocation, getMapLocations, searchMapLocations } from '../controllers/mapLocation.controller';
+import { uploadLimiter } from '../middleware/rateLimiter';
 
 // Multer memory storage for Excel file uploads
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB max
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 5, parts: 6 },
+  fileFilter: (_req, file, callback) => {
+    const acceptedMimeTypes = new Set([
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/octet-stream',
+      '',
+    ]);
+    const isXlsx = file.originalname.toLowerCase().endsWith('.xlsx') && acceptedMimeTypes.has(file.mimetype);
+    callback(null, isXlsx);
+  },
+});
 
 const router = Router();
 
@@ -41,7 +54,7 @@ router.delete('/train-schedules/:id', requireAuth, requireAdmin, deleteTrainSche
 
 // ── Excel import/export — admin + kupt only ──
 router.get('/tugas/template', requireAuth, requireCanWrite, downloadTugasTemplate);
-router.post('/tugas/import', requireAuth, requireCanWrite, upload.single('file'), importTugasFromExcel);
+router.post('/tugas/import', requireAuth, requireCanWrite, uploadLimiter, upload.single('file'), importTugasFromExcel);
 
 // ── Kategori Temuan CRUD — admin + kupt ──
 router.get('/kategori-temuan', requireAuth, requireAdminLike, getKategoriTemuan);

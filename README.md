@@ -69,7 +69,7 @@ Nama arah tidak ditentukan dari tujuan tugas penerima. Endpoint terbaru tidak me
 
 ### Import Excel
 
-Unduh template melalui dashboard, isi sheet pertama **Template Penugasan**, lalu unggah melalui Import Excel. UI menerima `.xlsx/.xls`; backend membatasi file 5 MB dengan field multipart `file`.
+Unduh template melalui dashboard, isi sheet pertama **Template Penugasan**, lalu unggah melalui Import Excel. UI hanya menerima `.xlsx`; backend membatasi file 5 MB dengan field multipart `file`.
 
 | Urutan | Kolom | Isi |
 | --- | --- | --- |
@@ -93,19 +93,19 @@ Pertahankan urutan kolom karena backend membaca berdasarkan posisi. Template men
 
 Endpoint aktif: `/api/admin/tugas/template` dan `/api/admin/tugas/import`, di `admin.controller.ts`. Implementasi lama dalam `import.controller.ts` tidak terpasang pada router aktif.
 
-### Peta dan PWA
+### Peta dan pemulihan sesi
 
 Leaflet menampilkan tile OpenStreetMap. Geometri rel diambil melalui proxy Overpass dengan server cadangan; frontend menggunakan graph/Dijkstra untuk jalur rel. Lintasan tracking diproyeksikan ke geometri tersedia. Warna petugas konsisten berdasarkan NIPP.
 
 Menu MAP admin menyediakan marker stasiun, titik custom, tabel pencarian, input koordinat, klik/geser marker, dan pencarian alamat melalui proxy geocoding. Form penugasan memakai dropdown titik. Isolasi layer peta mencegah Leaflet menutupi modal/tombol.
 
-PWA aktif pada build production dan nonaktif saat development. Ada IndexedDB antrean offline dan hook sinkronisasi saat koneksi pulih, tetapi halaman tracking aktif masih mengirim request API langsung. Seluruh alur inspeksi/warning belum dapat dianggap mendukung offline penuh.
+Tracking aktif tetap mengirim request API secara online. State perjalanan disimpan di `localStorage` dan dipulihkan dari endpoint active-tracking. Service worker PWA lama sudah dilepas; `public/sw.js` hanya membersihkan cache instalasi lama agar bundle usang tidak tetap digunakan.
 
 ## Teknologi dan struktur
 
 | Modul | Teknologi |
 | --- | --- |
-| Frontend | Next.js 14.2.35, React 18, TypeScript 5, TailwindCSS 3.4, Leaflet 1.9, Axios, SheetJS, next-pwa, idb |
+| Frontend | Next.js 16.3.6, React 19, TypeScript 5, TailwindCSS 3.4, Leaflet 1.9, Axios, idb |
 | Backend | Express 5, TypeScript 6, Prisma/Client 5.20, MySQL, JWT, bcryptjs, multer, SheetJS, pdfmake, canvas |
 
 Lihat `package.json` masing-masing modul untuk rentang versi dan lockfile untuk instalasi reproducible.
@@ -127,10 +127,10 @@ Magang_KAI-DEPLOY/
 │       ├── lib/                    # Scheduler, static map, tabel MAP
 │       └── utils/                  # Import, status, penerima warning
 └── ppj-kai-frontend/
-    ├── next.config.mjs             # Next.js/PWA
+    ├── next.config.mjs             # Konfigurasi Next.js
     ├── public/                     # Manifest, ikon, service worker
     └── src/
-        ├── app/                    # login/register/admin/qc/guest/inspeksi
+        ├── app/                    # login/admin/qc/guest/inspeksi
         ├── components/             # Peta, modal, auth guard, layout
         ├── hooks/                  # Sinkronisasi offline
         └── lib/                    # API, audio, toast, stasiun, rel, offline
@@ -211,14 +211,14 @@ Akun ini untuk pengembangan. Seeder membuat wilayah JR 6.1–6.13 dan tugas cont
 | --- | --- | --- |
 | Backend | `DATABASE_URL` | Koneksi MySQL Prisma |
 | Backend | `PORT` | Default 5001 |
-| Backend | `JWT_SECRET` | Isi sendiri; jangan mengandalkan secret fallback kode |
-| Backend | `FRONTEND_URL` | Origin CORS; default `*` |
+| Backend | `JWT_SECRET` | Wajib, minimal 32 karakter acak; server menolak start jika tidak valid |
+| Backend | `FRONTEND_URL` | Wajib di production; allowlist origin, pisahkan beberapa origin dengan koma |
 | Backend | `APP_URL` | Referer geocoding; default localhost |
 | Backend | `GEOCODING_API_URL` | Opsional; default pencarian Nominatim OpenStreetMap |
-| Backend | `TRACKING_BYPASS_ENABLED` | Bypass jadwal untuk request bypass; hanya string `false` menonaktifkan |
+| Backend | `TRACKING_BYPASS_ENABLED` | Bypass jadwal hanya aktif jika eksplisit bernilai `true` |
 | Frontend | `NEXT_PUBLIC_API_URL` | URL backend berakhiran `/api`; default localhost:5001/api |
-| Frontend | `NEXT_PUBLIC_TRACKING_BYPASS_ENABLED` | Toggle bypass; hanya string `false` menonaktifkan |
-| Keduanya | `NODE_ENV` | Development/production; memengaruhi PWA dan rincian error |
+| Frontend | `NEXT_PUBLIC_TRACKING_BYPASS_ENABLED` | Toggle bypass hanya aktif jika eksplisit bernilai `true` |
+| Keduanya | `NODE_ENV` | Development/production; memengaruhi validasi konfigurasi dan rincian error |
 
 Mode bypass **tidak terbatas localhost** dan tersedia bila flag tidak diisi. UI dapat melewati pembatasan GPS/geofence/foto/jadwal untuk pengujian; backend mempunyai pemeriksaan bypass jadwal sendiri. Matikan kedua flag untuk pemakaian normal. Geofence UI bukan validasi geofence server.
 
@@ -233,8 +233,8 @@ Base path `/api`. Endpoint terproteksi memakai `Authorization: Bearer <token>`. 
 | Method | Path | Akses/fungsi |
 | --- | --- | --- |
 | GET | `/health` | Publik, cek database |
-| POST | `/auth/login`, `/auth/register` | Publik |
-| GET | `/auth/check/:nipp` | Publik |
+| POST | `/auth/login` | Publik dan dibatasi rate limiter |
+| POST/PATCH | `/admin/users`, `/admin/users/:id` | Hanya Super Admin (`admin`) untuk membuat/mengubah akun |
 | GET | `/auth/me` | JWT, profil |
 | PATCH | `/auth/profile` | JWT, profil termasuk suara sirine |
 | GET | `/kategori-temuan` | Publik, kategori aktif |
@@ -324,7 +324,7 @@ npm run lint
 npm run build
 ```
 
-Test backend memakai Node test runner + tsx: normalisasi import, status approval, pemilihan penerima/arah warning, serta controller dengan mock Prisma. Test ini bukan pengujian database/browser produksi. Build frontend memeriksa kompilasi, lint, dan tipe. Build PWA dapat mengubah public/sw.js; periksa diff sebelum commit.
+Test backend memakai Node test runner + tsx: normalisasi import, status approval, pemilihan penerima/arah warning, serta controller dengan mock Prisma. Test ini bukan pengujian database/browser produksi. Build frontend memeriksa kompilasi dan tipe.
 
 ## Troubleshooting
 
@@ -336,7 +336,7 @@ Test backend memakai Node test runner + tsx: normalisasi import, status approval
 | Tugas admin kosong | Periksa managerId; untuk QC periksa wilayah/nama stasiun |
 | PDF PPJ belum tersedia | Periksa approval tracking terbaru; pending approval masuk Riwayat |
 | CORS/API ke localhost di production | Periksa NEXT_PUBLIC_API_URL saat build dan FRONTEND_URL backend |
-| Tampilan PWA lama | Muat ulang/tutup-buka aplikasi; periksa service worker dan versi deployment |
+| Tampilan/cache lama | Muat ulang/tutup-buka aplikasi; service worker pembersih akan menghapus cache PWA versi lama |
 | GPS/kamera/suara gagal | Periksa HTTPS, izin, dukungan browser, dan interaksi pengguna untuk audio |
 | Jalur rel kosong | Periksa koneksi proxy railway/geometry dan Overpass; geometri bergantung data OSM |
 

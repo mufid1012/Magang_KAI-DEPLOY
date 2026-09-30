@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import { createLaporan, getLaporan } from '../controllers/laporan.controller';
-import { requireAuth } from '../middleware/auth.middleware';
+import { requireAuth, requireRole } from '../middleware/auth.middleware';
 
 const router = Router();
 
 router.use(requireAuth);
 
-router.post('/', createLaporan);
-router.get('/', getLaporan);
+router.post('/', requireRole('ppj'), createLaporan);
+router.get('/', requireRole('ppj', 'admin', 'kupt', 'qc'), getLaporan);
 
 export default router;

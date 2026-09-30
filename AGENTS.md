@@ -7,7 +7,7 @@
 ## Ringkasan Proyek
 
 **KAI RailTrack PPJ** — Sistem monitoring inspeksi jalur rel kereta api untuk PT KAI DAOP 6 Yogyakarta.
-Terdiri dari 2 modul: **Frontend** (Next.js 14) dan **Backend** (Express 5 + Prisma + MySQL).
+Terdiri dari 2 modul: **Frontend** (Next.js 16) dan **Backend** (Express 5 + Prisma + MySQL).
 
 ---
 
@@ -15,7 +15,7 @@ Terdiri dari 2 modul: **Frontend** (Next.js 14) dan **Backend** (Express 5 + Pri
 
 | Layer | Teknologi |
 |-------|-----------|
-| Frontend | Next.js 14, React 18, TailwindCSS 3.4, Leaflet 1.9, Axios, TypeScript 5 |
+| Frontend | Next.js 16, React 19, TailwindCSS 3.4, Leaflet 1.9, Axios, TypeScript 5 |
 | Backend | Express 5, Prisma 5.20, MySQL 8, JWT (jsonwebtoken), bcryptjs, TypeScript 6 |
 | Peta | OpenStreetMap tiles, Overpass API (query geometri rel), Leaflet.js |
 | Auth | JWT Bearer token, role: `admin` \| `qc` \| `kupt` \| `guest` \| `ppj` |
@@ -32,7 +32,7 @@ src/
 ├── config/database.ts          # Prisma client singleton
 ├── middleware/auth.middleware.ts # requireAuth (JWT), requireRole (role check)
 ├── controllers/
-│   ├── auth.controller.ts      # login, register, checkNipp, getMe
+│   ├── auth.controller.ts      # login, getMe, updateProfile
 │   ├── tugas.controller.ts     # getTugasPetugas, getTugasSummary, getTugasById
 │   ├── tracking.controller.ts  # startTracking, stopTracking, updateTracking, getActiveTracking
 │   ├── laporan.controller.ts   # createLaporan, getLaporan
@@ -61,7 +61,6 @@ src/
 │   ├── layout.tsx              # Root layout, Google Fonts (Outfit), Material Symbols
 │   ├── page.tsx                # Landing/splash → redirect ke /login
 │   ├── login/page.tsx          # Login form (NIPP + password) → redirect role-based
-│   ├── register/page.tsx       # Register form
 │   ├── inspeksi/               # Halaman Petugas (PPJ)
 │   │   ├── page.tsx            # Task selector / empty state "Tugas Belum Tersedia"
 │   │   ├── [id]/page.tsx       # ⭐ HALAMAN TERBESAR. Tracking GPS + Map + Kamera + Emergency
@@ -198,7 +197,7 @@ warning_alerts (WarningAlert)
 
 ### Public
 - `POST /api/auth/login` → `{ nipp, password }` → `{ token, user }`
-- `GET /api/auth/check/:nipp` → cek NIPP exists
+- Tidak ada registrasi publik; akun dibuat Super Admin melalui `/api/admin/users`.
 - `GET /api/kategori-temuan` → daftar kategori aktif (tidak butuh auth, dipanggil petugas)
 
 ### Petugas / Umum (requireAuth)

@@ -1,15 +1,13 @@
 import { Router } from 'express';
-import { login, register, getMe, checkNipp, updateProfile } from '../controllers/auth.controller';
+import { login, getMe, updateProfile } from '../controllers/auth.controller';
 
 import { requireAuth } from '../middleware/auth.middleware';
+import { loginLimiter } from '../middleware/rateLimiter';
 
 const router = Router();
 
 // Public routes
-router.post('/login', login);
-router.post('/register', register);
-
-router.get('/check/:nipp', checkNipp);
+router.post('/login', loginLimiter, login);
 
 // Protected routes
 router.get('/me', requireAuth, getMe);

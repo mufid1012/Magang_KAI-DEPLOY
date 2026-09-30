@@ -42,7 +42,7 @@ const ROLE_BADGE: Record<string, { label: string; bg: string }> = {
   qc: { label: 'Quality Control', bg: 'bg-indigo-600' },
   kupt: { label: 'KUPT', bg: 'bg-teal-600' },
 };
-const ROLE_LABEL: Record<string, string> = { admin: 'Admin', qc: 'QC', kupt: 'KUPT', ppj: 'PPJ' };
+const ROLE_LABEL: Record<string, string> = { admin: 'Admin', qc: 'QC', kupt: 'KUPT', guest: 'Guest', ppj: 'PPJ' };
 
 const STATUS_COLOR: Record<string, string> = { pending: 'bg-surface-container text-on-surface-variant border-outline-variant', in_progress: 'bg-primary-container/20 text-primary border-primary/30', need_approval: 'bg-amber-100 text-amber-800 border-amber-300', completed: 'bg-primary-fixed text-on-primary-fixed-variant border-transparent' };
 const STATUS_LABEL: Record<string, string> = { pending: 'Pending', in_progress: 'Berlangsung', need_approval: 'Butuh Approval', completed: 'Selesai' };
@@ -610,61 +610,12 @@ export default function AdminPage() {
 
     try {
       setImportLoading(true);
-      const XLSX = await import('xlsx');
-      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-      const firstSheetName = workbook.SheetNames[0];
-      const worksheet = firstSheetName ? workbook.Sheets[firstSheetName] : undefined;
-
-      // Normalisasi nilai jam sebelum upload. Excel menyimpan sel jam sebagai
-      // pecahan hari (contoh 08:00 = 0.333333...), sedangkan backend lama
-      // mengubah angka panjang tersebut menjadi string dan gagal di VARCHAR(10).
-      if (worksheet?.['!ref']) {
-        const range = XLSX.utils.decode_range(worksheet['!ref']);
-        const timeColumns: number[] = [];
-        for (let column = range.s.c; column <= range.e.c; column++) {
-          const headerCell = worksheet[XLSX.utils.encode_cell({ r: range.s.r, c: column })];
-          const header = String(headerCell?.v ?? '').trim().toLowerCase();
-          if (header.startsWith('jam mulai') || header.startsWith('jam selesai')) timeColumns.push(column);
-        }
-
-        for (let row = range.s.r + 1; row <= range.e.r; row++) {
-          for (const column of timeColumns) {
-            const address = XLSX.utils.encode_cell({ r: row, c: column });
-            const cell = worksheet[address];
-            if (!cell || typeof cell.v !== 'number' || !Number.isFinite(cell.v)) continue;
-
-            let totalMinutes: number | null = null;
-            if (cell.v >= 0 && cell.v < 1) {
-              totalMinutes = Math.round(cell.v * 24 * 60) % (24 * 60);
-            } else if (cell.v >= 1 && cell.v <= 23) {
-              totalMinutes = Math.round(cell.v * 60);
-            } else if (!Number.isInteger(cell.v)) {
-              totalMinutes = Math.round((cell.v - Math.floor(cell.v)) * 24 * 60) % (24 * 60);
-            } else if (cell.v >= 100 && cell.v <= 2359) {
-              const hours = Math.floor(cell.v / 100);
-              const minutes = cell.v % 100;
-              if (hours <= 23 && minutes <= 59) totalMinutes = hours * 60 + minutes;
-            }
-
-            if (totalMinutes !== null && totalMinutes >= 0 && totalMinutes < 24 * 60) {
-              const hours = Math.floor(totalMinutes / 60);
-              const minutes = totalMinutes % 60;
-              cell.t = 's';
-              cell.v = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-              cell.w = cell.v;
-              delete cell.z;
-            }
-          }
-        }
+      if (!file.name.toLowerCase().endsWith('.xlsx')) {
+        showToast('Gunakan file .xlsx dari template terbaru.', 'warning');
+        return;
       }
-
-      const normalizedFile = new File(
-        [XLSX.write(workbook, { type: 'array', bookType: 'xlsx' })],
-        file.name.replace(/\.xls$/i, '.xlsx'),
-        { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
-      );
       const formData = new FormData();
-      formData.append('file', normalizedFile);
+      formData.append('file', file);
       const res = await api.post('/admin/tugas/import', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
@@ -1048,7 +999,7 @@ export default function AdminPage() {
                       <input
                         ref={fileInputRef}
                         type="file"
-                        accept=".xlsx,.xls"
+                        accept=".xlsx"
                         onChange={handleImportExcel}
                         className="hidden"
                       />
@@ -1601,6 +1552,7 @@ export default function AdminPage() {
                   <option value="ppj">PPJ (Petugas Pemeriksa Jalur)</option>
                   <option value="qc">QC (Quality Control)</option>
                   <option value="kupt">KUPT</option>
+                  <option value="guest">Guest (monitoring)</option>
                 </select>
               </div>
               {/* Wilayah (for QC/KUPT) */}

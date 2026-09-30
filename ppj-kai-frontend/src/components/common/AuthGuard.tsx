@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 
-const PUBLIC_ROUTES = ['/login', '/register', '/guest'];
+const PUBLIC_ROUTES = ['/login', '/guest'];
 const ADMIN_ROUTES = ['/admin'];
 const QC_ROUTES = ['/qc'];
 const PPJ_ROUTES = ['/inspeksi'];
@@ -14,6 +14,7 @@ const ADMIN_KUPT_ROLES = ['admin', 'kupt'];
 function homeForRole(role: string): string {
   if (role === 'qc') return '/qc';
   if (ADMIN_KUPT_ROLES.includes(role)) return '/admin';
+  if (role === 'guest') return '/guest';
   return '/inspeksi';
 }
 
@@ -47,8 +48,8 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         router.replace('/login');
         return;
       }
-    } else if (pathname === '/login' || pathname === '/register') {
-      // Already logged in — redirect away from login/register to role-specific home
+    } else if (pathname === '/login') {
+      // Already logged in — redirect away from login to role-specific home
       router.replace(homeForRole(role));
       return;
     } else if (isAdminRoute && !ADMIN_KUPT_ROLES.includes(role)) {

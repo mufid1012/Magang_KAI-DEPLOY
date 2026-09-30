@@ -1,7 +1,8 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
+import helmet from 'helmet';
 import prisma from './config/database';
+import { getAllowedOrigins, validateRuntimeEnvironment } from './config/env';
 import authRoutes from './routes/auth.routes';
 import tugasRoutes from './routes/tugas.routes';
 import trackingRoutes from './routes/tracking.routes';
@@ -12,14 +13,26 @@ import railwayRoutes from './routes/railway.routes';
 import { getActiveKategoriTemuan } from './controllers/admin.controller';
 import { startMissedTaskScheduler } from './lib/scheduler';
 
-dotenv.config();
+validateRuntimeEnvironment();
 
 const app = express();
 const port = process.env.PORT || 5001;
+const allowedOrigins = new Set(getAllowedOrigins());
+
+const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
+if (Number.isSafeInteger(trustProxyHops) && trustProxyHops > 0) {
+  app.set('trust proxy', trustProxyHops);
+}
 
 // Middleware
+app.disable('x-powered-by');
+app.use(helmet());
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
+  origin(origin, callback) {
+    // Requests without Origin are same-origin or non-browser clients. They are
+    // still protected by authentication and authorization at each route.
+    callback(null, !origin || allowedOrigins.has(origin));
+  },
   credentials: true,
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -49,7 +62,8 @@ app.get('/api/health', async (req: Request, res: Response) => {
     await prisma.$queryRaw`SELECT 1`;
     res.json({ status: 'ok', database: 'connected' });
   } catch (error) {
-    res.status(500).json({ status: 'error', database: 'disconnected', error: String(error) });
+    console.error('Health check failed');
+    res.status(500).json({ status: 'error', database: 'disconnected' });
   }
 });
 

@@ -94,21 +94,51 @@ test('no eligible recipient reports failure without saving a warning', async () 
   assert.match(res.body.message, /Tidak ada PPJ/);
 });
 
+test('sending warning identifies a deployment missing the warning-route schema', async () => {
+  stub(prisma.tracking, 'findFirst', async () => ({ id: 42, tugas: route }));
+  stub(prisma.tracking, 'findMany', async () => [{
+    id: 55,
+    endLat: -7.8,
+    endLong: 110.4,
+    updatedAt: new Date(Date.now() - 100),
+    tugas: { ...route, assignedTo: 8 },
+  }]);
+  stub(prisma.warningAlert, 'findFirst', async () => null);
+  stub(prisma.warningAlert, 'deleteMany', async () => ({ count: 0 }));
+  stub(prisma.warningAlert, 'create', async () => {
+    throw { code: 'P2022', meta: { modelName: 'WarningAlert' } };
+  });
+
+  const res = response();
+  await createNearbyWarning(request(), res);
+
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.body.code, 'WARNING_SCHEMA_OUTDATED');
+  assert.match(res.body.message, /Perbarui skema database/);
+});
+
 test('stopping tracking moves the assignment to need approval', async () => {
-  stub(prisma.tracking, 'findUnique', async () => ({ id: 91, tugasId: 12, startTime: new Date(Date.now() - 60_000) }));
-  stub(prisma.laporan, 'count', async () => 0);
-  stub(prisma.tracking, 'update', async ({ data }: any) => {
-    assert.equal(data.status, 'stopped');
-    assert.equal(data.approvalStatus, 'not_approved');
-    return { id: 91, ...data };
+  stub(prisma.tracking, 'findFirst', async (args: any) => {
+    assert.equal(args.where.id, 91);
+    assert.equal(args.where.tugas.assignedTo, 7);
+    return { id: 91, tugasId: 12, startTime: new Date(Date.now() - 60_000) };
   });
-  stub(prisma.tugasPpj, 'update', async ({ where, data }: any) => {
-    assert.equal(where.id, 12);
-    assert.equal(data.status, 'need_approval');
-    return { id: 12, ...data };
-  });
-  stub(prisma, '$transaction', async (operations: Promise<any>[]) => Promise.all(operations));
-  const req = { params: { id: '91' }, body: { lat: -7.8, lng: 110.37 } } as any;
+  const tx = {
+    laporan: { count: async () => 0 },
+    tracking: { updateMany: async ({ data }: any) => {
+      assert.equal(data.status, 'stopped');
+      assert.equal(data.approvalStatus, 'not_approved');
+      return { count: 1 };
+    } },
+    tugasPpj: { updateMany: async ({ where, data }: any) => {
+      assert.equal(where.id, 12);
+      assert.equal(where.assignedTo, 7);
+      assert.equal(data.status, 'need_approval');
+      return { count: 1 };
+    } },
+  };
+  stub(prisma, '$transaction', async (operation: any) => operation(tx));
+  const req = { params: { id: '91' }, body: { lat: -7.8, lng: 110.37 }, user: { id: 7 } } as any;
   const res = response();
   await stopTracking(req, res);
   assert.equal(res.statusCode, 200);

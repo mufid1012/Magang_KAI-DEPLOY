@@ -10,9 +10,9 @@ router.use(requireAuth);
 router.get('/train-alerts', requireRole('ppj'), getCurrentTrainAlerts);
 router.post('/warnings', requireRole('ppj'), createNearbyWarning);
 router.get('/warnings/nearby', requireRole('ppj'), getNearbyWarnings);
-router.get('/active/:tugasId', getActiveTracking);
-router.post('/start/:tugasId', startTracking);
-router.post('/update/:id', updateTracking);
-router.post('/stop/:id', stopTracking);
+router.get('/active/:tugasId', requireRole('ppj'), getActiveTracking);
+router.post('/start/:tugasId', requireRole('ppj'), startTracking);
+router.post('/update/:id', requireRole('ppj'), updateTracking);
+router.post('/stop/:id', requireRole('ppj'), stopTracking);
 
 export default router;

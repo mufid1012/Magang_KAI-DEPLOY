@@ -4,6 +4,8 @@ import prisma from '../config/database';
 import { generateToken } from '../utils/jwt';
 import { requireAuth } from './auth.middleware';
 
+process.env.JWT_SECRET = 'unit-test-jwt-secret-with-32-characters-minimum';
+
 const original = prisma.user.findUnique;
 afterEach(() => { prisma.user.findUnique = original; });
 

@@ -2,11 +2,24 @@ import { Request, Response } from 'express';
 import prisma from '../config/database';
 import { hasWarningRoute, isSameWarningRoute, haversineMeters, selectWarningRecipients } from '../utils/warningRoute';
 
+function isMissingWarningSchema(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const { code, meta } = error as { code?: unknown; meta?: { modelName?: unknown } };
+  // P2021 = table missing, P2022 = column missing. Both occur when the
+  // warning-route migration has not reached the deployment database yet.
+  return (code === 'P2021' || code === 'P2022')
+    && (meta?.modelName === undefined || meta.modelName === 'WarningAlert');
+}
+
 export const getActiveTracking = async (req: Request, res: Response) => {
   try {
-    const tugasId = parseInt(req.params.tugasId);
+    const tugasId = Number(req.params.tugasId);
+    const userId = (req as any).user.id as number;
+    if (!Number.isSafeInteger(tugasId) || tugasId <= 0) {
+      return res.status(400).json({ success: false, message: 'ID tugas tidak valid' });
+    }
     const tracking = await prisma.tracking.findFirst({
-      where: { tugasId, status: { not: 'stopped' } },
+      where: { tugasId, status: 'started', tugas: { assignedTo: userId, status: 'in_progress' } },
       orderBy: { startTime: 'desc' },
       select: { id: true, startTime: true, routePath: true },
     });
@@ -20,13 +33,24 @@ export const startTracking = async (req: Request, res: Response) => {
   try {
     const { tugasId } = req.params;
     const { lat, lng, fotoAwal, bypassMode } = req.body;
-    // Temporary deployment-testing switch. Set TRACKING_BYPASS_ENABLED=false
-    // after testing to enforce the schedule on every request again.
-    const bypassEnabled = process.env.TRACKING_BYPASS_ENABLED !== 'false';
+    const parsedTugasId = Number(tugasId);
+    const latitude = Number(lat);
+    const longitude = Number(lng);
+    const userId = (req as any).user.id as number;
+    if (!Number.isSafeInteger(parsedTugasId) || parsedTugasId <= 0) {
+      return res.status(400).json({ success: false, message: 'ID tugas tidak valid' });
+    }
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+      return res.status(400).json({ success: false, message: 'Posisi GPS tidak valid' });
+    }
+    if (fotoAwal !== undefined && fotoAwal !== null && (typeof fotoAwal !== 'string' || fotoAwal.length > 7_000_000)) {
+      return res.status(413).json({ success: false, message: 'Foto awal terlalu besar' });
+    }
+    const bypassEnabled = process.env.TRACKING_BYPASS_ENABLED === 'true';
     const useBypass = bypassEnabled && bypassMode === true;
 
-    const tugas = await prisma.tugasPpj.findUnique({
-      where: { id: parseInt(tugasId) }
+    const tugas = await prisma.tugasPpj.findFirst({
+      where: { id: parsedTugasId, assignedTo: userId }
     });
 
     if (!tugas) {
@@ -40,10 +64,16 @@ export const startTracking = async (req: Request, res: Response) => {
     if (tugas.status === 'cancelled') {
       return res.status(400).json({ success: false, message: 'Tugas sudah dibatalkan.' });
     }
+    if (tugas.status !== 'pending') {
+      return res.status(409).json({ success: false, message: 'Tugas tidak dapat memulai tracking pada status saat ini' });
+    }
 
     // Time-window validation: only allow start within 1 hour before and 1 hour after jam_mulai
     if (!useBypass && tugas.jamMulai) {
       const [hours, minutes] = tugas.jamMulai.split(':').map(Number);
+      if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours === undefined || minutes === undefined || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+        return res.status(500).json({ success: false, message: 'Jadwal tugas tidak valid' });
+      }
       const tugasDate = new Date(tugas.tanggal);
 
       // Build scheduled start time in WIB (UTC+7)
@@ -85,26 +115,30 @@ export const startTracking = async (req: Request, res: Response) => {
 
 
 
-    // Create tracking session with proper schema fields
-    const tracking = await prisma.tracking.create({
-      data: {
-        tugasId: tugas.id,
-        startTime: new Date(),
-        startLat: lat || 0,
-        startLong: lng || 0,
-        status: 'started',
-        fotoAwal: fotoAwal || null,
-      }
-    });
+    const tracking = await prisma.$transaction(async tx => {
+      const claimed = await tx.tugasPpj.updateMany({
+        where: { id: tugas.id, assignedTo: userId, status: 'pending' },
+        data: { status: 'in_progress' },
+      });
+      if (claimed.count !== 1) throw new Error('TRACKING_ALREADY_STARTED');
 
-    // Update tugas status
-    await prisma.tugasPpj.update({
-      where: { id: tugas.id },
-      data: { status: 'in_progress' }
+      return tx.tracking.create({
+        data: {
+          tugasId: tugas.id,
+          startTime: new Date(),
+          startLat: latitude,
+          startLong: longitude,
+          status: 'started',
+          fotoAwal: fotoAwal || null,
+        },
+      });
     });
 
     return res.json({ success: true, trackingId: tracking.id });
   } catch (error) {
+    if (error instanceof Error && error.message === 'TRACKING_ALREADY_STARTED') {
+      return res.status(409).json({ success: false, message: 'Tracking tugas sudah dimulai' });
+    }
     console.error('Start tracking error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });
   }
@@ -142,9 +176,27 @@ export const stopTracking = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { lat, lng, fotoSelesai, routePath } = req.body;
+    const trackingId = Number(id);
+    const latitude = Number(lat);
+    const longitude = Number(lng);
+    const userId = (req as any).user.id as number;
 
-    const tracking = await prisma.tracking.findUnique({
-      where: { id: parseInt(id) }
+    if (!Number.isSafeInteger(trackingId) || trackingId <= 0) {
+      return res.status(400).json({ success: false, message: 'ID tracking tidak valid' });
+    }
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+      return res.status(400).json({ success: false, message: 'Posisi GPS tidak valid' });
+    }
+    if (fotoSelesai !== undefined && fotoSelesai !== null && (typeof fotoSelesai !== 'string' || fotoSelesai.length > 7_000_000)) {
+      return res.status(413).json({ success: false, message: 'Foto akhir terlalu besar' });
+    }
+
+    const tracking = await prisma.tracking.findFirst({
+      where: {
+        id: trackingId,
+        status: 'started',
+        tugas: { assignedTo: userId, status: 'in_progress' },
+      },
     });
 
     if (!tracking) {
@@ -155,21 +207,32 @@ export const stopTracking = async (req: Request, res: Response) => {
     const durasiMs = tracking.startTime ? new Date().getTime() - new Date(tracking.startTime).getTime() : 0;
     const durasiDetik = Math.round(durasiMs / 1000);
 
-    // Serialize routePath to JSON string if provided as array
+    // Validate and serialize routePath. A 15-second GPS interval during a long
+    // shift remains well below this limit.
     let routePathStr: string | null = null;
     if (routePath) {
-      routePathStr = typeof routePath === 'string' ? routePath : JSON.stringify(routePath);
+      let parsedRoute: unknown = routePath;
+      if (typeof routePath === 'string') {
+        try { parsedRoute = JSON.parse(routePath); } catch { parsedRoute = null; }
+      }
+      if (!Array.isArray(parsedRoute) || parsedRoute.length > 20_000 || parsedRoute.some(point => (
+        !Array.isArray(point) || point.length !== 2 ||
+        !Number.isFinite(Number(point[0])) || !Number.isFinite(Number(point[1])) ||
+        Math.abs(Number(point[0])) > 90 || Math.abs(Number(point[1])) > 180
+      ))) {
+        return res.status(400).json({ success: false, message: 'Rute GPS tidak valid' });
+      }
+      routePathStr = JSON.stringify(parsedRoute);
     }
 
-    const laporanCount = await prisma.laporan.count({ where: { trackingId: tracking.id } });
-
-    await prisma.$transaction([
-      prisma.tracking.update({
-        where: { id: tracking.id },
+    await prisma.$transaction(async tx => {
+      const laporanCount = await tx.laporan.count({ where: { trackingId: tracking.id } });
+      const stopped = await tx.tracking.updateMany({
+        where: { id: tracking.id, status: 'started' },
         data: {
           endTime: new Date(),
-          endLat: lat || 0,
-          endLong: lng || 0,
+          endLat: latitude,
+          endLong: longitude,
           durasi: durasiDetik,
           status: 'stopped',
           fotoSelesai: fotoSelesai || null,
@@ -179,16 +242,21 @@ export const stopTracking = async (req: Request, res: Response) => {
           approvedAt: null,
           approvedBy: null,
         },
-      }),
-      // Hasil inspeksi menunggu keputusan admin sebelum masuk ke status selesai.
-      prisma.tugasPpj.update({
-        where: { id: tracking.tugasId },
+      });
+      if (stopped.count !== 1) throw new Error('TRACKING_ALREADY_STOPPED');
+
+      const taskUpdated = await tx.tugasPpj.updateMany({
+        where: { id: tracking.tugasId, assignedTo: userId, status: 'in_progress' },
         data: { status: 'need_approval' },
-      }),
-    ]);
+      });
+      if (taskUpdated.count !== 1) throw new Error('TRACKING_STATE_CHANGED');
+    });
 
     return res.json({ success: true });
   } catch (error) {
+    if (error instanceof Error && ['TRACKING_ALREADY_STOPPED', 'TRACKING_STATE_CHANGED'].includes(error.message)) {
+      return res.status(409).json({ success: false, message: 'Status tracking sudah berubah. Muat ulang data tugas.' });
+    }
     console.error('Stop tracking error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });
   }
@@ -306,6 +374,13 @@ export const createNearbyWarning = async (req: Request, res: Response) => {
     return res.status(201).json({ success: true, message: `Warning jalur ${startPointName} ke ${endPointName} dikirim ke ${recipients.length} PPJ terdekat pada jalur yang sama`, data });
   } catch (error) {
     console.error('Create nearby warning error:', error);
+    if (isMissingWarningSchema(error)) {
+      return res.status(503).json({
+        success: false,
+        message: 'Fitur warning belum siap di server. Perbarui skema database warning lalu coba lagi.',
+        code: 'WARNING_SCHEMA_OUTDATED',
+      });
+    }
     return res.status(500).json({ success: false, message: 'Gagal mengirim warning' });
   }
 };

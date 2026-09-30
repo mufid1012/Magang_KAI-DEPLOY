@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import api from '../../../../lib/api';
 import { showToast } from '../../../../lib/toast';
@@ -87,7 +88,8 @@ function haversineM(lat1: number, lng1: number, lat2: number, lng2: number) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-export default function InspeksiSelesaiPage({ params }: { params: { id: string } }) {
+export default function InspeksiSelesaiPage() {
+  const params = useParams<{ id: string }>();
   const [tugas, setTugas] = useState<Tugas | null>(null);
   const [loading, setLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -167,9 +169,9 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
             <p className="font-body-md text-on-surface-variant">Tugas ID #{params.id} tidak tersedia untuk akun Anda.</p>
           </div>
           <div className="flex gap-md">
-            <a href="/inspeksi" className="px-md py-sm bg-primary text-on-primary rounded-xl font-label-sm flex items-center gap-xs">
+            <Link href="/inspeksi" className="px-md py-sm bg-primary text-on-primary rounded-xl font-label-sm flex items-center gap-xs">
               <span className="material-symbols-outlined text-[16px]">map</span> Kembali ke Tugas
-            </a>
+            </Link>
           </div>
         </div>
       </div>

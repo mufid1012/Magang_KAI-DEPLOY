@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import api from '../../lib/api';
@@ -13,37 +13,6 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-
-  // Real-time verification state
-  const [nippStatus, setNippStatus] = useState<'idle' | 'loading' | 'verified' | 'not_found'>('idle');
-  const [verifiedUser, setVerifiedUser] = useState<{ nama: string, role: string } | null>(null);
-
-  useEffect(() => {
-    if (nipp.length < 5) {
-      setNippStatus('idle');
-      setVerifiedUser(null);
-      return;
-    }
-
-    const timer = setTimeout(async () => {
-      try {
-        setNippStatus('loading');
-        const res = await api.get(`/auth/check/${nipp.trim()}`);
-        if (res.data.exists) {
-          setNippStatus('verified');
-          setVerifiedUser(res.data.user);
-        } else {
-          setNippStatus('not_found');
-          setVerifiedUser(null);
-        }
-      } catch (err) {
-        console.error('Failed to check NIPP', err);
-        setNippStatus('idle');
-      }
-    }, 500); // 500ms debounce
-
-    return () => clearTimeout(timer);
-  }, [nipp]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,6 +27,7 @@ export default function LoginPage() {
         const role = res.data.user?.role;
         const dest = role === 'qc' ? '/qc'
           : ['admin', 'kupt'].includes(role) ? '/admin'
+          : role === 'guest' ? '/guest'
           : '/inspeksi';
         router.push(dest);
       }
@@ -141,47 +111,8 @@ export default function LoginPage() {
                   value={nipp}
                   onChange={(e) => setNipp(e.target.value)}
                 />
-                {nippStatus === 'loading' && (
-                  <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline animate-spin">refresh</span>
-                )}
-                {nippStatus === 'verified' && (
-                  <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-primary">check_circle</span>
-                )}
-                {nippStatus === 'not_found' && (
-                  <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-error">error</span>
-                )}
               </div>
             </div>
-
-            {/* Dynamic Real-time Preview Card */}
-            {nippStatus === 'verified' && verifiedUser && (
-              <div className="bg-surface-container-lowest border border-outline-variant border-l-4 border-l-primary rounded-r-xl p-md shadow-[0px_4px_20px_rgba(0,0,0,0.05)] flex items-center gap-md transition-all duration-300">
-                <div className="w-12 h-12 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center shrink-0 border border-primary/10">
-                  <span className="font-h3 text-h3 font-bold uppercase">{verifiedUser.nama.substring(0, 2)}</span>
-                </div>
-                <div className="flex flex-col gap-1 w-full">
-                  <div className="flex justify-between items-center w-full">
-                    <span className="font-h3 text-h3 text-on-surface">{verifiedUser.nama}</span>
-                    <span className="bg-surface-container-low text-on-surface-variant font-label-sm text-label-sm px-2 py-0.5 rounded-full border border-outline-variant/50">Verified</span>
-                  </div>
-                  <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 font-label-sm text-label-sm text-on-surface-variant mt-1">
-                    <span className="flex items-center gap-1.5 capitalize"><span className="material-symbols-outlined text-[16px] text-primary">engineering</span> {verifiedUser.role}</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {nippStatus === 'not_found' && (
-              <div className="bg-error-container/20 border border-error/30 rounded-xl p-sm flex items-start gap-sm">
-                <span className="material-symbols-outlined text-error text-[20px] mt-0.5">info</span>
-                <div className="flex flex-col">
-                  <span className="font-body-md text-on-surface font-semibold text-sm">NIPP Belum Terdaftar</span>
-                  <span className="font-label-sm text-on-surface-variant mt-1">
-                    Profile dengan NIPP ini belum ada. <Link href="/register" className="text-primary hover:underline font-semibold">Daftar sekarang</Link>
-                  </span>
-                </div>
-              </div>
-            )}
 
             {/* Password Input */}
             <div className="flex flex-col gap-2">
@@ -233,7 +164,7 @@ export default function LoginPage() {
               </Link>
 
               <p className="font-body-md text-body-md text-on-surface-variant text-center">
-                Belum ada akun? <Link className="text-primary font-semibold hover:underline" href="/register">Daftar Disini</Link>
+                Belum memiliki akun? Hubungi Super Admin untuk pembuatan akun.
               </p>
             </div>
           </form>
