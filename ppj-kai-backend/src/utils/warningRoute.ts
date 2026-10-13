@@ -6,14 +6,14 @@ export function hasWarningRoute(route: WarningRoute): boolean {
   return Boolean(normalizeStationName(route.startPointName || '') && normalizeStationName(route.endPointName || ''));
 }
 
-/** Pasangan stasiun yang sama tetap satu jalur meskipun arah inspeksi berlawanan. */
-export function isSameWarningRoute(left: WarningRoute, right: WarningRoute): boolean {
+/** Jalur terkait jika berbagi minimal satu stasiun, terlepas dari arah inspeksi. */
+export function hasOverlappingWarningRoute(left: WarningRoute, right: WarningRoute): boolean {
   if (!hasWarningRoute(left) || !hasWarningRoute(right)) return false;
   const start = normalizeStationName(left.startPointName!);
   const end = normalizeStationName(left.endPointName!);
   const otherStart = normalizeStationName(right.startPointName!);
   const otherEnd = normalizeStationName(right.endPointName!);
-  return (start === otherStart && end === otherEnd) || (start === otherEnd && end === otherStart);
+  return start === otherStart || start === otherEnd || end === otherStart || end === otherEnd;
 }
 
 type Position = { latitude: number; longitude: number };
@@ -27,14 +27,18 @@ export function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: 
   return 6371000 * 2 * Math.asin(Math.sqrt(Math.min(1, value)));
 }
 
-/** Sisi ditentukan dari proyeksi GPS pada sumbu stasiun awal–akhir, bukan arah jalan petugas. */
+/**
+ * Pilih PPJ terdekat pada tiap sisi untuk setiap pasangan jalur yang terkait.
+ * Sisi tetap diproyeksikan pada sumbu stasiun pengirim, bukan arah jalan petugas.
+ * Pasangan jalur berbeda mendapat slot sendiri agar jalur sambungan ikut menerima.
+ */
 export function selectWarningRecipients(sender: Position & { userId: number }, route: TaskRoute, candidates: Candidate[], now: Date) {
   const scale = Math.cos(sender.latitude * Math.PI / 180);
   const dx = (route.endPointLong - route.startPointLong) * scale;
   const dy = route.endPointLat - route.startPointLat;
   if (!Number.isFinite(dx) || !Number.isFinite(dy) || (dx === 0 && dy === 0)) return [];
   const eligible = candidates.filter(candidate => candidate.userId !== sender.userId
-    && isSameWarningRoute(route, candidate.tugas)
+    && hasOverlappingWarningRoute(route, candidate.tugas)
     && now.getTime() - candidate.updatedAt.getTime() <= 120_000
     && now.getTime() >= candidate.updatedAt.getTime()
     && Number.isFinite(candidate.latitude) && Math.abs(candidate.latitude) <= 90
@@ -47,11 +51,17 @@ export function selectWarningRecipients(sender: Position & { userId: number }, r
     return true;
   }).sort((a, b) => haversineMeters(sender.latitude, sender.longitude, a.latitude, a.longitude)
     - haversineMeters(sender.latitude, sender.longitude, b.latitude, b.longitude) || a.id - b.id);
-  const sides = new Set<boolean>();
+  const sides = new Map<string, Set<boolean>>();
   return latest.filter(candidate => {
+    const routeKey = JSON.stringify([
+      normalizeStationName(candidate.tugas.startPointName!),
+      normalizeStationName(candidate.tugas.endPointName!),
+    ].sort());
+    const routeSides = sides.get(routeKey) ?? new Set<boolean>();
     const towardEnd = (candidate.longitude - sender.longitude) * scale * dx + (candidate.latitude - sender.latitude) * dy >= 0;
-    if (sides.has(towardEnd)) return false;
-    sides.add(towardEnd);
+    if (routeSides.has(towardEnd)) return false;
+    routeSides.add(towardEnd);
+    sides.set(routeKey, routeSides);
     return true;
   }).map(candidate => candidate.id);
 }

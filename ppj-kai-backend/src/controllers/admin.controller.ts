@@ -822,9 +822,7 @@ export const deleteUser = async (req: AuthRequest, res: Response) => {
 
       const trackings = await tx.tracking.findMany({ where: { tugas: { assignedTo: id } }, select: { id: true } });
       const trackingIds = trackings.map(tracking => tracking.id);
-      // Recipient IDs and template assignees have no FK; clear them explicitly.
-      await tx.warningAlert.updateMany({ where: { recipientOneTrackingId: { in: trackingIds } }, data: { recipientOneTrackingId: null } });
-      await tx.warningAlert.updateMany({ where: { recipientTwoTrackingId: { in: trackingIds } }, data: { recipientTwoTrackingId: null } });
+      // Warning recipients cascade when tracking is deleted; template assignees are cleared below.
       await tx.laporan.deleteMany({ where: { trackingId: { in: trackingIds } } });
       await tx.tracking.deleteMany({ where: { tugas: { assignedTo: id } } });
       await tx.tugasPpj.deleteMany({ where: { assignedTo: id } });

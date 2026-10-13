@@ -24,9 +24,11 @@ test('nearby warnings use the sender final destination as the train direction', 
     assert.equal(args.where.tugas.status, 'in_progress');
     return { id: 42, tugas: route };
   });
-  const warning = { latitude: -7.8, longitude: 110.37, creator: { nama: 'PPJ' } };
+  const warning = { latitude: -7.8, longitude: 110.37, creator: { nama: 'PPJ', nipp: 'KAI-1' }, recipients: [{ trackingId: 40 }, { trackingId: 41 }, { trackingId: 42 }] };
   stub(prisma.warningAlert, 'findMany', async (args: any) => {
-    assert.deepEqual(args.where.OR, [{ recipientOneTrackingId: 42 }, { recipientTwoTrackingId: 42 }]);
+    assert.deepEqual(args.where.recipients, { some: { trackingId: 42 } });
+    assert.equal(args.where.createdBy.not, 7);
+    assert.ok(args.where.expiresAt.gte instanceof Date);
     assert.equal(args.where.latitude, undefined);
     return [
     { ...warning, ...route, id: 1 },
@@ -34,13 +36,20 @@ test('nearby warnings use the sender final destination as the train direction', 
     { ...warning, ...route, endPointName: 'Solo Balapan', id: 3 },
     { ...warning, startPointName: null, endPointName: null, id: 4 },
     { ...warning, ...route, latitude: -7.9, id: 5 },
+    { ...warning, startPointName: 'Sta. Maguwo', endPointName: 'Sta. Patukan', id: 6 },
   ]; });
   const res = response();
   await getNearbyWarnings(request(), res);
-  assert.deepEqual(res.body.data.map((item: any) => item.id), [1, 2, 5]);
+  assert.deepEqual(res.body.data.map((item: any) => item.id), [1, 2, 3, 5]);
   assert.equal(res.body.data[0].startPointName, route.startPointName);
   assert.equal(res.body.data[0].trainDirectionName, route.endPointName);
   assert.equal(res.body.data[1].trainDirectionName, 'Stasiun Yogyakarta');
+  assert.equal(res.body.data[2].trainDirectionName, 'Solo Balapan');
+  assert.equal(res.body.data[0].distanceMeters, 0);
+  assert.equal(res.body.data[0].recipientOneTrackingId, 40);
+  assert.equal(res.body.data[0].recipientTwoTrackingId, 41);
+  assert.equal(res.body.data[0].recipients, undefined);
+  assert.deepEqual(res.body.data[0].creator, warning.creator);
 });
 
 test('PPJ without active tracking receives no warning', async () => {
@@ -64,16 +73,43 @@ test('sending warning snapshots station names from owned active task', async () 
   stub(prisma.warningAlert, 'findFirst', async () => null);
   stub(prisma.warningAlert, 'deleteMany', async () => ({ count: 0 }));
   stub(prisma.warningAlert, 'create', async ({ data }: any) => {
-    assert.equal(data.recipientOneTrackingId, 55);
-    assert.equal(data.recipientTwoTrackingId, null);
+    assert.deepEqual(data.recipients.create, [{ trackingId: 55 }]);
     assert.equal(data.startPointName, route.startPointName);
     assert.equal(data.endPointName, route.endPointName);
-    return { id: 8, ...data };
+    return { id: 8, ...data, recipients: data.recipients.create };
   });
   const res = response();
   await createNearbyWarning(request(), res);
   assert.equal(res.statusCode, 201);
   assert.match(res.body.message, /Sta. Yogyakarta ke Sta. Lempuyangan/);
+  assert.equal(res.body.data.recipientOneTrackingId, 55);
+  assert.equal(res.body.data.recipientTwoTrackingId, null);
+  assert.equal(res.body.data.recipients, undefined);
+});
+
+test('sending warning atomically stores more than two recipients across overlapping routes', async () => {
+  stub(prisma.tracking, 'findFirst', async () => ({ id: 42, tugas: route }));
+  const otherRoute = { ...route, startPointName: 'Sta. Lempuyangan', endPointName: 'Sta. Maguwo' };
+  stub(prisma.tracking, 'findMany', async () => [
+    { id: 55, userId: 8, endLong: 110.36, tugas: route },
+    { id: 56, userId: 9, endLong: 110.38, tugas: route },
+    { id: 57, userId: 10, endLong: 110.35, tugas: otherRoute },
+    { id: 58, userId: 11, endLong: 110.39, tugas: otherRoute },
+    { id: 59, userId: 12, endLong: 110.371, tugas: { ...route, startPointName: 'Sta. Patukan', endPointName: 'Sta. Maguwo' } },
+  ].map(item => ({ ...item, endLat: -7.8, updatedAt: new Date(Date.now() - 100), tugas: { ...item.tugas, assignedTo: item.userId } })));
+  stub(prisma.warningAlert, 'findFirst', async () => null);
+  stub(prisma.warningAlert, 'deleteMany', async () => ({ count: 0 }));
+  stub(prisma.warningAlert, 'create', async ({ data }: any) => {
+    assert.deepEqual(data.recipients.create.map((item: any) => item.trackingId).sort(), [55, 56, 57, 58]);
+    assert.equal(data.recipientOneTrackingId, undefined);
+    assert.equal(data.recipientTwoTrackingId, undefined);
+    return { ...data, id: 9, recipients: data.recipients.create };
+  });
+  const res = response();
+  await createNearbyWarning(request(), res);
+  assert.equal(res.statusCode, 201);
+  assert.match(res.body.message, /dikirim ke 4 PPJ terdekat pada jalur terkait/);
+  assert.equal(res.body.data.recipients, undefined);
 });
 
 test('sending warning rejects a task without station names', async () => {

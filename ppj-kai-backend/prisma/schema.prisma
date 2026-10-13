@@ -96,6 +96,7 @@ model Tracking {
   approver       User?     @relation("TrackingApprover", fields: [approvedBy], references: [id], onDelete: SetNull)
   tugas          TugasPpj  @relation(fields: [tugasId], references: [id])
   laporan        Laporan[]
+  warningRecipients WarningRecipient[]
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 
@@ -121,8 +122,7 @@ model TrainSchedule {
 }
 
 model WarningAlert {
-  recipientOneTrackingId Int? @map("recipient_one_tracking_id")
-  recipientTwoTrackingId Int? @map("recipient_two_tracking_id")
+  recipients WarningRecipient[]
   startPointName String? @map("start_point_name") @db.VarChar(200)
   endPointName   String? @map("end_point_name") @db.VarChar(200)
   id        Int      @id @default(autoincrement())
@@ -136,6 +136,18 @@ model WarningAlert {
   @@index([createdAt])
   @@index([expiresAt])
   @@map("warning_alerts")
+}
+
+model WarningRecipient {
+  id         Int          @id @default(autoincrement())
+  warningId  Int          @map("warning_id")
+  trackingId Int          @map("tracking_id")
+  warning    WarningAlert @relation(fields: [warningId], references: [id], onDelete: Cascade)
+  tracking   Tracking     @relation(fields: [trackingId], references: [id], onDelete: Cascade)
+
+  @@unique([warningId, trackingId])
+  @@index([trackingId])
+  @@map("warning_recipients")
 }
 
 model Laporan {

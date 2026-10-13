@@ -38,7 +38,7 @@ test('deletes the account and its dependencies, releasing managed users without 
   assert.deepEqual(calls.find(c => c.model === 'laporan')?.args, { where: { trackingId: { in: [71] } } });
   assert.ok(calls.findIndex(c => c.model === 'laporan') < calls.findIndex(c => c.model === 'tracking' && c.method === 'deleteMany'));
   assert.ok(calls.find(c => c.model === 'templateItem'));
-  assert.equal(calls.filter(c => c.model === 'warningAlert' && c.method === 'updateMany').length, 2);
+  assert.equal(calls.filter(c => c.model === 'warningAlert' && c.method === 'updateMany').length, 0);
 });
 
 for (const [label, user, active, status] of [

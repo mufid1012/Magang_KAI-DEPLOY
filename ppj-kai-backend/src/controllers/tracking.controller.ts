@@ -1,6 +1,16 @@
 import { Request, Response } from 'express';
 import prisma from '../config/database';
-import { hasWarningRoute, isSameWarningRoute, haversineMeters, selectWarningRecipients } from '../utils/warningRoute';
+import { hasWarningRoute, hasOverlappingWarningRoute, haversineMeters, selectWarningRecipients } from '../utils/warningRoute';
+
+// Keep the existing API fields while recipient storage supports any number of sessions.
+function warningResponse<T extends { recipients: { trackingId: number }[] }>(record: T) {
+  const { recipients, ...warning } = record;
+  return {
+    ...warning,
+    recipientOneTrackingId: recipients[0]?.trackingId ?? null,
+    recipientTwoTrackingId: recipients[1]?.trackingId ?? null,
+  };
+}
 
 function isMissingWarningSchema(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -8,7 +18,7 @@ function isMissingWarningSchema(error: unknown): boolean {
   // P2021 = table missing, P2022 = column missing. Both occur when the
   // warning-route migration has not reached the deployment database yet.
   return (code === 'P2021' || code === 'P2022')
-    && (meta?.modelName === undefined || meta.modelName === 'WarningAlert');
+    && (meta?.modelName === undefined || meta.modelName === 'WarningAlert' || meta.modelName === 'WarningRecipient');
 }
 
 export const getActiveTracking = async (req: Request, res: Response) => {
@@ -359,7 +369,7 @@ export const createNearbyWarning = async (req: Request, res: Response) => {
         return lat == null || lng == null ? [] : [{ id: candidate.id, userId: candidate.tugas.assignedTo, latitude: lat, longitude: lng, updatedAt: candidate.updatedAt, tugas: candidate.tugas }];
       }), now);
     if (!recipients.length) {
-      return res.status(400).json({ success: false, message: 'Tidak ada PPJ lain pada jalur yang sama dengan tracking aktif dan GPS terbaru' });
+      return res.status(400).json({ success: false, message: 'Tidak ada PPJ lain pada jalur terkait dengan tracking aktif dan GPS terbaru' });
     }
 
     await prisma.warningAlert.deleteMany({ where: { expiresAt: { lt: now } } });
@@ -368,14 +378,14 @@ export const createNearbyWarning = async (req: Request, res: Response) => {
         createdBy: userId,
         startPointName,
         endPointName,
-        recipientOneTrackingId: recipients[0]!,
-        recipientTwoTrackingId: recipients[1] ?? null,
+        recipients: { create: recipients.map(trackingId => ({ trackingId })) },
         latitude,
         longitude,
         expiresAt: new Date(now.getTime() + 2 * 60_000),
       },
+      include: { recipients: { select: { trackingId: true }, orderBy: { id: 'asc' } } },
     });
-    return res.status(201).json({ success: true, message: `Warning jalur ${startPointName} ke ${endPointName} dikirim ke ${recipients.length} PPJ terdekat pada jalur yang sama`, data });
+    return res.status(201).json({ success: true, message: `Warning jalur ${startPointName} ke ${endPointName} dikirim ke ${recipients.length} PPJ terdekat pada jalur terkait`, data: warningResponse(data) });
   } catch (error) {
     console.error('Create nearby warning error:', error);
     if (isMissingWarningSchema(error)) {
@@ -415,15 +425,18 @@ export const getNearbyWarnings = async (req: Request, res: Response) => {
       where: {
         createdBy: { not: userId },
         expiresAt: { gte: new Date() },
-        OR: [{ recipientOneTrackingId: activeTracking.id }, { recipientTwoTrackingId: activeTracking.id }],
+        recipients: { some: { trackingId: activeTracking.id } },
       },
-      include: { creator: { select: { nama: true, nipp: true } } },
+      include: {
+        creator: { select: { nama: true, nipp: true } },
+        recipients: { select: { trackingId: true }, orderBy: { id: 'asc' } },
+      },
       orderBy: { createdAt: 'desc' },
     });
     const data = warnings
-      .filter(warning => isSameWarningRoute(warning, activeTracking.tugas))
+      .filter(warning => hasOverlappingWarningRoute(warning, activeTracking.tugas))
       .map(warning => ({
-        ...warning,
+        ...warningResponse(warning),
         // PPJ berjalan berlawanan dengan arah kereta. Karena itu arah datang
         // kereta selalu memakai tujuan akhir tugas milik PPJ pengirim warning.
         trainDirectionName: warning.endPointName,
