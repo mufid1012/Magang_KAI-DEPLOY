@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import api from '../../lib/api';
 import { getApiErrorMessage } from '../../lib/utils';
+import LoginPhotoSlideshow from '../../components/common/LoginPhotoSlideshow';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -43,11 +44,7 @@ export default function LoginPage() {
       {/* Left Column: Branding & Illustration (Hidden on Mobile) */}
       <div className="hidden lg:flex lg:w-[45%] relative bg-primary-fixed overflow-hidden flex-col justify-between p-xl">
         {/* Background Image */}
-        <div
-          className="absolute inset-0 bg-cover bg-center opacity-80"
-          style={{ backgroundImage: "url('/cc206.png')" }}
-
-        />
+        <LoginPhotoSlideshow />
         {/* Dark Gradient Overlay for text legibility */}
         <div className="absolute inset-0 bg-gradient-to-t from-primary/95 via-primary/60 to-primary/20 mix-blend-multiply"></div>
 

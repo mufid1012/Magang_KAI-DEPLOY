@@ -10,6 +10,7 @@ import laporanRoutes from './routes/laporan.routes';
 import adminRoutes from './routes/admin.routes';
 import guestRoutes from './routes/guest.routes';
 import railwayRoutes from './routes/railway.routes';
+import { publicLoginPhotoRoutes } from './routes/loginPhoto.routes';
 import { getActiveKategoriTemuan } from './controllers/admin.controller';
 import { startMissedTaskScheduler } from './lib/scheduler';
 
@@ -51,6 +52,7 @@ app.use('/api/laporan', laporanRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/guest', guestRoutes);
 app.use('/api/railway', railwayRoutes);
+app.use('/api/login-photos', publicLoginPhotoRoutes);
 
 // Public: active emergency categories (no auth required)
 app.get('/api/kategori-temuan', getActiveKategoriTemuan);

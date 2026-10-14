@@ -301,6 +301,9 @@ warning_alerts (WarningAlert)
 - Halaman admin memiliki menu **Tugas**, **Live**, **Map**, **Akun** (admin), dan **Setting**.
 - **Live** hanya menggambar tugas `in_progress` dan posisi tracking `started`; tugas selesai hilang pada polling berikutnya.
 - **Map** khusus admin untuk mencari tempat, klik peta, menyimpan, dan menghapus titik lokasi custom.
+- **Setting → Foto Halaman Login** hanya untuk role `admin` (Super Admin). Komponen `components/admin/LoginPhotoSettings.tsx` mengelola CRUD foto PNG/JPG, judul, urutan, serta aktif/nonaktif. Foto disimpan sebagai `LoginPhoto.image` (LONGBLOB), maksimal 5 MB/40 megapiksel; format ditentukan dari isi file dan divalidasi dengan decoding.
+- `GET /api/login-photos` menyediakan metadata foto aktif; `GET /api/login-photos/:id/image` melayani aset gambar publik, termasuk foto nonaktif untuk pratinjau. CRUD `/api/admin/login-photos` memakai JWT + `requireAdmin` dan multipart field `photo`, `title`, `sortOrder`, `isActive`.
+- Login desktop memakai `components/common/LoginPhotoSlideshow.tsx`: urutan menaik, ganti setiap 6 detik, kontrol manual, reduced motion, dan fallback `/cc206.png`. Migrasi: `20261014120000_add_login_photos`; tabel juga diinisialisasi idempoten untuk instalasi lama dengan `db push`.
 
 ### 10. Task Selection Flow (`/inspeksi`) — Halaman Utama Petugas
 - **Ini adalah satu-satunya halaman petugas** (dashboard, riwayat, profile sudah dihapus).

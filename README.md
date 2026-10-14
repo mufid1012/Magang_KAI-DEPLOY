@@ -26,6 +26,16 @@ Token akun yang dihapus atau dinonaktifkan ditolak pada request terproteksi beri
 
 Sidebar admin: **Tugas, Live, Map, Akun, Setting**. Tab **Jadwal Kereta**, tabel, dan form CRUD-nya sudah dihapus karena tidak digunakan lagi. API/database jadwal lama tetap tersedia; tombol warning PPJ tetap digunakan.
 
+### Foto halaman login
+
+Super Admin (role `admin`) dapat membuka **Setting → Foto Halaman Login** untuk menambah, melihat, mengedit judul/mengganti file, menghapus, menentukan urutan, dan mengaktifkan/nonaktifkan foto. Unggahan mendukung PNG/JPG maksimal 5 MB dan 40 megapiksel, dengan pemeriksaan isi dan decoding gambar di backend. Foto disimpan di MySQL sehingga tetap tersedia setelah restart backend dan tidak bergantung pada folder upload lokal.
+
+Panel kiri login desktop menampilkan foto aktif menurut urutan, berganti setiap 6 detik, dan menyediakan tombol pemilih foto. Preferensi reduced motion menonaktifkan pergantian otomatis. Jika semua foto dihapus/nonaktif, gambar bawaan `/cc206.png` digunakan; login tetap dapat dipakai saat layanan foto gagal. Tata letak login mobile tetap menggunakan form dan logo.
+
+API publik: `GET /api/login-photos` (metadata foto aktif) dan `GET /api/login-photos/:id/image` (gambar; termasuk foto nonaktif untuk pratinjau admin). Foto login merupakan aset publik. CRUD khusus admin tersedia pada `/api/admin/login-photos` dengan `GET`, `POST`, `PATCH /:id`, dan `DELETE /:id`. POST/PATCH memakai multipart field `title`, `sortOrder`, `isActive`, dan file `photo`; file wajib saat tambah, opsional saat edit.
+
+Deployment: jalankan `npx prisma generate` dan migrasi `20261014120000_add_login_photos`. Untuk instalasi lama yang memakai `db push`, endpoint membuat tabel `login_photos` secara idempoten seperti fitur MAP. Pengujian regresi tersedia melalui `npm test` di backend, termasuk HTTP/JWT, CRUD, unggahan, dan hak akses foto login.
+
 ### Penugasan dan inspeksi
 
 - Form penugasan menggunakan dropdown stasiun; admin juga dapat memilih titik MAP miliknya. Tambah/hapus tugas menampilkan notifikasi hasil.

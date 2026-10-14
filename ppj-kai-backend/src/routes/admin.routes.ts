@@ -13,6 +13,7 @@ import { approveTracking } from '../controllers/tracking.controller';
 import { createTrainSchedule, deleteTrainSchedule, getTrainSchedules, updateTrainSchedule } from '../controllers/trainSchedule.controller';
 import { createMapLocation, deleteMapLocation, getMapLocations, searchMapLocations } from '../controllers/mapLocation.controller';
 import { uploadLimiter } from '../middleware/rateLimiter';
+import loginPhotoRoutes from './loginPhoto.routes';
 
 // Multer memory storage for Excel file uploads
 const upload = multer({
@@ -30,6 +31,7 @@ const upload = multer({
 });
 
 const router = Router();
+router.use('/login-photos', loginPhotoRoutes);
 
 // ── Read endpoints — admin, qc, kupt ──
 router.get('/stats', requireAuth, requireAdminLike, getStats);

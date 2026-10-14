@@ -11,6 +11,7 @@ import { showConfirm } from '../../lib/confirm';
 import { getApiErrorMessage } from '../../lib/utils';
 import { STATIONS } from '../../lib/stations';
 import TaskDetailModal from '../../components/admin/TaskDetailModal';
+import LoginPhotoSettings from '../../components/admin/LoginPhotoSettings';
 import { resolveTugasStatus } from '../../lib/tugasStatus';
 
 // Same deterministic color as AdminMap — NIPP → unique HSL color
@@ -1313,6 +1314,8 @@ export default function AdminPage() {
                 </h2>
                 <p className="text-sm text-slate-500 mt-2">Kelola sirine darurat, kategori temuan, dan pengaturan sistem lainnya.</p>
               </div>
+
+              {isAdmin && <LoginPhotoSettings />}
 
               {/* ── Section 1: Sirine ──────────────────────────────── */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
