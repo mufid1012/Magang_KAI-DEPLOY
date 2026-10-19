@@ -1,3 +1,5 @@
+import { parseRoute } from '../../../shared/route';
+import { haversineMeters as distanceMeters } from '../../../shared/geo';
 import { Request, Response } from 'express';
 import prisma from '../config/database';
 import { hasWarningRoute, hasOverlappingWarningRoute, haversineMeters, selectWarningRecipients } from '../utils/warningRoute';
@@ -67,6 +69,9 @@ export const startTracking = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Tugas not found' });
     }
 
+    if (!useBypass && (!fotoAwal || distanceMeters(latitude, longitude, tugas.startPointLat, tugas.startPointLong) > 500)) {
+      return res.status(400).json({ success: false, message: 'Foto awal dan posisi dalam radius 500 meter dari titik awal wajib dipenuhi' });
+    }
     // Reject if task is already missed or cancelled
     if (!useBypass && tugas.status === 'missed') {
       return res.status(400).json({ success: false, message: 'Tugas sudah melewati batas waktu (missed). Tidak dapat memulai tracking.' });
@@ -189,7 +194,8 @@ export const updateTracking = async (req: Request, res: Response) => {
 export const stopTracking = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { lat, lng, fotoSelesai, routePath } = req.body;
+    const { lat, lng, fotoSelesai, routePath, bypassMode } = req.body;
+    const useBypass = process.env.TRACKING_BYPASS_ENABLED !== 'false' && bypassMode === true;
     const trackingId = Number(id);
     const latitude = Number(lat);
     const longitude = Number(lng);
@@ -211,33 +217,27 @@ export const stopTracking = async (req: Request, res: Response) => {
         status: 'started',
         tugas: { assignedTo: userId, status: 'in_progress' },
       },
+      include: { tugas: { select: { endPointLat: true, endPointLong: true } } },
     });
 
     if (!tracking) {
       return res.status(404).json({ success: false, message: 'Tracking session not found' });
     }
 
+    if (!useBypass && (!fotoSelesai || distanceMeters(latitude, longitude, tracking.tugas.endPointLat, tracking.tugas.endPointLong) > 500)) {
+      return res.status(400).json({ success: false, message: 'Foto akhir dan posisi dalam radius 500 meter dari titik akhir wajib dipenuhi' });
+    }
+
     // Calculate duration in seconds
     const durasiMs = tracking.startTime ? new Date().getTime() - new Date(tracking.startTime).getTime() : 0;
     const durasiDetik = Math.round(durasiMs / 1000);
 
-    // Validate and serialize routePath. A 15-second GPS interval during a long
-    // shift remains well below this limit.
-    let routePathStr: string | null = null;
-    if (routePath) {
-      let parsedRoute: unknown = routePath;
-      if (typeof routePath === 'string') {
-        try { parsedRoute = JSON.parse(routePath); } catch { parsedRoute = null; }
-      }
-      if (!Array.isArray(parsedRoute) || parsedRoute.length > 20_000 || parsedRoute.some(point => (
-        !Array.isArray(point) || point.length !== 2 ||
-        !Number.isFinite(Number(point[0])) || !Number.isFinite(Number(point[1])) ||
-        Math.abs(Number(point[0])) > 90 || Math.abs(Number(point[1])) > 180
-      ))) {
-        return res.status(400).json({ success: false, message: 'Rute GPS tidak valid' });
-      }
-      routePathStr = JSON.stringify(parsedRoute);
+    // Accept older high-frequency sessions; bound storage while retaining both endpoints.
+    const parsedRoute = routePath === undefined || routePath === null ? null : parseRoute(routePath);
+    if (routePath !== undefined && routePath !== null && !parsedRoute) {
+      return res.status(400).json({ success: false, message: 'Rute GPS tidak valid' });
     }
+    const routePathStr = parsedRoute ? JSON.stringify(parsedRoute) : null;
 
     await prisma.$transaction(async tx => {
       const laporanCount = await tx.laporan.count({ where: { trackingId: tracking.id } });

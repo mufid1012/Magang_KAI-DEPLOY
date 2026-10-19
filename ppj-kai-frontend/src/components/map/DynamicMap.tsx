@@ -1,8 +1,7 @@
 'use client';
-
-import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { useEffect,useRef,useState } from 'react';
 import { fetchRailwayGeometry } from '../../lib/railway';
 
 interface DynamicMapProps {
@@ -102,6 +101,7 @@ export default function DynamicMap({ lat, lng, zoom = 16, trackPath, routeStart,
   const routeEndLng = routeEnd?.lng;
   const routeEndName = routeEnd?.name;
   const mapRef = useRef<L.Map | null>(null);
+  const initialView = useRef({ lat, lng, zoom });
   const containerRef = useRef<HTMLDivElement>(null);
   const markerRef = useRef<L.Marker | null>(null);
   const routeLayerRef = useRef<L.LayerGroup | null>(null);
@@ -115,7 +115,7 @@ export default function DynamicMap({ lat, lng, zoom = 16, trackPath, routeStart,
     mapRef.current = L.map(containerRef.current, {
       zoomControl: false,
       attributionControl: false,
-    }).setView([lat, lng], zoom);
+    }).setView([initialView.current.lat, initialView.current.lng], initialView.current.zoom);
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapRef.current);
 
@@ -130,7 +130,7 @@ export default function DynamicMap({ lat, lng, zoom = 16, trackPath, routeStart,
       iconAnchor: [20, 20],
     });
 
-    markerRef.current = L.marker([lat, lng], { icon: pulseIcon }).addTo(mapRef.current);
+    markerRef.current = L.marker([initialView.current.lat, initialView.current.lng], { icon: pulseIcon }).addTo(mapRef.current);
     routeLayerRef.current = L.layerGroup().addTo(mapRef.current);
     trackLayerRef.current = L.layerGroup().addTo(mapRef.current);
 

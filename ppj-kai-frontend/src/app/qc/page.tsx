@@ -1,10 +1,12 @@
 'use client';
+import { petugasColor } from '../../../../shared/display';
 
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/navigation';
+import { useCallback,useEffect,useMemo,useState } from 'react';
+import { usePolling } from '../../hooks/usePolling';
 import api from '../../lib/api';
 import { STATIONS } from '../../lib/stations';
-import { useRouter } from 'next/navigation';
 
 const AdminMap = dynamic(() => import('../../components/map/AdminMap'), { ssr: false });
 
@@ -66,14 +68,7 @@ interface Stats {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function petugasColor(nipp: string): string {
-  let hash = 0;
-  for (let i = 0; i < nipp.length; i++) {
-    hash = nipp.charCodeAt(i) + ((hash << 5) - hash);
-    hash = hash & hash;
-  }
-  return `hsl(${(Math.abs(hash) * 137) % 360}, 65%, 42%)`;
-}
+
 
 const STATUS_LABEL: Record<string, string> = {
   pending: 'Pending',
@@ -99,8 +94,8 @@ const DEFAULT_JENIS_LABEL: Record<string, string> = {
 
 export default function QCPage() {
   const router = useRouter();
-  const [user, setUser] = useState<{ 
-    nama: string; 
+  const [user, setUser] = useState<{
+    nama: string;
     role: string;
     wilayahAssignments?: { wilayah: { kode: string; nama: string; stations: string } }[];
   } | null>(null);
@@ -116,37 +111,29 @@ export default function QCPage() {
   // ─── Data Fetching ──────────────────────────────────────────────────────
   const fetchAll = useCallback(async () => {
     try {
-      const [statsRes, tugasRes, emRes, meRes, liveRes, katRes] = await Promise.all([
-        api.get('/admin/stats'),
-        api.get('/admin/tugas'),
-        api.get('/admin/emergency'),
-        api.get('/auth/me'),
-        api.get('/admin/live-positions'),
-        api.get('/kategori-temuan'),
+      const results = await Promise.allSettled([
+        api.get('/admin/stats', { timeout: 12000 }).then(res => setStats(res.data.data)),
+        api.get('/admin/tugas', { params: { summary: true }, timeout: 12000 }).then(res => setTugas(res.data.data)),
+        api.get('/admin/emergency', { timeout: 12000 }).then(res => setEmergencies(res.data.data)),
+        api.get('/admin/live-positions', { timeout: 12000 }).then(res => setLivePositions(res.data.data)),
       ]);
-      setStats(statsRes.data.data);
-      setTugas(tugasRes.data.data);
-      setEmergencies(emRes.data.data);
-      setUser(meRes.data.user);
-      setLivePositions(liveRes.data.data);
-      // Build dynamic jenis label map
-      if (katRes.data.data && katRes.data.data.length > 0) {
-        const labels: Record<string, string> = {};
-        katRes.data.data.forEach((k: { key: string; label: string }) => { labels[k.key] = k.label; });
-        setJenisLabel(labels);
-      }
-    } catch (e) {
-      console.error('QC fetch error:', e);
-    } finally {
-      setLoading(false);
-    }
+      for (const result of results) if (result.status === 'rejected') console.error('QC refresh failed:', result.reason);
+    } finally { setLoading(false); }
   }, []);
 
   useEffect(() => {
-    fetchAll();
-    const interval = setInterval(fetchAll, 15000);
-    return () => clearInterval(interval);
-  }, [fetchAll]);
+    const controller = new AbortController();
+    void Promise.allSettled([
+      api.get('/auth/me', { signal: controller.signal }).then(res => setUser(res.data.user)),
+      api.get('/kategori-temuan', { signal: controller.signal }).then(res => {
+        const categories: {key:string;label:string}[] = res.data.data;
+        if (categories.length) setJenisLabel(Object.fromEntries(categories.map(category => [category.key, category.label])));
+      }),
+    ]);
+    return () => controller.abort();
+  }, []);
+
+  usePolling(fetchAll, 15000);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -227,7 +214,7 @@ export default function QCPage() {
   // Compute maxBounds from QC's wilayah stations
   const maxBounds = useMemo<[[number, number], [number, number]] | undefined>(() => {
     if (!user?.wilayahAssignments || user.wilayahAssignments.length === 0) return undefined;
-    
+
     let targetStations: string[] = [];
     if (selectedJalur === '__all__') {
       // Collect all station names from all wilayah assignments

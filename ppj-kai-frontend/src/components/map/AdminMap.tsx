@@ -1,8 +1,9 @@
 'use client';
+import { petugasColor } from '../../../../shared/display';
 
-import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { useEffect,useRef,useState } from 'react';
 import { fetchRailwayGeometry } from '../../lib/railway';
 
 interface EmergencyPoint {
@@ -63,16 +64,7 @@ const STATUS_COLOR: Record<string, string> = {
  * Deterministic HSL color from a string (e.g. petugas NIPP).
  * Same NIPP → same hue always. Different NIPPs → visually distinct hues.
  */
-function petugasColor(nipp: string): string {
-  let hash = 0;
-  for (let i = 0; i < nipp.length; i++) {
-    hash = nipp.charCodeAt(i) + ((hash << 5) - hash);
-    hash = hash & hash;
-  }
-  // Use golden angle (137.5°) distribution for maximum perceptual spread
-  const hue = ((Math.abs(hash) * 137) % 360);
-  return `hsl(${hue}, 65%, 42%)`;
-}
+
 
 function makePin(color: string, label: string) {
   return L.divIcon({
@@ -125,7 +117,7 @@ export default function AdminMap({ emergencies, tasks, onEmergencyClick, livePos
       );
       mapRef.current.fitBounds(bounds, { padding: [20, 20] });
       mapRef.current.setMaxBounds(bounds);
-      
+
       // Calculate and set the min zoom level based on the fitted bounds
       const currentZoom = mapRef.current.getZoom();
       mapRef.current.setMinZoom(Math.max(0, currentZoom - 1));
@@ -139,6 +131,8 @@ export default function AdminMap({ emergencies, tasks, onEmergencyClick, livePos
   useEffect(() => {
     if (!mapRef.current || !layerGroupRef.current || !mapReady) return;
     layerGroupRef.current.clearLayers();
+
+    let cancelled = false;
 
     // Draw markers immediately, then load real railway geometry per task async
     tasks.forEach(task => {
@@ -165,7 +159,7 @@ export default function AdminMap({ emergencies, tasks, onEmergencyClick, livePos
       const cached = geometryCacheRef.current.get(cacheKey);
 
       const drawRoute = (segments: [number, number][][]) => {
-        if (!layerGroupRef.current || segments.length === 0) return;
+        if (cancelled || !layerGroupRef.current || segments.length === 0) return;
         segments.forEach(seg => {
           L.polyline(seg, { color, weight: 5, opacity, dashArray: dash }).addTo(layerGroupRef.current!);
         });
@@ -203,7 +197,8 @@ export default function AdminMap({ emergencies, tasks, onEmergencyClick, livePos
         .bindTooltip(`<b>⚠ ${em.jenisTemuan}</b><br><span style="font-size:11px">${em.petugasNama || ''}</span>`)
         .addTo(layerGroupRef.current!);
     });
-  }, [emergencies, tasks, mapReady]);
+    return () => { cancelled = true; };
+  }, [emergencies, tasks, mapReady, onEmergencyClick]);
 
   // Draw live petugas position markers (separate layer for independent updates)
   useEffect(() => {

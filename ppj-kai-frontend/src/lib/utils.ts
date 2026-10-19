@@ -1,10 +1,3 @@
-import { clsx, type ClassValue } from "clsx"
-import { twMerge } from "tailwind-merge"
-
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs))
-}
-
 /** Shape of an axios-style error carrying a server message. */
 export interface ApiError {
   response?: { data?: { message?: string } };

@@ -1,3 +1,5 @@
+import { haversineMeters } from '../../../shared/geo';
+export { haversineMeters } from '../../../shared/geo';
 import { normalizeStationName } from './importMatching';
 
 type WarningRoute = { startPointName: string | null; endPointName: string | null };
@@ -20,12 +22,7 @@ type Position = { latitude: number; longitude: number };
 type TaskRoute = WarningRoute & { startPointLat: number; startPointLong: number; endPointLat: number; endPointLong: number };
 type Candidate = Position & { id: number; userId: number; updatedAt: Date; tugas: WarningRoute };
 
-export function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number) {
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLng = (lng2 - lng1) * Math.PI / 180;
-  const value = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
-  return 6371000 * 2 * Math.asin(Math.sqrt(Math.min(1, value)));
-}
+
 
 /**
  * Pilih PPJ terdekat pada tiap sisi untuk setiap pasangan jalur yang terkait.

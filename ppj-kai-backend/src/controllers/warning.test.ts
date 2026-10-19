@@ -174,7 +174,7 @@ test('stopping tracking moves the assignment to need approval', async () => {
     } },
   };
   stub(prisma, '$transaction', async (operation: any) => operation(tx));
-  const req = { params: { id: '91' }, body: { lat: -7.8, lng: 110.37 }, user: { id: 7 } } as any;
+  const req = { params: { id: '91' }, body: { lat: -7.8, lng: 110.37, bypassMode: true }, user: { id: 7 } } as any;
   const res = response();
   await stopTracking(req, res);
   assert.equal(res.statusCode, 200);

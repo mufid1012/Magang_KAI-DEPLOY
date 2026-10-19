@@ -81,7 +81,7 @@ function form(fields: Record<string, string> = {}, bytes: Buffer | null = png, m
   return data;
 }
 function request(path = '/admin/login-photos', method = 'GET', body?: FormData, userId: number | null = 1) {
-  return fetch(`${base}${path}`, { method, body, headers: userId === null ? {} : { Authorization: `Bearer ${generateToken(userId, roles[userId - 1] || 'admin')}` } });
+  return fetch(`${base}${path}`, { method, ...(body ? { body } : {}), headers: userId === null ? {} : { Authorization: `Bearer ${generateToken(userId, roles[userId - 1] || 'admin')}` } });
 }
 
 test('CRUD persists image replacement, metadata, ordering, active filter and deletion through HTTP', async () => {

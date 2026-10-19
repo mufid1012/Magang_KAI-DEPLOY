@@ -1,10 +1,6 @@
-function haversineM(lat1: number, lng1: number, lat2: number, lng2: number) {
-  const R = 6371000;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLng = (lng2 - lng1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
+import { haversineMeters as haversineM } from '../../../shared/geo';
+import { StableMinQueue } from '../../../shared/priorityQueue';
+
 
 type NodeId = string;
 
@@ -176,11 +172,11 @@ function dijkstra(graph: Graph, startId: NodeId, endId: NodeId): [number, number
   dist.set(startId, 0);
   prev.set(startId, null);
 
-  const pq: { id: NodeId; d: number }[] = [{ id: startId, d: 0 }];
+  const pq = new StableMinQueue<NodeId>();
+  pq.push(startId, 0);
 
-  while (pq.length > 0) {
-    pq.sort((a, b) => a.d - b.d);
-    const { id } = pq.shift()!;
+  while (pq.size > 0) {
+    const id = pq.pop()!;
     if (visited.has(id)) continue;
     visited.add(id);
     if (id === endId) break;
@@ -191,7 +187,7 @@ function dijkstra(graph: Graph, startId: NodeId, endId: NodeId): [number, number
       if (newDist < dist.get(nbId)!) {
         dist.set(nbId, newDist);
         prev.set(nbId, id);
-        pq.push({ id: nbId, d: newDist });
+        pq.push(nbId, newDist);
       }
     }
   }
@@ -253,9 +249,9 @@ const OVERPASS_ENDPOINTS = [
 
 async function fetchOverpass(query: string, timeoutMs = 12000): Promise<OverpassResponse> {
   for (const endpoint of OVERPASS_ENDPOINTS) {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const controller = new AbortController();
-      const tid = setTimeout(() => controller.abort(), timeoutMs);
       const res = await fetch(endpoint, {
         method: 'POST',
         body: query,
@@ -268,7 +264,7 @@ async function fetchOverpass(query: string, timeoutMs = 12000): Promise<Overpass
     } catch (err) {
       console.warn(`Overpass ${endpoint} failed:`, err);
       continue;
-    }
+    } finally { clearTimeout(tid); }
   }
   throw new Error('All Overpass API endpoints failed');
 }
@@ -316,7 +312,7 @@ async function fetchRailwayData(
  * 4. Dijkstra shortest path
  * 5. If Dijkstra fails → return raw way segments (NEVER straight line)
  */
-export async function fetchRailwayGeometry(
+async function loadRailwayGeometry(
   startLat: number, startLng: number,
   endLat: number, endLng: number
 ): Promise<[number, number][][]> {
@@ -388,47 +384,14 @@ export async function fetchRailwayGeometry(
   return rawSegments.length > 0 ? rawSegments : [];
 }
 
-/**
- * Snap a coordinate to the nearest railway track point.
- */
-export async function snapToRailwayPoint(
-  lat: number, lng: number
-): Promise<{ lat: number; lng: number; name: string } | null> {
-  const RADIUS = 1000;
-  const query = `[out:json][timeout:8];
-(
-  way(around:${RADIUS},${lat},${lng})[railway~"^(rail|light_rail|subway|tram|narrow_gauge|monorail)$"];
-  node(around:${RADIUS},${lat},${lng})[railway="station"];
-  node(around:${RADIUS},${lat},${lng})[railway="halt"];
-);
-out geom;`;
 
-  try {
-    const data = await fetchRailwayData({ mode: 'nearby', lat, lng, radius: RADIUS }, query, 10000);
-    if (!data.elements || data.elements.length === 0) return null;
-
-    let minDist = Infinity;
-    let nearest: { lat: number; lng: number; name: string } | null = null;
-
-    for (const el of data.elements) {
-      const tags = el.tags || {};
-      const name = tags.name || tags['name:id'] || tags.ref || 'Jalur Rel';
-
-      if (el.type === 'way' && el.geometry) {
-        for (const node of el.geometry) {
-          const d = haversineM(lat, lng, node.lat, node.lon);
-          if (d < minDist) { minDist = d; nearest = { lat: node.lat, lng: node.lon, name }; }
-        }
-      }
-      if (el.type === 'node' && el.lat != null && el.lon != null) {
-        const d = haversineM(lat, lng, el.lat, el.lon);
-        if (d < minDist) { minDist = d; nearest = { lat: el.lat, lng: el.lon, name }; }
-      }
-    }
-
-    return nearest;
-  } catch (err) {
-    console.error('snapToRailwayPoint error:', err);
-    return null;
-  }
+// Identical concurrent routes share one in-flight request; failures are retried on the next poll.
+const pendingGeometry = new Map<string, Promise<[number, number][][]>>();
+export function fetchRailwayGeometry(startLat: number, startLng: number, endLat: number, endLng: number): Promise<[number, number][][]> {
+  const key = JSON.stringify([startLat,startLng,endLat,endLng]);
+  const pending = pendingGeometry.get(key);
+  if (pending) return pending;
+  const request = loadRailwayGeometry(startLat,startLng,endLat,endLng).finally(() => pendingGeometry.delete(key));
+  pendingGeometry.set(key, request);
+  return request;
 }

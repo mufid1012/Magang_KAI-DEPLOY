@@ -1,7 +1,6 @@
 'use client';
-
-import { useEffect, useState } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { usePathname,useRouter } from 'next/navigation';
+import { useEffect,useState } from 'react';
 
 const PUBLIC_ROUTES = ['/login', '/guest'];
 const ADMIN_ROUTES = ['/admin'];

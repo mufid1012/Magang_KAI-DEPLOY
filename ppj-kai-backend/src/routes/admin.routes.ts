@@ -1,3 +1,5 @@
+import { validatePositiveParam } from '../middleware/params';
+import { getAdminTugasById } from '../controllers/assignment.controller';
 import { Router } from 'express';
 import multer from 'multer';
 import { requireAuth, requireAdmin, requireAdminLike, requireCanWrite } from '../middleware/auth.middleware';
@@ -31,6 +33,8 @@ const upload = multer({
 });
 
 const router = Router();
+router.param('id', validatePositiveParam);
+router.param('tugasId', validatePositiveParam);
 router.use('/login-photos', loginPhotoRoutes);
 
 // ── Read endpoints — admin, qc, kupt ──
@@ -77,5 +81,7 @@ router.get('/map-locations', requireAuth, requireAdmin, getMapLocations);
 router.post('/map-locations', requireAuth, requireAdmin, createMapLocation);
 router.delete('/map-locations/:id', requireAuth, requireAdmin, deleteMapLocation);
 router.get('/map-search', requireAuth, requireAdmin, searchMapLocations);
+
+router.get('/tugas/:id', requireAuth, requireAdminLike, getAdminTugasById);
 
 export default router;

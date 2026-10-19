@@ -23,11 +23,8 @@ function lat2tile(lat: number, zoom: number) {
       Math.pow(2, zoom)
   );
 }
-function tile2lng(x: number, zoom: number) { return (x / Math.pow(2, zoom)) * 360 - 180; }
-function tile2lat(y: number, zoom: number) {
-  const n = Math.PI - (2 * Math.PI * y) / Math.pow(2, zoom);
-  return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
-}
+
+
 
 // Convert lat/lng to pixel coordinates on the tile grid
 function latLngToPixel(lat: number, lng: number, zoom: number, originTileX: number, originTileY: number): [number, number] {
@@ -92,8 +89,8 @@ function fetchBuffer(url: string): Promise<Buffer> {
 // Fetch a single tile with retry and fallback servers
 async function fetchTile(x: number, y: number, z: number, retries = 2): Promise<any> {
   const subdomains = ['a', 'b', 'c', 'd'];
-  const s = subdomains[Math.abs(x + y) % subdomains.length];
-  
+  const s = subdomains[Math.abs(x + y) % subdomains.length]!;
+
   // Primary: CartoDB Voyager (clean, fast, railway-friendly, very reliable for server-side rendering)
   // Fallback: OpenStreetMap with proper User-Agent
   const urls = [
@@ -212,7 +209,7 @@ export async function renderStaticMap(
     ctx.lineCap = 'round';
 
     for (let i = 0; i < routePath.length; i++) {
-      const [lat, lng] = routePath[i];
+      const [lat, lng] = routePath[i]!;
       const [px, py] = latLngToPixel(lat, lng, zoom, tileX1, tileY1);
       const x = px - sx;
       const y = py - sy;
@@ -222,7 +219,7 @@ export async function renderStaticMap(
     ctx.stroke();
 
     // Draw start marker (green circle)
-    const [startPx, startPy] = latLngToPixel(routePath[0][0], routePath[0][1], zoom, tileX1, tileY1);
+    const [startPx, startPy] = latLngToPixel(routePath[0]![0], routePath[0]![1], zoom, tileX1, tileY1);
     const sX = startPx - sx, sY = startPy - sy;
     ctx.beginPath();
     ctx.arc(sX, sY, 8, 0, 2 * Math.PI);
@@ -239,7 +236,7 @@ export async function renderStaticMap(
     ctx.fillText('A', sX, sY);
 
     // Draw end marker (red circle)
-    const last = routePath[routePath.length - 1];
+    const last = routePath[routePath.length - 1]!;
     const [endPx, endPy] = latLngToPixel(last[0], last[1], zoom, tileX1, tileY1);
     const eX = endPx - sx, eY = endPy - sy;
     ctx.beginPath();

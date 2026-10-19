@@ -1,0 +1,48 @@
+name: Verify application
+on:
+  push:
+  pull_request:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: audit-test-password
+          MYSQL_DATABASE: ppj_audit_ci
+          MYSQL_ROOT_HOST: '%'
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -paudit-test-password"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    env:
+      DATABASE_URL: mysql://root:audit-test-password@127.0.0.1:3306/ppj_audit_ci
+      AUDIT_DATABASE_URL: mysql://root:audit-test-password@127.0.0.1:3306/ppj_audit_ci
+      JWT_SECRET: ci-test-secret-with-at-least-32-characters
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            ppj-kai-backend/package-lock.json
+            ppj-kai-frontend/package-lock.json
+      - name: Install backend
+        run: npm ci --prefix ppj-kai-backend
+      - name: Install frontend
+        run: npm ci --prefix ppj-kai-frontend
+      - name: Unit tests, types, lint and production build
+        run: npm run verify
+      - name: Deploy migrations to isolated test database
+        working-directory: ppj-kai-backend
+        run: npx prisma migrate deploy
+      - name: Verify database schema
+        working-directory: ppj-kai-backend
+        run: npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+      - name: HTTP and MySQL integration tests
+        working-directory: ppj-kai-backend
+        run: npm run test:db

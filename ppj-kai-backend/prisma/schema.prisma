@@ -166,9 +166,9 @@ model WarningRecipient {
 model Laporan {
   id          Int      @id @default(autoincrement())
   trackingId  Int      @map("tracking_id")
-  jenisTemuan String   @map("jenis_temuan") @db.VarChar(20)
+  jenisTemuan String   @map("jenis_temuan") @db.VarChar(50)
   deskripsi   String   @db.Text
-  foto        String?  @db.Text
+  foto        String?  @db.LongText
   latitude    Float
   longitude   Float
   tracking    Tracking @relation(fields: [trackingId], references: [id])

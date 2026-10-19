@@ -1,6 +1,6 @@
 'use client';
+import { formatDistanceKm as haversineKm } from '../../../../shared/geo';
 
-import React from 'react';
 
 interface Laporan {
   id: number;
@@ -76,14 +76,7 @@ function formatDuration(seconds: number | null | undefined) {
   return `${seconds} detik`;
 }
 
-function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number) {
-  const radius = 6371;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLng = (lng2 - lng1) * Math.PI / 180;
-  const value = Math.sin(dLat / 2) ** 2
-    + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
-  return (radius * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value))).toFixed(1);
-}
+
 
 export default function TaskDetailModal({ tugas, jenisLabel, jenisColor, isDownloading, isAdmin, isApproving, onDownloadPdf, onApprove, onClose }: Props) {
   const latestTracking = tugas.tracking?.[0] ?? null;

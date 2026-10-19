@@ -1,9 +1,11 @@
 'use client';
+import { formatDuration } from '../../../../../../shared/display';
+import { haversineMeters as haversineM } from '../../../../../../shared/geo';
 
-import React, { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import dynamic from 'next/dynamic';
+import { useEffect,useState } from 'react';
 import api from '../../../../lib/api';
 import { showToast } from '../../../../lib/toast';
 import { getApiErrorMessage } from '../../../../lib/utils';
@@ -70,23 +72,10 @@ function formatTime(dateStr: string | null) {
   return new Date(dateStr).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
 }
 
-function formatDuration(detik: number | null) {
-  if (!detik) return '-';
-  const h = Math.floor(detik / 3600);
-  const m = Math.floor((detik % 3600) / 60);
-  if (h > 0) return `${h}j ${m}m`;
-  if (m > 0) return `${m} menit`;
-  return `${detik} detik`;
-}
+
 
 // Haversine distance in meters
-function haversineM(lat1: number, lng1: number, lat2: number, lng2: number) {
-  const R = 6371000;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLng = (lng2 - lng1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
+
 
 export default function InspeksiSelesaiPage() {
   const params = useParams<{ id: string }>();
@@ -360,7 +349,7 @@ export default function InspeksiSelesaiPage() {
             {isDownloading ? 'Mengunduh Laporan...' : isApproved ? 'Download Laporan PDF' : 'PDF Menunggu Approval Admin'}
             <span className="material-symbols-outlined">{isDownloading ? 'hourglass_empty' : isApproved ? 'picture_as_pdf' : 'lock_clock'}</span>
           </button>
-          
+
           <Link href="/inspeksi" className="w-full bg-primary text-on-primary font-h3 text-h3 py-md rounded-xl shadow-lg active:scale-[0.98] transition-all flex items-center justify-center gap-md">
             Kembali ke Daftar Tugas
             <span className="material-symbols-outlined">map</span>

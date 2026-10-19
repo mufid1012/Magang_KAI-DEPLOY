@@ -1,10 +1,11 @@
+import { emergencyCategoryKeys } from '../lib/reportSeverity';
 import { Request, Response } from 'express';
 import prisma from '../config/database';
 
 // GET /api/guest/map-data — public endpoint, tanpa auth
 // Return tugas routes (koordinat only) + emergency markers
 // TIDAK return data sensitif (nama petugas, NIPP)
-export const getGuestMapData = async (req: Request, res: Response) => {
+export const getGuestMapData = async (_req: Request, res: Response) => {
   try {
     // Get active/pending tugas with route coordinates only (no user data)
     const tugas = await prisma.tugasPpj.findMany({
@@ -24,7 +25,7 @@ export const getGuestMapData = async (req: Request, res: Response) => {
 
     // Get emergency reports with coordinates (no user info)
     const emergencies = await prisma.laporan.findMany({
-      where: { jenisTemuan: { in: ['emergency', 'berat'] } },
+      where: { jenisTemuan: { in: await emergencyCategoryKeys() } },
       select: {
         id: true,
         jenisTemuan: true,

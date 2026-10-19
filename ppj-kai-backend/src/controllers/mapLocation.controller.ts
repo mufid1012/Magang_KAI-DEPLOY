@@ -1,3 +1,4 @@
+import { ExpiringCache } from '../lib/mapLocationCache';
 import { Request, Response } from 'express';
 import prisma from '../config/database';
 import { ensureMapLocationsTable } from '../lib/mapLocationsTable';
@@ -15,9 +16,8 @@ interface NominatimResult {
   type?: string;
 }
 
-const searchCache = new Map<string, { expiresAt: number; data: unknown[] }>();
+const searchCache = new ExpiringCache<unknown[]>(200, 24 * 60 * 60 * 1000);
 let lastGeocodingRequestAt = 0;
-const SEARCH_CACHE_MS = 24 * 60 * 60 * 1000;
 const GEOCODING_MIN_INTERVAL_MS = 1100;
 
 export const getMapLocations = async (req: AuthRequest, res: Response) => {
@@ -94,8 +94,8 @@ export const searchMapLocations = async (req: AuthRequest, res: Response) => {
 
     const cacheKey = query.toLocaleLowerCase('id-ID');
     const cached = searchCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      return res.json({ success: true, data: cached.data, cached: true });
+    if (cached) {
+      return res.json({ success: true, data: cached, cached: true });
     }
 
     const now = Date.now();
@@ -113,6 +113,7 @@ export const searchMapLocations = async (req: AuthRequest, res: Response) => {
     url.searchParams.set('addressdetails', '0');
 
     const response = await fetch(url, {
+      signal: AbortSignal.timeout(10_000),
       headers: {
         Accept: 'application/json',
         'Accept-Language': 'id,en;q=0.8',
@@ -134,7 +135,7 @@ export const searchMapLocations = async (req: AuthRequest, res: Response) => {
       }))
       .filter(item => Number.isFinite(item.latitude) && Number.isFinite(item.longitude));
 
-    searchCache.set(cacheKey, { expiresAt: Date.now() + SEARCH_CACHE_MS, data });
+    searchCache.set(cacheKey, data);
     return res.json({ success: true, data, cached: false });
   } catch (error) {
     console.error('Map location search error:', error);

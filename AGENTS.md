@@ -1,409 +1,48 @@
-# AGENTS.md — Panduan untuk AI Coding Agent
-
-> File ini berisi konteks lengkap proyek agar AI agent tidak perlu membaca ulang semua file setiap sesi. Baca file ini PERTAMA sebelum melakukan perubahan apapun.
-
----
-
-## Ringkasan Proyek
-
-**KAI RailTrack PPJ** — Sistem monitoring inspeksi jalur rel kereta api untuk PT KAI DAOP 6 Yogyakarta.
-Terdiri dari 2 modul: **Frontend** (Next.js 16) dan **Backend** (Express 5 + Prisma + MySQL).
-
----
-
-## Tech Stack
-
-| Layer | Teknologi |
-|-------|-----------|
-| Frontend | Next.js 16, React 19, TailwindCSS 3.4, Leaflet 1.9, Axios, TypeScript 5 |
-| Backend | Express 5, Prisma 5.20, MySQL 8, JWT (jsonwebtoken), bcryptjs, TypeScript 6 |
-| Peta | OpenStreetMap tiles, Overpass API (query geometri rel), Leaflet.js |
-| Auth | JWT Bearer token, role: `admin` \| `qc` \| `kupt` \| `guest` \| `ppj` |
-
----
-
-## Struktur & File Penting
-
-### Backend (`ppj-kai-backend/`)
-
-```
-src/
-├── index.ts                    # Entry point. Port dari .env (default 5001)
-├── config/database.ts          # Prisma client singleton
-├── middleware/auth.middleware.ts # requireAuth (JWT), requireRole (role check)
-├── controllers/
-│   ├── auth.controller.ts      # login, getMe, updateProfile
-│   ├── tugas.controller.ts     # getTugasPetugas, getTugasSummary, getTugasById
-│   ├── tracking.controller.ts  # startTracking, stopTracking, updateTracking, getActiveTracking
-│   ├── laporan.controller.ts   # createLaporan, getLaporan
-│   ├── admin.controller.ts     # CRUD users, tugas, kategori temuan, stats, manajemen PPJ
-│   ├── guest.controller.ts     # Guest access untuk live view & stats
-│   └── import.controller.ts    # Import data dari Excel/CSV
-└── routes/
-    ├── auth.routes.ts           # /api/auth/*
-    ├── tugas.routes.ts          # /api/tugas/* (requireAuth)
-    ├── tracking.routes.ts       # /api/tracking/* (requireAuth)
-    ├── laporan.routes.ts        # /api/laporan/* (requireAuth)
-    ├── admin.routes.ts          # /api/admin/* (auth + role: admin)
-    └── guest.routes.ts          # /api/guest/* (auth + role: guest/qc/kupt)
-
-prisma/schema.prisma             # Skema DB (User, Tugas, Tracking, Laporan, Wilayah, Kategori, MapLocation, dll.)
-seed-user.ts                     # Seeder: Wilayah, Roles (Admin, QC, KUPT, PPJ) + Sample Tugas
-seed-kategori.ts                 # Seeder: Kategori temuan default
-.env                             # DATABASE_URL, PORT, JWT_SECRET, opsional GEOCODING_API_URL & APP_URL
-```
-
-### Frontend (`ppj-kai-frontend/`)
-
-```
-src/
-├── app/
-│   ├── layout.tsx              # Root layout, Google Fonts (Outfit), Material Symbols
-│   ├── page.tsx                # Landing/splash → redirect ke /login
-│   ├── login/page.tsx          # Login form (NIPP + password) → redirect role-based
-│   ├── inspeksi/               # Halaman Petugas (PPJ)
-│   │   ├── page.tsx            # Task selector / empty state "Tugas Belum Tersedia"
-│   │   ├── [id]/page.tsx       # ⭐ HALAMAN TERBESAR. Tracking GPS + Map + Kamera + Emergency
-│   │   └── [id]/selesai/page.tsx # Halaman ringkasan setelah inspeksi selesai
-│   ├── admin/page.tsx          # ⭐ Dashboard Admin: Tugas, Live, Map Lokasi, Akun, Setting
-│   ├── qc/page.tsx             # Dashboard QC (Monitoring & Laporan berdasar Wilayah JR)
-│   ├── guest/page.tsx          # Dashboard Guest (Live View saja)
-│   └── globals.css             # Design tokens Material Design 3 (warna, spacing, typography)
-├── components/
-│   ├── map/
-│   │   ├── AdminMap.tsx        # Peta untuk Admin/QC (task routes, emergency markers)
-│   │   ├── DynamicMap.tsx      # Peta Tracking untuk PPJ (GPS dot, track path)
-│   │   └── GuestMap.tsx        # Peta Live View Guest
-│   ├── ppj/
-│   │   ├── DetailModal.tsx     # Modal Laporan Detail
-│   │   ├── TabHistory.tsx      # History PPJ
-│   │   ├── TabPenjadwalan.tsx  # Penjadwalan Tugas (Manual & Excel Import)
-│   │   └── TabTracking.tsx     # Tab Active Tracking (Peta, Insiden)
-│   ├── common/
-│   │   └── AuthGuard.tsx       # Route Protection
-│   └── layout/
-│       └── BottomNav.tsx       # Bottom navigation bar (hanya item Track)
-└── lib/
-    ├── api.ts                  # Axios base instance, auto-attach JWT
-    ├── railway.ts              # ⭐ Overpass API fetch (3 failover) & Dijkstra route
-    └── utils.ts                # cn() helper
-```
-
----
-
-## Database Schema (MySQL)
-
-```
-users (User)
-├── id: Int (PK, auto)
-├── nipp: String (unique, 20)
-├── nama: String (100)
-├── password: String (255, bcrypt hash)
-├── foto: Text? (base64)
-├── role: String (20, default "ppj") → "admin" | "qc" | "kupt" | "guest" | "ppj"
-├── jabatan, division, work_area, phone: String?
-├── is_active: Boolean (default true)
-├── manager_id: Int? (FK → users.id) — admin yang mengelola petugas ini
-└── Relasi: manager, petugasManaged, tugas_ppj, user_wilayah
-
-tugas_ppj (TugasPpj)
-├── id: Int (PK, auto)
-├── jalur: String (200)
-├── tanggal: Date
-├── start_point_lat/long, end_point_lat/long: Float
-├── start_point_name, end_point_name: String?
-├── jam_mulai, jam_selesai: String?
-├── assigned_to: Int (FK → users.id)
-├── status: String (20) → "pending" | "in_progress" | "need_approval" | "completed" | "cancelled" | "missed"
-└── Relasi: tracking
-
-tracking (Tracking)
-├── id: Int (PK, auto)
-├── tugas_id: Int (FK → tugas_ppj.id)
-├── start_time/end_time: DateTime?
-├── start_lat/long, end_lat/long: Float?
-├── durasi: Int? (seconds)
-├── status: String (20) → "started" | "stopped"
-├── foto_awal, foto_selesai: Text?
-├── route_path: Text? (JSON)
-├── approval_status: String → "not_approved" | "approved"
-├── safety_status: String → "aman" | "tidak_aman"
-├── approved_at: DateTime?
-├── approved_by: Int? (FK → users.id)
-└── Relasi: laporan
-
-laporan (Laporan)
-├── id: Int (PK, auto)
-├── tracking_id: Int (FK → tracking.id)
-├── jenis_temuan: String (20) → Relasi longgar ke KategoriTemuan.key
-├── deskripsi: Text
-├── foto: Text?
-└── latitude/longitude: Float
-
-wilayah (Wilayah)
-├── id: Int (PK, auto)
-├── kode: String (unique) — e.g. "JR 6.1"
-├── nama: String — e.g. "Jenar"
-└── stations: Text (JSON array of station names)
-
-user_wilayah (UserWilayah)
-├── userId, wilayahId (Composite unique, FKs)
-└── Penghubung relasi many-to-many QC/KUPT dengan Wilayah.
-
-template_penugasan (TemplatePenugasan)
-├── id: Int (PK, auto)
-├── nama: String
-├── created_by: Int
-└── Relasi: template_item
-
-template_item (TemplateItem)
-├── id: Int (PK, auto)
-├── template_id: Int (FK)
-├── assigned_to: Int
-├── start_point_name, end_point_name, start/end lat/long
-└── jam_mulai, jam_selesai
-
-map_locations (MapLocation)
-├── id: Int (PK, auto)
-├── name, address?, description?
-├── latitude, longitude
-├── created_by: Int (FK → users.id)
-└── Titik lokasi custom milik admin pembuat
-
-kategori_temuan (KategoriTemuan)
-├── id: Int (PK, auto)
-├── key: String (unique) — e.g. "berat", "ringan"
-├── label, icon: String
-├── color: String (default "primary")
-├── is_active: Boolean (soft delete)
-└── sort_order: Int
-
-train_schedules (TrainSchedule)
-├── train_code, train_name
-├── origin, destination
-├── departure_time, arrival_time (HH:mm, berlaku harian)
-├── is_active
-└── created_by (FK → users.id)
-
-warning_alerts (WarningAlert)
-├── created_by (FK → users.id)
-├── latitude, longitude
-└── expires_at (warning sementara untuk penerima tracking terpilih pada jalur sama)
-```
-
----
-
-## API Endpoints
-
-### Public
-- `POST /api/auth/login` → `{ nipp, password }` → `{ token, user }`
-- Tidak ada registrasi publik; akun dibuat Super Admin melalui `/api/admin/users`.
-- `GET /api/kategori-temuan` → daftar kategori aktif (tidak butuh auth, dipanggil petugas)
-
-### Petugas / Umum (requireAuth)
-- `GET /api/auth/me` → full user profile
-- `PATCH /api/auth/profile` → update profil sendiri (NIPP & role read-only)
-- `GET /api/tugas` → tugas milik petugas yang login
-- `GET /api/tugas/summary` → statistik (total, pending, completed)
-- `GET /api/tugas/:id` → detail satu tugas
-- `GET /api/tracking/active/:tugasId` → cek apakah ada tracking aktif (untuk session restore)
-- `GET /api/tracking/train-alerts` → jadwal kereta aktif pada waktu perjalanan saat ini
-- `POST /api/tracking/warnings`, `GET /api/tracking/warnings/nearby` → warning suara ke PPJ terdekat di masing-masing sisi pada jalur sama
-- `POST /api/tracking/start/:tugasId` → `{ lat, lng }` → `{ trackingId }`
-- `POST /api/tracking/update/:id` → `{ lat, lng }`
-- `POST /api/tracking/stop/:id` → `{ lat, lng }`
-- `POST /api/laporan` → `{ trackingId, jenisTemuan, deskripsi, foto?, latitude, longitude }`
-- `GET /api/laporan` → list laporan milik petugas
-
-### Admin (requireAuth + requireRole('admin'))
-> **Penting**: Operasi admin sering di-scope by `managerId`. Admin hanya bisa melihat/mengelola petugas yang `managerId`-nya = ID admin yang login.
-- `GET /api/admin/stats` → counts (petugas, tugas, aktif, emergency) — scoped by managerId
-- `GET /api/admin/petugas` → list petugas yang dikelola admin ini
-- `GET /api/admin/petugas/available` → list petugas yang belum dikelola siapapun
-- `POST /api/admin/petugas/add` → assign petugas ke admin ini (set managerId)
-- `POST /api/admin/petugas/remove` → lepas petugas dari kelolaan admin
-- `GET /api/admin/tugas` → list tugas milik petugas kelolaan admin + tracking + laporan
-- `POST /api/admin/tugas` → buat tugas baru
-- `DELETE /api/admin/tugas/:id` → hapus tugas
-- `GET /api/admin/emergency` → list laporan darurat dari petugas kelolaan admin
-  - Tingkat kategori `error` berarti Darurat dan boleh memicu sirine; kategori selain `error` berarti Ringan dan tetap tercatat tanpa sirine.
-- `GET /api/admin/kategori-temuan`, `POST`, `PUT`, `DELETE` → CRUD Kategori Temuan
-- `GET /api/admin/live-positions` → posisi PPJ dengan tracking dan tugas yang masih aktif
-- `POST /api/admin/tracking/:id/approve` → approve tracking selesai sekaligus menetapkan status aman/tidak aman
-- `GET`, `POST`, `PATCH`, `DELETE /api/admin/train-schedules` → CRUD jadwal kereta
-- `GET`, `POST`, `DELETE /api/admin/map-locations` → kelola titik lokasi custom admin
-  - Titik baru dapat dipilih lewat klik peta, input latitude/longitude manual, atau hasil pencarian; marker draft dapat digeser sebelum disimpan.
-  - Menu MAP menampilkan tabel gabungan stasiun dan titik MAP admin di bawah peta, dengan pencarian nama/jenis/alamat/koordinat. Endpoint memastikan tabel `map_locations` tersedia secara idempoten untuk deployment lama yang sebelumnya memakai `prisma db push`.
-  - Titik MAP terdaftar terintegrasi dengan form penugasan sebagai pilihan titik awal/akhir pengecekan. Backend memvalidasi ID dan mengambil ulang koordinat milik admin sebelum membuat tugas.
-  - Daftar stasiun frontend bersumber dari `src/lib/stations.ts`; menu MAP menampilkan seluruh stasiun sebagai marker titik pengecekan bersama titik MAP admin.
-- `GET /api/admin/map-search?q=...` → pencarian lokasi submit-only melalui proxy geocoding
-- `GET /api/admin/tugas/template`, `POST /api/admin/tugas/import` → Template dan proses Import Excel
-  - Import menerima petugas aktif yang belum masuk kelolaan dan otomatis mengaitkannya ke admin/KUPT setelah baris valid berhasil disimpan.
-  - NIPP mengabaikan kapital/spasi; nama stasiun mengabaikan kapital/spasi/tanda baca dan menoleransi typo kecil yang tidak ambigu.
-  - Kolom jam menerima teks `HH:mm` maupun angka serial waktu Excel; angka serial dinormalisasi ke `HH:mm` sebelum disimpan agar import multi-baris hasil input langsung di Excel tetap valid.
-  - Import ADMIN mencocokkan titik awal/akhir terhadap gabungan stasiun dan titik MAP milik admin; template terbaru menyertakan sheet `Daftar Titik Pengecekan`.
-
-### Guest / QC / KUPT (requireRole('guest', 'qc', 'kupt'))
-- `GET /api/guest/stats`
-- `GET /api/guest/tugas`
-- `GET /api/guest/emergency`
-
----
-
-## Fitur Teknis Penting
-
-### 1. Kategori Temuan Dinamis (Baru)
-- Kategori laporan tidak di-hardcode. Data ditarik dari database `kategori_temuan` melalui API GET `/api/kategori-temuan`.
-- Admin dapat melakukan CRUD kategori (tambah/edit soft-delete).
-- Komponen frontend seperti `TabTracking` dan `DetailModal` menggunakan `useEffect` untuk _fetch_ data dan me-map label/icon, dengan fallback ke default jika gagal.
-
-### 2. Wilayah / Station Mapping (Baru)
-- Project ini menerapkan pembagian DAOP 6 ke dalam area Wilayah (JR 6.1 s/d JR 6.13).
-- Tugas di-filter berdasarkan `UserWilayah` yang melekat pada KUPT/QC.
-- Titik koordinat stasiun ditarik/terikat dengan penamaan area ini.
-
-### 3. Excel Import/Export Penugasan (Baru)
-- Admin bisa import jadwal bulanan melalui Excel.
-- Template mencakup titik mulai, titik selesai, NIPP, dan Nama Petugas. Parser endpoint aktif ditangani di backend (`admin.controller.ts`).
-
-### 3a. Daftar dan Detail Penugasan Admin
-- Daftar Penugasan PPJ mendukung pencarian, filter status, dan rentang tanggal inklusif.
-- Kartu tugas dapat dibuka untuk melihat data petugas, waktu/foto verifikasi, serta laporan kendala.
-- PDF laporan dapat diunduh oleh PPJ pemilik tugas, admin/KUPT pengelola petugas, dan QC sesuai wilayah stasiunnya.
-
-### 4. Emergency Loop Sound (Baru)
-- Saat petugas mengirimkan laporan berstatus "emergency" atau "berat" (tergantung *flag* di db), frontend QC/Admin akan memutar suara alarm darurat secara berulang (looping) hingga ada interaksi klik dari user untuk mematikannya.
-
-### 5. Approval, PDF, dan Alert Kereta
-- Setelah tracking dihentikan, tugas berstatus `need_approval` dan tracking berstatus `not_approved`. Approval admin menetapkan status keselamatan lalu mengubah tugas menjadi `completed`.
-- Endpoint tugas memakai tracking terbaru sebagai sumber kebenaran status. Data lama dengan tugas `completed` tetapi tracking `not_approved` dikirim sebagai `need_approval`, sehingga tetap benar walau migrasi deployment belum dijalankan.
-- Frontend admin dan PPJ juga menormalisasi status dari tracking terbaru sebagai pengaman kompatibilitas; item `not_approved` tidak boleh masuk filter/riwayat `Selesai` walaupun menerima status tugas lama dari backend.
-- Di halaman PPJ, `need_approval` ditempatkan pada tab Riwayat sebagai kartu kuning dan tidak muncul pada tab Tugas. Setelah approval, kartu berubah menjadi `completed`/Selesai dan PDF dapat diunduh.
-- PPJ hanya dapat mengunduh PDF setelah approval; admin/KUPT/QC tetap dapat membuka draft untuk review.
-- PDF mencantumkan status tracking `APPROVED`/`NOT APPROVED` dan status keselamatan `AMAN`/`TIDAK AMAN`.
-- Saat tracking aktif, PPJ menerima alert suara jadwal kereta dan dapat mengirim warning suara ke PPJ lain terdekat di masing-masing sisi pada pasangan stasiun tugas aktif yang sama (termasuk arah terbalik), tanpa batas radius, dengan GPS maksimal 2 menit terakhir. Warning menyimpan nama stasiun awal–akhir saat dikirim dan mencantumkannya dalam teks serta suara. Deployment membutuhkan migrasi `20260910120000_add_warning_route`; warning lama tanpa informasi jalur tidak ditampilkan.
-- Arah kereta pada warning PPJ selalu berasal dari titik akhir tugas PPJ pengirim (`endPointName`), karena arah perjalanan inspeksi PPJ berlawanan dengan arah kereta. API warning mengirimkannya sebagai `trainDirectionName` untuk dipakai pada teks dan suara notifikasi.
-
-### 6. Overpass API + Dijkstra (`lib/railway.ts`)
-- Request `way[railway]` dari Overpass API dalam area bounding box.
-- Bangun adjacency graph dari nodes, lalu jalankan shortest-path Dijkstra antara dua titik di atas rel.
-- **Failover otomatis** ke 3 server cermin Overpass (de, kumi, mail.ru).
-
-### 7. Station Dropdown (Admin — Pengganti Map-Click)
-- Admin **tidak lagi** klik peta untuk menentukan titik — menggunakan **dropdown stasiun**.
-- Data 15 stasiun hardcoded di konstanta `STATIONS` di `admin/page.tsx`.
-- Auto-fill `jalur`, `startPoint`, dan `endPoint`.
-
-### 8. Geometry Cache (AdminMap)
-- Railway geometry di-cache dalam `useRef<Map>` keyed by koordinat start-end agar polling tidak menembak Overpass berkali-kali. Hanya cache hasil non-empty.
-
-### 9. Admin Page — Sidebar
-- Halaman admin memiliki menu **Tugas**, **Live**, **Map**, **Akun** (admin), dan **Setting**.
-- **Live** hanya menggambar tugas `in_progress` dan posisi tracking `started`; tugas selesai hilang pada polling berikutnya.
-- **Map** khusus admin untuk mencari tempat, klik peta, menyimpan, dan menghapus titik lokasi custom.
-- **Setting → Foto Halaman Login** hanya untuk role `admin` (Super Admin). Komponen `components/admin/LoginPhotoSettings.tsx` mengelola CRUD foto PNG/JPG, judul, urutan, serta aktif/nonaktif. Foto disimpan sebagai `LoginPhoto.image` (LONGBLOB), maksimal 5 MB/40 megapiksel; format ditentukan dari isi file dan divalidasi dengan decoding.
-- `GET /api/login-photos` menyediakan metadata foto aktif; `GET /api/login-photos/:id/image` melayani aset gambar publik, termasuk foto nonaktif untuk pratinjau. CRUD `/api/admin/login-photos` memakai JWT + `requireAdmin` dan multipart field `photo`, `title`, `sortOrder`, `isActive`.
-- Login desktop memakai `components/common/LoginPhotoSlideshow.tsx`: urutan menaik, ganti setiap 6 detik, kontrol manual, reduced motion, dan fallback `/cc206.png`. Migrasi: `20261014120000_add_login_photos`; tabel juga diinisialisasi idempoten untuk instalasi lama dengan `db push`.
-
-### 10. Task Selection Flow (`/inspeksi`) — Halaman Utama Petugas
-- **Ini adalah satu-satunya halaman petugas** (dashboard, riwayat, profile sudah dihapus).
-- Flow: Login → `/inspeksi` (task selector) → `/inspeksi/:id` (tracking) → `/inspeksi/:id/selesai`.
-- Filter tugas: hanya tampilkan `pending` dan `in_progress`.
-
-### 11. BottomNav Component
-- Hanya berisi item **Track** → `/inspeksi`. Diatur lewat `BottomNav.tsx`.
-
-### 12. Header Konsisten
-- Halaman petugas menggunakan header centered text (contoh: "Inspeksi Berlangsung") tanpa tombol/avatar yang tidak perlu.
-
-### 13. Geofencing Tracking
-- Radius: **500 meter** (konstanta `GEOFENCE_RADIUS`). Petugas tidak bisa Start Tracking jika di luar radius.
-
-### 14. Session Persistence
-- Start tracking → simpan ke `localStorage` (`trackPath`, `trackingId`).
-- Update GPS → update local storage.
-- Backend `startTime` adalah sumber kebenaran waktu.
-
-### 15. Warna Per Petugas
-- Hash deterministik dari NIPP → HSL hue. Sama NIPP = sama warna di peta AdminMap.
-
-### 16. Z-Index Strategy (Leaflet vs Modal)
-- Leaflet = z-index 400. Modal overlay = `z-[9999]`. Map container dipisahkan dengan `isolation: isolate`.
-
-### 17. Time-Window Tracking (Baru)
-- Tombol "Mulai Tracking" hanya bisa ditekan dalam rentang **1 jam sebelum** sampai **1 jam sesudah** `jam_mulai`.
-- Validasi dilakukan di **frontend** (disable button + pesan) DAN **backend** (`startTracking` return 400 jika di luar window).
-- Jika `jamMulai` null, time-window dilewati (backward compatible).
-- Waktu dihitung dalam WIB (UTC+7). `tanggal` dari Prisma berupa Date (UTC midnight), `jamMulai` dalam format `"HH:MM"` WIB.
-
-### 18. Auto-Missed Scheduler (Baru)
-- `src/lib/scheduler.ts` — `setInterval` setiap 5 menit.
-- Cari tugas `pending` hari ini yang `jam_mulai + 1 jam` sudah terlewat → update status ke `missed`.
-- Dijalankan saat server start via `startMissedTaskScheduler()` di `index.ts`.
-- Status `missed` ditampilkan di frontend dengan warna rose/merah muda dan card disabled.
-
----
-
-## Roles & Hak Akses
-
-1. **Admin (`admin`)**: Akses penuh ke seluruh wilayah, bisa tambah tugas, kelola PPJ, import/export template, CRUD kategori insiden.
-2. **QC (`qc`)**: Memonitor beberapa wilayah (contoh: QC Region A pegang JR 6.1 - 6.4). Bisa lihat tugas dan live tracking di wilayahnya.
-3. **KUPT (`kupt`)**: Memonitor minimal dua wilayah yang ditetapkan Super Admin. Super Admin juga menentukan petugas PPJ yang dikelola KUPT melalui menu Kelola Akun. KUPT bisa melihat tugas dan live tracking petugas kelolaannya pada wilayah tersebut.
-4. **Petugas PPJ (`ppj`)**: Menerima tugas, start tracking, input laporan.
-5. **Guest (`guest`)**: Hanya bisa melihat GuestMap (Live View tanpa aksi manipulasi data).
-
-## Akun Default (dari seed-user.ts)
-
-| Role | NIPP | Password |
-|------|------|----------|
-| Admin | `ADMIN-001` | `admin123` |
-| QC | `QC-A001` | `qc123` |
-| KUPT | `KUPT-001` | `kupt123` |
-| PPJ | `KAI-1234` | `password123` |
-
----
-
-## Cara Menjalankan
-
-```bash
-# Terminal 1 — Backend
-cd ppj-kai-backend
-npm install
-npx prisma db push && npx prisma generate
-npx tsx seed-user.ts       # Wajib untuk inisialisasi Wilayah & Akun
-npx tsx seed-kategori.ts   # Wajib untuk inisialisasi Kategori Laporan (Baru)
-npm run dev                # Menjalankan npx tsx watch src/index.ts
-
-# Terminal 2 — Frontend
-cd ppj-kai-frontend
-npm install
-npm run dev                # Menjalankan Next.js dev server di port 3000
-```
-
----
-
-## Tips untuk Agent
-
-1. **JANGAN baca `package-lock.json`** — file ini ratusan ribu baris dan tidak berguna untuk context.
-2. **JANGAN baca `node_modules/`** — gunakan `package.json` untuk cek dependency.
-3. **JANGAN baca `tsconfig.json`** kecuali ada error TypeScript config.
-4. **File terbesar**: `inspeksi/[id]/page.tsx` (~850 baris) dan `admin/page.tsx` (~580 baris) — baca per section, jangan sekaligus.
-5. **Prisma schema** = sumber kebenaran untuk struktur database.
-6. **`globals.css`** = semua design tokens (warna, spacing, typography, font sizes).
-7. Selalu cek `lib/api.ts` untuk base URL dan interceptor sebelum debug API calls.
-8. Railway logic ada SEMUA di `lib/railway.ts` — satu file, satu concern. Termasuk `fetchRailwayGeometry()` dan `snapToRailwayPoint()`.
-9. **Jangan duplikasi `petugasColor()`** — sudah ada di AdminMap.tsx dan admin/page.tsx, idealnya dipindah ke utils jika perlu di tempat lain.
-10. **Halaman petugas HANYA `/inspeksi`** — dashboard, riwayat, dan profile sudah DIHAPUS. JANGAN buat halaman baru untuk petugas di luar flow inspeksi.
-11. **managerId pattern** — Semua data admin di-scope via `managerId`. Seeder HARUS buat admin dulu, lalu petugas dengan `managerId: admin.id`. Tanpa ini, dashboard admin kosong total.
-12. **JWT payload** hanya berisi `{ id, role }` — TIDAK ada `nipp`. Jangan akses `req.user.nipp` dari JWT decoded.
-13. **BottomNav** — Hanya berisi item Track (`/inspeksi`). Komponen dari `components/layout/BottomNav.tsx`.
-14. **Header halaman petugas** — Selalu centered, hanya teks, style seragam. Lihat bagian "Header Konsisten" di atas.
-15. **Overpass API** — JANGAN hardcode 1 endpoint. Selalu pakai `fetchOverpass()` dari `railway.ts` yang punya failover 3 mirror.
-16. **Geometry cache** — AdminMap cache geometry di `useRef`. Jangan cache hasil kosong agar bisa retry.
-17. **Semua redirect petugas** → `/inspeksi`. JANGAN redirect ke `/dashboard` (sudah tidak ada).
-18. **Admin sidebar** — Tugas, Live, Map (admin only), Akun (admin only), dan Setting. State `activeMenu`.
-19. **Station dropdown** — Koordinat stasiun hardcoded di `STATIONS` array di `admin/page.tsx`. JANGAN pakai map-click untuk pilih lokasi tugas. Jika perlu tambah stasiun, edit `STATIONS` constant.
-20. **AdminMap read-only** — AdminMap TIDAK punya `pickMode`, `onMapClick`, `tempStart`, `tempEnd`. Hanya display task routes + emergency. JANGAN tambah click handler ke AdminMap.
-21. **Kategori Temuan (Baru)** — Kategori temuan bersifat dinamis dari `kategori_temuan` db. JANGAN lagi gunakan list *hardcode* jika API CRUD telah tersedia.
-
-- Penerima warning disimpan saat pengiriman (maksimal dua sesi tracking); sisi diperkirakan dari proyeksi GPS pada sumbu stasiun awal–akhir. Halaman inspeksi menyinkronkan GPS baru setiap 15 detik.
+# Panduan proyek KAI RailTrack PPJ
+
+## Alur dan batasan
+- Next.js 16/React 19 frontend; Express 5, Prisma 5, MySQL 8 backend. Gunakan Node 24 (`.nvmrc`).
+- Role: admin, qc, kupt, guest, ppj. Alur PPJ tetap login -> /inspeksi -> /inspeksi/[id] -> /inspeksi/[id]/selesai.
+- Bypass WAJIB dipertahankan untuk testing sampai pemilik proyek meminta perubahan. Kedua flag `TRACKING_BYPASS_ENABLED` dan `NEXT_PUBLIC_TRACKING_BYPASS_ENABLED` tersedia jika bukan `false`; request harus mengirim `bypassMode: true`. Jangan mengubah default diam-diam.
+- Mode normal memerlukan foto dan posisi dalam radius 500 m pada start/stop; server memvalidasinya. Bypass tetap melewati syarat tersebut dan jendela waktu.
+- Start hanya pending (atau missed dengan bypass); stop -> need_approval; approval admin -> completed. Pertahankan transaksi/claim bersyarat.
+- PDF PPJ hanya setelah approval; admin/KUPT pengelola dan QC sesuai wilayah dapat mengunduh draft.
+- Scope read admin/KUPT berdasarkan managerId; QC berdasarkan stasiun wilayah. Jangan menyamakan hak akses seluruh role.
+- Navigasi/header/urutan stasiun yang ada harus dipertahankan ketika refactor.
+
+## Sumber kebenaran
+- `shared/stations.ts`: katalog stasiun dan subset penugasan/guest yang sengaja berbeda. Frontend re-export melalui lib/stations.ts.
+- `shared/geo.ts`, `shared/display.ts`, `shared/route.ts`, `shared/priorityQueue.ts`: util murni lintas modul.
+- `ppj-kai-backend/prisma/schema.prisma`: model database.
+- `ppj-kai-backend/src/app.ts`: aplikasi HTTP yang dapat dites; index.ts hanya startup server/scheduler.
+- Controller terpisah: account, assignment, monitoring, import, kategori, auth, tracking, laporan, tugas, mapLocation, trainSchedule, railway, loginPhoto. admin.controller.ts adalah barrel kompatibilitas.
+- `src/lib/accessScope.ts` backend: scope hak akses dan parsing wilayah.
+- `src/lib/reportSeverity.ts`: kategori `color=error` berarti darurat; key lama emergency/berat hanya fallback jika tidak lagi memiliki konfigurasi kategori.
+- Key kategori dan jenis laporan maksimum 50 karakter; foto laporan LongText. Penghapusan kategori bersifat hard-delete; laporan lama tetap menyimpan key.
+- `frontend/src/components/admin/`: tampilan akun/pengaturan dan dialog dipisahkan dari halaman.
+- Tracking memakai hooks/useGPS.ts dan useCamera.ts. Stream wajib berhenti pada close/unmount dan hasil izin terlambat.
+- Route lama yang panjang diterima sampai batas input, lalu disimpan maksimal 20.000 titik dengan endpoint tetap utuh. Jangan menolak shift panjang hanya karena jumlah callback GPS.
+
+## Kompatibilitas yang harus dijaga
+- Normalisasi resolveTugasStatus tetap ada pada backend dan frontend untuk data/deployment lama.
+- public/sw.js adalah worker pembersih instalasi PWA lama; jangan hapus hanya karena tidak ada registrasi baru.
+- Proxy railway tetap mempunyai fallback tiga mirror. Cache hasil non-empty dan deduplikasi request yang masih berjalan; jangan mengganti jalur rel dengan garis lurus tanpa kebutuhan produk.
+- AdminMap menampilkan rute dan posisi, bukan input titik. Pemilihan titik tugas memakai dropdown stasiun/titik MAP; menu MAP memiliki peta input tersendiri.
+- Endpoint lama `/tugas/summary`, GET `/laporan`, dan `/guest/map-data` masih didukung. Guest map-data memerlukan autentikasi; halaman guest menggunakan geometri stasiun.
+- Model TemplatePenugasan/TemplateItem dipertahankan untuk data historis/cleanup, bukan fitur template Excel aktif.
+- Aplikasi online-first. Pesan offline hanya menjanjikan jejak GPS lokal; request laporan baru tidak masuk antrean offline. Replay antrean lama hanya boleh ke API yang sama dengan token akun yang sama.
+- Komponen PPJ lama, BottomNav, tombol UI scaffold, font Geist, dan salinan root test.tsx/code.html sudah dihapus karena tidak terhubung ke aplikasi.
+
+## Verifikasi
+- Root: `npm run verify` menjalankan unit test kedua modul, typecheck, lint dan build.
+- Backend: `npm test`, `npm run typecheck`.
+- Frontend: `npm test`, `npm run typecheck`, `npm run lint`, `npm run build`.
+- Integrasi: buat database MySQL lokal terpisah bernama ppj_audit*, set DATABASE_URL dan AUDIT_DATABASE_URL ke database tersebut, jalankan prisma migrate deploy lalu npm run test:db. Suite menolak URL yang bukan localhost/ppj_audit*.
+- Jangan memakai database produksi, menjalankan seeder demo, atau reset database sebagai bagian test.
+- Migrasi `20261019120000_complete_legacy_schema` melengkapi riwayat awal dan memperlebar foto/key laporan; tidak menghapus tabel/data. Database lama hasil db push memerlukan pemeriksaan baseline sesuai docs/MIGRATIONS.md.
+- GitHub Actions `.github/workflows/verify.yml` menjalankan verifikasi dan integrasi MySQL terpisah.
+
+## Efisiensi pembacaan
+- Jangan membaca package-lock.json atau implementasi node_modules; gunakan manifest dan perintah npm untuk inventaris.
+- Baca berkas besar per bagian. Jangan membaca tsconfig kecuali terkait konfigurasi/diagnostik TypeScript.
+- Pertahankan arity empat parameter error middleware, JWT check akun aktif, dan hash integer 32-bit warna petugas.

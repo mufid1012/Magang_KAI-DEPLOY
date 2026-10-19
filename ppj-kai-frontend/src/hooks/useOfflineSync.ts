@@ -1,11 +1,12 @@
 'use client';
+import { legacyReplayUrl } from '../lib/legacyReplay';
 
-import { useEffect, useState } from 'react';
-import { getOfflineQueue, removeFromOfflineQueue } from '../lib/offline-store';
+import { useEffect,useRef,useState } from 'react';
+import { getOfflineQueue,removeFromOfflineQueue } from '../lib/offline-store';
 
 export function useOfflineSync() {
   const [isOnline, setIsOnline] = useState(true);
-  const [isSyncing, setIsSyncing] = useState(false);
+  const syncing = useRef(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
   useEffect(() => {
@@ -35,14 +36,17 @@ export function useOfflineSync() {
   }, []);
 
   const syncOfflineData = async () => {
-    setIsSyncing(true);
+    if (syncing.current) return;
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    syncing.current = true;
     setSyncStatus('Memeriksa data tertunda...');
-    
+
     try {
       const queue = await getOfflineQueue();
       if (queue.length === 0) {
         setSyncStatus(null);
-        setIsSyncing(false);
+        syncing.current = false;
         return;
       }
 
@@ -50,14 +54,17 @@ export function useOfflineSync() {
 
       for (const item of queue) {
         if (!item.id) continue;
-        
+        if (localStorage.getItem('token') !== token) break;
+        const target = legacyReplayUrl(item.url,item.headers,token,process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api',window.location.origin);
+        if (!target) continue;
+
         try {
           // Perform the actual fetch request
-          const response = await fetch(item.url, {
+          const response = await fetch(target, {
             method: item.method,
             headers: {
               'Content-Type': 'application/json',
-              ...item.headers,
+              Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify(item.body),
           });
@@ -80,15 +87,15 @@ export function useOfflineSync() {
         setSyncStatus('Sinkronisasi selesai');
         setTimeout(() => setSyncStatus(null), 3000);
       } else {
-        setSyncStatus(`Gagal mengirim ${remaining.length} data. Akan mencoba lagi nanti.`);
+        setSyncStatus(`Ada ${remaining.length} data versi lama yang belum dikirim. Periksa koneksi dan sesi akun terkait.`);
       }
     } catch (error) {
       console.error('Error in offline sync process', error);
       setSyncStatus('Terjadi kesalahan saat sinkronisasi');
     } finally {
-      setIsSyncing(false);
+      syncing.current = false;
     }
   };
 
-  return { isOnline, isSyncing, syncStatus, syncOfflineData };
+  return { isOnline, syncStatus };
 }

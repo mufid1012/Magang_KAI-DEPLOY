@@ -1,3 +1,7 @@
+import { formatDuration as formatDurasi } from '../../../shared/display';
+import { taskScope } from '../lib/accessScope';
+import { emergencyCategoryKeys } from '../lib/reportSeverity';
+import { haversineMeters as haversineM } from '../../../shared/geo';
 import { Request, Response } from 'express';
 import prisma from '../config/database';
 import { renderStaticMap } from '../lib/staticMap';
@@ -6,7 +10,7 @@ import { resolveTugasStatus } from '../utils/tugasStatus';
 export const getTugasPetugas = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.id;
-    
+
     const tugas = await prisma.tugasPpj.findMany({
       where: { assignedTo: userId },
       orderBy: { tanggal: 'desc' },
@@ -35,7 +39,7 @@ export const getTugasById = async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
 
     const tugas = await prisma.tugasPpj.findFirst({
-      where: { id: parseInt(id), assignedTo: userId },
+      where: { id: Number(id), assignedTo: userId },
       include: {
         tracking: {
           orderBy: { createdAt: 'desc' },
@@ -90,7 +94,7 @@ export const getTugasSummary = async (req: Request, res: Response) => {
             assignedTo: userId
           }
         },
-        jenisTemuan: 'emergency'
+        jenisTemuan: { in: await emergencyCategoryKeys() }
       }
     });
 
@@ -114,36 +118,11 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const requester = (req as any).user as { id: number; role: string };
-    const tugasId = parseInt(id);
+    const tugasId = Number(id);
 
-    let accessFilter: any;
-    if (requester.role === 'ppj') {
-      accessFilter = { id: tugasId, assignedTo: requester.id };
-    } else if (requester.role === 'admin' || requester.role === 'kupt') {
-      accessFilter = { id: tugasId, user: { managerId: requester.id } };
-    } else if (requester.role === 'qc') {
-      const assignments = await prisma.userWilayah.findMany({
-        where: { userId: requester.id },
-        include: { wilayah: true },
-      });
-      const stations = assignments.flatMap(assignment => {
-        try {
-          const parsed = JSON.parse(assignment.wilayah.stations);
-          return Array.isArray(parsed) ? parsed : [];
-        } catch {
-          return [];
-        }
-      });
-      accessFilter = {
-        id: tugasId,
-        OR: [
-          { startPointName: { in: stations } },
-          { endPointName: { in: stations } },
-        ],
-      };
-    } else {
-      return res.status(403).json({ success: false, message: 'Anda tidak memiliki akses ke laporan tugas' });
-    }
+    const scope = await taskScope(requester.id, requester.role);
+    if (!scope) return res.status(403).json({ success: false, message: 'Anda tidak memiliki akses ke laporan tugas' });
+    const accessFilter = { id: tugasId, ...scope };
 
     // Ambil data tugas beserta tracking & laporan
     const tugas = await prisma.tugasPpj.findFirst({
@@ -190,16 +169,10 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
     }
 
     // Calculate distance from routePath
-    const haversineM = (lat1: number, lng1: number, lat2: number, lng2: number) => {
-      const R = 6371000;
-      const dLat = (lat2 - lat1) * Math.PI / 180;
-      const dLng = (lng2 - lng1) * Math.PI / 180;
-      const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
-      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    };
+
     const totalDistanceM = routePath.reduce((sum, point, i) => {
       if (i === 0) return 0;
-      return sum + haversineM(routePath[i - 1][0], routePath[i - 1][1], point[0], point[1]);
+      return sum + haversineM(routePath[i - 1]![0], routePath[i - 1]![1], point[0], point[1]);
     }, 0);
     const totalDistanceKm = (totalDistanceM / 1000).toFixed(2);
 
@@ -232,14 +205,7 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
     const formatDate = (dateStr: Date) => {
       return new Date(dateStr).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Jakarta' });
     };
-    const formatDurasi = (detik: number | null) => {
-      if (!detik) return '-';
-      const h = Math.floor(detik / 3600);
-      const m = Math.floor((detik % 3600) / 60);
-      if (h > 0) return `${h}j ${m}m`;
-      if (m > 0) return `${m} menit`;
-      return `${detik} detik`;
-    };
+
 
     // Build info table rows
     const infoRows: any[][] = [
@@ -271,7 +237,7 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
       content: [
         { text: 'PT KERETA API INDONESIA (Persero)', style: 'header' },
         { text: 'LAPORAN INSPEKSI JALUR PPJ', style: 'subheader', margin: [0, 0, 0, 20] },
-        
+
         {
           layout: 'noBorders',
           table: {
@@ -310,14 +276,14 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
       // Fallback: just mention route info textually
       docDefinition.content.push({ text: 'JALUR INSPEKSI', style: 'sectionHeader', margin: [0, 10, 0, 10] });
       docDefinition.content.push({
-        text: `Petugas menempuh ${totalDistanceKm} km dari titik (${routePath[0][0].toFixed(5)}, ${routePath[0][1].toFixed(5)}) ke (${routePath[routePath.length - 1][0].toFixed(5)}, ${routePath[routePath.length - 1][1].toFixed(5)}).`,
+        text: `Petugas menempuh ${totalDistanceKm} km dari titik (${routePath[0]![0].toFixed(5)}, ${routePath[0]![1].toFixed(5)}) ke (${routePath[routePath.length - 1]![0].toFixed(5)}, ${routePath[routePath.length - 1]![1].toFixed(5)}).`,
         margin: [0, 0, 0, 20]
       });
     }
     // Add foto awal and foto selesai if available
     if (latestTracking && (latestTracking.fotoAwal || latestTracking.fotoSelesai)) {
       docDefinition.content.push({ text: 'VERIFIKASI IDENTITAS', style: 'sectionHeader', margin: [0, 10, 0, 10] });
-      
+
       const identityTableBody = [
         [
           latestTracking.fotoAwal ? { text: 'Foto Awal (Mulai)', style: 'laporanTitle', alignment: 'center' } : '',
@@ -355,7 +321,7 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
           style: 'laporanTitle',
           margin: [0, 10, 0, 2]
         });
-        
+
         if (lap.deskripsi) {
           docDefinition.content.push({
             text: `Deskripsi: ${lap.deskripsi}`,
@@ -363,7 +329,7 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
             margin: [15, 0, 0, 2]
           });
         }
-        
+
         docDefinition.content.push({
           text: `Koordinat: ${lap.latitude.toFixed(5)}, ${lap.longitude.toFixed(5)}`,
           style: 'laporanMeta',
@@ -394,7 +360,7 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
 
     const doc = pdfmake.createPdf(docDefinition);
     const buffer = await doc.getBuffer();
-    
+
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="Laporan_Inspeksi_PPJ_${tugas.id}.pdf"`);
     return res.send(buffer);

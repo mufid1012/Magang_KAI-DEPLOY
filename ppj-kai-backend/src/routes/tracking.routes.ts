@@ -1,9 +1,12 @@
+import { validatePositiveParam } from '../middleware/params';
 import { Router } from 'express';
 import { startTracking, updateTracking, stopTracking, getActiveTracking, createNearbyWarning, getNearbyWarnings } from '../controllers/tracking.controller';
 import { getCurrentTrainAlerts } from '../controllers/trainSchedule.controller';
 import { requireAuth, requireRole } from '../middleware/auth.middleware';
 
 const router = Router();
+router.param('id', validatePositiveParam);
+router.param('tugasId', validatePositiveParam);
 
 router.use(requireAuth);
 

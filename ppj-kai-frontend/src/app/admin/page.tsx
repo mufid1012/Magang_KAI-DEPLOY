@@ -1,42 +1,46 @@
-// Force Next.js rebuild
 'use client';
+import { formatDistanceKm as haversineKm } from '../../../../shared/geo';
+import { petugasColor } from '../../../../shared/display';
+import AdminAccounts from '../../components/admin/AdminAccounts';
+import AdminSettings from '../../components/admin/AdminSettings';
+import AssignmentEditor from '../../components/admin/AssignmentEditor';
+import CategoryEditor from '../../components/admin/CategoryEditor';
+import ImportResult from '../../components/admin/ImportResult';
+import PetugasHistory from '../../components/admin/PetugasHistory';
+import PetugasPicker from '../../components/admin/PetugasPicker';
+import type { Emergency,KategoriTemuan,LivePosition,ManagedUser,Petugas,RegisteredMapLocation,Stats,Tugas,TugasStatusFilter,WilayahItem } from '../../components/admin/types';
+import UserEditor from '../../components/admin/UserEditor';
 
-import React, { useEffect, useState, useCallback } from 'react';
+
 import dynamic from 'next/dynamic';
-import api from '../../lib/api';
 import { useRouter } from 'next/navigation';
-import { playNotification, NotificationSound, speakEmergencyAnnouncement, startLoopingNotification, stopLoopingNotification } from '../../lib/audio';
-import { showToast } from '../../lib/toast';
-import { showConfirm } from '../../lib/confirm';
-import { getApiErrorMessage } from '../../lib/utils';
-import { STATIONS } from '../../lib/stations';
+import React,{ useCallback,useEffect,useState } from 'react';
 import TaskDetailModal from '../../components/admin/TaskDetailModal';
-import LoginPhotoSettings from '../../components/admin/LoginPhotoSettings';
+import { usePolling } from '../../hooks/usePolling';
+import api from '../../lib/api';
+import { NotificationSound,playNotification,speakEmergencyAnnouncement,startLoopingNotification,stopLoopingNotification } from '../../lib/audio';
+import { showConfirm } from '../../lib/confirm';
+import { STATIONS } from '../../lib/stations';
+import { showToast } from '../../lib/toast';
 import { resolveTugasStatus } from '../../lib/tugasStatus';
+import { getApiErrorMessage } from '../../lib/utils';
 
 // Same deterministic color as AdminMap — NIPP → unique HSL color
-function petugasColor(nipp: string): string {
-  let hash = 0;
-  for (let i = 0; i < nipp.length; i++) {
-    hash = nipp.charCodeAt(i) + ((hash << 5) - hash);
-    hash = hash & hash;
-  }
-  return `hsl(${(Math.abs(hash) * 137) % 360}, 65%, 42%)`;
-}
+
 
 const AdminMap = dynamic(() => import('../../components/map/AdminMap'), { ssr: false });
 const AdminLocationMap = dynamic(() => import('../../components/map/AdminLocationMap'), { ssr: false });
 
-interface Petugas { id: number; nipp: string; nama: string; tugasPpj: { id: number; jalur: string; status: string }[] }
-interface Tugas { id: number; jalur: string; tanggal: string; startPointLat: number; startPointLong: number; endPointLat: number; endPointLong: number; startPointName: string; endPointName: string; status: string; user: { nama: string; nipp: string; jabatan?: string | null; division?: string | null; workArea?: string | null }, tracking?: { id: number; startTime: string | null; endTime: string | null; durasi: number | null; status: string; fotoAwal?: string | null; fotoSelesai?: string | null; approvalStatus: 'not_approved' | 'approved'; safetyStatus: 'aman' | 'tidak_aman'; approvedAt?: string | null; laporan: Emergency[] }[] }
-interface Emergency { id: number; latitude: number; longitude: number; jenisTemuan: string; deskripsi: string; foto: string | null; createdAt: string; tracking?: { tugas: { jalur: string; user: { nama: string; nipp: string } } } }
-interface LivePosition { petugasNama: string; petugasNipp: string; tugasId: number; jalur: string; latitude: number; longitude: number; updatedAt: string }
-interface RegisteredMapLocation { id: number; name: string; address: string | null; latitude: number; longitude: number }
-interface Stats { totalPetugas: number; tugasAktif: number; tugasSelesai: number; laporanDarurat: number }
-interface ManagedUser { id: number; nipp: string; nama: string; role: string; isActive: boolean; jabatan?: string; division?: string; workArea?: string; phone?: string; managerId?: number; createdAt: string; wilayahAssignments: { id: number; wilayah: { id: number; kode: string; nama: string; stations: string } }[] }
-interface WilayahItem { id: number; kode: string; nama: string; stations: string }
 
-interface KategoriTemuan { id: number; key: string; label: string; icon: string; color: string; isActive: boolean; sortOrder: number }
+
+
+
+
+
+
+
+
+
 
 const ROLE_BADGE: Record<string, { label: string; bg: string }> = {
   admin: { label: 'Super Admin', bg: 'bg-slate-800' },
@@ -47,7 +51,7 @@ const ROLE_LABEL: Record<string, string> = { admin: 'Admin', qc: 'QC', kupt: 'KU
 
 const STATUS_COLOR: Record<string, string> = { pending: 'bg-surface-container text-on-surface-variant border-outline-variant', in_progress: 'bg-primary-container/20 text-primary border-primary/30', need_approval: 'bg-amber-100 text-amber-800 border-amber-300', completed: 'bg-primary-fixed text-on-primary-fixed-variant border-transparent' };
 const STATUS_LABEL: Record<string, string> = { pending: 'Pending', in_progress: 'Berlangsung', need_approval: 'Butuh Approval', completed: 'Selesai' };
-type TugasStatusFilter = 'all' | 'pending' | 'in_progress' | 'need_approval' | 'completed';
+
 const TUGAS_STATUS_FILTERS: readonly { value: TugasStatusFilter; label: string; icon: string }[] = [
   { value: 'all', label: 'Semua', icon: 'view_list' },
   { value: 'pending', label: 'Pending', icon: 'schedule' },
@@ -135,9 +139,19 @@ export default function AdminPage() {
   const [searchPetugas, setSearchPetugas] = useState('');
   const [selectedNipps, setSelectedNipps] = useState<string[]>([]);
   const [addingPetugas, setAddingPetugas] = useState(false);
-  
+
   // History state
   const [selectedPetugasHistory, setSelectedPetugasHistory] = useState<Petugas | null>(null);
+  const [petugasHistoryTasks, setPetugasHistoryTasks] = useState<Tugas[]>([]);
+  useEffect(() => {
+    if (!selectedPetugasHistory) return;
+    const controller = new AbortController();
+    setPetugasHistoryTasks([]);
+    api.get('/admin/tugas', { params: { petugasId: selectedPetugasHistory.id }, signal: controller.signal })
+      .then(res => setPetugasHistoryTasks(res.data.data.map(resolveTugasStatus)))
+      .catch(error => { if (!controller.signal.aborted) showToast(getApiErrorMessage(error, 'Gagal mengambil riwayat.'), 'error'); });
+    return () => controller.abort();
+  }, [selectedPetugasHistory]);
 
   // Excel import state
   const [importLoading, setImportLoading] = useState(false);
@@ -288,20 +302,25 @@ export default function AdminPage() {
   };
 
   const fetchAll = useCallback(async () => {
-    try {
-      const [statsRes, petugasRes, tugasRes, emRes, liveRes] = await Promise.all([
-        api.get('/admin/stats'), api.get('/admin/petugas'), api.get('/admin/tugas'), api.get('/admin/emergency'), api.get('/admin/live-positions'),
-      ]);
-      const normalizedTugas: Tugas[] = (Array.isArray(tugasRes.data.data) ? tugasRes.data.data : []).map(resolveTugasStatus);
-      const tugasSelesai = normalizedTugas.filter(item => item.status === 'completed').length;
-      const tugasAktif = normalizedTugas.filter(item => ['pending', 'in_progress', 'need_approval'].includes(item.status)).length;
-      setStats({ ...statsRes.data.data, tugasAktif, tugasSelesai });
-      setPetugas(petugasRes.data.data);
-      setTugas(normalizedTugas);
-      setEmergencies(emRes.data.data);
-      setLivePositions(liveRes.data.data);
-    } catch (e) { console.error(e); }
+    const results = await Promise.allSettled([
+      api.get('/admin/stats', { timeout: 12000 }).then(res => setStats(res.data.data)),
+      api.get('/admin/petugas', { timeout: 12000 }).then(res => setPetugas(res.data.data)),
+      api.get('/admin/tugas', { params: { summary: true }, timeout: 12000 }).then(res => setTugas((Array.isArray(res.data.data) ? res.data.data : []).map(resolveTugasStatus))),
+      api.get('/admin/emergency', { timeout: 12000 }).then(res => setEmergencies(res.data.data)),
+      api.get('/admin/live-positions', { timeout: 12000 }).then(res => setLivePositions(res.data.data)),
+    ]);
+    for (const result of results) if (result.status === 'rejected') console.error('Dashboard refresh failed:', result.reason);
   }, []);
+
+  const detailRequest = React.useRef(0);
+  const openTugasDetail = async (task: Tugas) => {
+    const requestId = ++detailRequest.current;
+    setSelectedTugasDetail(task);
+    try {
+      const res = await api.get(`/admin/tugas/${task.id}`);
+      setSelectedTugasDetail(previous => detailRequest.current === requestId && previous?.id === task.id ? resolveTugasStatus(res.data.data) : previous);
+    } catch (error) { showToast(getApiErrorMessage(error, 'Gagal mengambil detail tugas.'), 'error'); }
+  };
 
   // Fetch kategori temuan
   const fetchKategori = useCallback(async () => {
@@ -383,11 +402,10 @@ export default function AdminPage() {
         setUserStations(stationNames);
       }
     }).catch(() => {});
-    fetchAll();
-    fetchKategori();
-    const interval = setInterval(fetchAll, 15000);
-    return () => clearInterval(interval);
-  }, [fetchAll, fetchKategori]);
+    void fetchKategori();
+  }, [fetchKategori]);
+
+  usePolling(fetchAll, 15000);
 
   const handleLogout = () => { localStorage.removeItem('token'); localStorage.removeItem('user'); router.replace('/login'); };
 
@@ -529,11 +547,7 @@ export default function AdminPage() {
     }
   };
 
-  const haversineKm = (lat1: number, lng1: number, lat2: number, lng2: number) => {
-    const R = 6371; const dLat = (lat2 - lat1) * Math.PI / 180; const dLng = (lng2 - lng1) * Math.PI / 180;
-    const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
-    return (R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))).toFixed(1);
-  };
+
 
   const handleCreateTugas = async () => {
     if (!form.jalur || !form.tanggal || !form.assignedTo || !form.startPointLat || !form.endPointLat) { showToast('Lengkapi semua field!', 'warning'); return; }
@@ -649,6 +663,7 @@ export default function AdminPage() {
   };
 
   const handleApproveTracking = async (safetyStatus: 'aman' | 'tidak_aman') => {
+    detailRequest.current++;
     const trackingId = selectedTugasDetail?.tracking?.[0]?.id;
     if (!trackingId) return;
     const safetyLabel = safetyStatus === 'aman' ? 'Aman' : 'Tidak Aman';
@@ -750,7 +765,7 @@ export default function AdminPage() {
             `}</style>
           </div>
           <div className="w-px h-6 bg-slate-200 hidden md:block"></div>
-          
+
           <div className="flex items-center gap-2 md:gap-3">
             <div className="w-7 h-7 md:w-8 md:h-8 bg-primary-container text-primary rounded-full flex items-center justify-center font-bold text-xs md:text-sm border border-primary/20">
               {user?.nama?.substring(0, 2).toUpperCase() || 'AD'}
@@ -768,7 +783,7 @@ export default function AdminPage() {
 
       {/* Main Content */}
       <div className="flex flex-col-reverse md:flex-row flex-1 overflow-hidden relative pb-[60px] md:pb-0">
-        
+
         {/* Bottom / Vertical Sidebar Nav */}
         <nav className="fixed md:static bottom-0 left-0 right-0 h-[60px] md:h-auto md:w-[72px] bg-white border-t md:border-t-0 md:border-r border-slate-200 flex flex-row md:flex-col items-center justify-start py-2 md:py-4 px-1 md:px-0 gap-2 shrink-0 z-40 overflow-x-auto md:overflow-visible">
           <button
@@ -879,7 +894,7 @@ export default function AdminPage() {
 
                 {/* List Content */}
                 <div className="flex-1 overflow-y-auto p-4 bg-white relative">
-                  
+
                   {/* Petugas Tab */}
                   {activeTab === 'map' && (
                     <div className="space-y-3">
@@ -893,8 +908,8 @@ export default function AdminPage() {
                       {petugas.map(p => {
                         const aktif = p.tugasPpj.find(t => t.status === 'in_progress');
                         return (
-                          <div 
-                            key={p.id} 
+                          <div
+                            key={p.id}
                             onClick={() => setSelectedPetugasHistory(p)}
                             className="bg-slate-50 rounded-xl p-3 border border-slate-200 flex items-center gap-3 relative group cursor-pointer hover:border-primary/50 transition-colors"
                           >
@@ -911,8 +926,8 @@ export default function AdminPage() {
                             </div>
                             {/* Remove button (shows on hover) — only for admin/kupt */}
                             {canWrite && (
-                              <button 
-                                onClick={(e) => { e.stopPropagation(); handleRemovePetugas(p.id); }} 
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleRemovePetugas(p.id); }}
                                 className="absolute -top-2 -right-2 w-7 h-7 bg-white border border-slate-200 rounded-full text-slate-400 hover:text-rose-600 hover:border-rose-300 shadow-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all z-10"
                               >
                                 <span className="material-symbols-outlined text-[16px]">delete</span>
@@ -929,7 +944,7 @@ export default function AdminPage() {
                     <div className="space-y-3">
                       {tugas.length === 0 && <p className="text-center text-slate-400 text-sm py-4">Belum ada tugas dibuat.</p>}
                       {tugas.map(t => (
-                        <div key={t.id} onClick={() => setSelectedTugasDetail(t)} className="bg-slate-50 rounded-xl p-4 border border-slate-200 cursor-pointer hover:border-primary/40 hover:bg-blue-50/30 transition-all group" role="button" tabIndex={0} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setSelectedTugasDetail(t); }}>
+                        <div key={t.id} onClick={() => void openTugasDetail(t)} className="bg-slate-50 rounded-xl p-4 border border-slate-200 cursor-pointer hover:border-primary/40 hover:bg-blue-50/30 transition-all group" role="button" tabIndex={0} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') void openTugasDetail(t); }}>
                           <div className="flex justify-between items-start gap-2 mb-1">
                             <p className="font-bold text-slate-800 text-sm leading-snug group-hover:text-primary transition-colors">{t.jalur}</p>
                             {canWrite && (
@@ -976,7 +991,7 @@ export default function AdminPage() {
                     </div>
                   )}
                 </div>
-                
+
                 {/* Action Buttons (Docked) — only for admin/kupt */}
                 {canWrite && activeTab === 'tasks' && (
                   <div className="p-3 border-t border-slate-200 bg-slate-50 shrink-0 space-y-2">
@@ -1122,7 +1137,7 @@ export default function AdminPage() {
                       const latestTracking = t.tracking?.[0];
                       const laporanCount = latestTracking?.laporan?.length ?? 0;
                       return (
-                        <button key={t.id} type="button" onClick={() => setSelectedTugasDetail(t)} className={`w-full text-left rounded-2xl border p-5 hover:shadow-md transition-all group relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-primary/40 ${t.status === 'need_approval' ? 'bg-amber-50 border-amber-300 hover:border-amber-400' : 'bg-slate-50 border-slate-200 hover:border-primary/50'}`}>
+                        <button key={t.id} type="button" onClick={() => void openTugasDetail(t)} className={`w-full text-left rounded-2xl border p-5 hover:shadow-md transition-all group relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-primary/40 ${t.status === 'need_approval' ? 'bg-amber-50 border-amber-300 hover:border-amber-400' : 'bg-slate-50 border-slate-200 hover:border-primary/50'}`}>
                           <div className={`absolute top-0 left-0 w-1.5 h-full ${t.status === 'completed' ? 'bg-emerald-500' : t.status === 'need_approval' ? 'bg-amber-400' : t.status === 'in_progress' ? 'bg-primary' : 'bg-slate-300'}`}></div>
                           <div className="pl-3">
                             <div className="flex justify-between items-start mb-2">
@@ -1191,7 +1206,7 @@ export default function AdminPage() {
                 </div>
               </div>
             </div>
-            
+
             {/* Live Indicator */}
             <div className="absolute top-6 right-6 bg-white/95 backdrop-blur-md rounded-full px-3 py-1.5 shadow-sm border border-slate-200 flex items-center gap-2 z-[1000]">
               <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
@@ -1208,462 +1223,15 @@ export default function AdminPage() {
         )}
 
         {/* ── AKUN MANAGEMENT VIEW (Admin Only) ────────────── */}
-        {activeMenu === 'akun' && isAdmin && (
-          <div className="flex flex-col lg:flex-row flex-1 overflow-y-auto lg:overflow-hidden p-3 md:p-4 gap-4">
-            <div className="min-h-[500px] lg:min-h-0 flex-1 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
-              {/* Header */}
-              <div className="p-4 md:p-6 border-b border-slate-200 flex items-center justify-between shrink-0">
-                <div>
-                  <h2 className="text-lg font-extrabold text-slate-800 tracking-tight">Kelola Akun Pengguna</h2>
-                  <p className="text-sm text-slate-500 mt-0.5">Buat, edit, dan kelola akun QC, KUPT, dan PPJ</p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="relative">
-                    <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">search</span>
-                    <input
-                      value={userSearchQuery}
-                      onChange={e => setUserSearchQuery(e.target.value)}
-                      placeholder="Cari NIPP atau nama..."
-                      className="pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none w-56 font-medium"
-                    />
-                  </div>
-                  <button onClick={handleOpenCreateUser} className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-primary/90 shadow-sm transition-all active:scale-[0.98]">
-                    <span className="material-symbols-outlined text-[18px]">person_add</span> Buat Akun
-                  </button>
-                </div>
-              </div>
-
-              {/* User List */}
-              <div className="flex-1 overflow-y-auto p-4">
-                {managedUsers.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-20 text-center">
-                    <span className="material-symbols-outlined text-slate-200 text-6xl mb-4">group</span>
-                    <p className="text-slate-500 font-medium">Belum ada akun yang dibuat.</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {managedUsers
-                      .filter(u => {
-                        if (!userSearchQuery) return true;
-                        const q = userSearchQuery.toLowerCase();
-                        return u.nipp.toLowerCase().includes(q) || u.nama.toLowerCase().includes(q);
-                      })
-                      .map(u => (
-                        <div key={u.id} className={`bg-slate-50 rounded-2xl border p-5 relative group transition-all ${
-                          u.isActive ? 'border-slate-200 hover:border-primary/30' : 'border-rose-200 bg-rose-50/50 opacity-70'
-                        }`}>
-                          <div className="flex items-start gap-3 mb-3">
-                            <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm text-white shadow-inner shrink-0" style={{ background: petugasColor(u.nipp) }}>
-                              {u.nama.substring(0, 2).toUpperCase()}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="font-bold text-slate-800 text-sm truncate">{u.nama}</p>
-                              <p className="text-xs text-slate-500 font-medium">{u.nipp}</p>
-                            </div>
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                              u.role === 'qc' ? 'bg-indigo-100 text-indigo-700' :
-                              u.role === 'kupt' ? 'bg-teal-100 text-teal-700' :
-                              'bg-slate-100 text-slate-700'
-                            }`}>{ROLE_LABEL[u.role] || u.role}</span>
-                          </div>
-                          {u.wilayahAssignments.length > 0 && (
-                            <div className="flex flex-wrap gap-1.5 mb-3">
-                              {u.wilayahAssignments.map(wa => (
-                                <span key={wa.id} className="px-2 py-0.5 bg-white border border-slate-200 rounded text-[10px] text-slate-600 font-semibold">
-                                  {wa.wilayah.kode} {wa.wilayah.nama}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                          <div className="flex items-center gap-2 pt-3 border-t border-slate-200">
-                            <span className={`flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest ${
-                              u.isActive ? 'text-emerald-600' : 'text-rose-600'
-                            }`}>
-                              <span className={`w-1.5 h-1.5 rounded-full ${u.isActive ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
-                              {u.isActive ? 'Aktif' : 'Nonaktif'}
-                            </span>
-                            <span className="flex-1"></span>
-                            <button title="Edit akun" aria-label={`Edit akun ${u.nama}`} disabled={busyUserId !== null} onClick={() => handleOpenEditUser(u)} className="text-slate-400 hover:text-primary transition-colors p-1 rounded hover:bg-primary/5">
-                              <span className="material-symbols-outlined text-[18px]">edit</span>
-                            </button>
-                            <button title={u.isActive ? 'Nonaktifkan akun' : 'Aktifkan akun'} aria-label={`${u.isActive ? 'Nonaktifkan' : 'Aktifkan'} akun ${u.nama}`} disabled={busyUserId !== null} onClick={() => handleToggleUserActive(u)} className={`transition-colors p-1 rounded ${u.isActive ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50' : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'}`}>
-                              <span className="material-symbols-outlined text-[18px]">{u.isActive ? 'person_off' : 'person'}</span>
-                            </button>
-                            <button title="Hapus permanen" aria-label={`Hapus permanen akun ${u.nama}`} disabled={busyUserId !== null} onClick={() => handleDeleteUser(u)} className="text-rose-600 hover:bg-rose-50 transition-colors p-1 rounded disabled:opacity-50">
-                              <span className="material-symbols-outlined text-[18px]">delete_forever</span>
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        {activeMenu === 'akun' && isAdmin && <AdminAccounts userSearchQuery={userSearchQuery} setUserSearchQuery={setUserSearchQuery} handleOpenCreateUser={handleOpenCreateUser} managedUsers={managedUsers} ROLE_LABEL={ROLE_LABEL} busyUserId={busyUserId} handleOpenEditUser={handleOpenEditUser} handleToggleUserActive={handleToggleUserActive} handleDeleteUser={handleDeleteUser} />}
 
         {/* ── SETTINGS VIEW ──────────────────────────────────── */}
-        {activeMenu === 'settings' && (
-          <div className="flex-1 overflow-y-auto p-4 md:p-8">
-            <div className="max-w-3xl mx-auto space-y-8">
-              {/* Settings Header */}
-              <div className="text-center md:text-left">
-                <h2 className="text-2xl font-extrabold text-slate-800 tracking-tight flex items-center justify-center md:justify-start gap-3">
-                  <span className="material-symbols-outlined text-primary text-[32px]" style={{ fontVariationSettings: "'FILL' 1" }}>settings</span>
-                  Pengaturan
-                </h2>
-                <p className="text-sm text-slate-500 mt-2">Kelola sirine darurat, kategori temuan, dan pengaturan sistem lainnya.</p>
-              </div>
-
-              {isAdmin && <LoginPhotoSettings />}
-
-              {/* ── Section 1: Sirine ──────────────────────────────── */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-rose-50 flex items-center justify-center shrink-0">
-                    <span className="material-symbols-outlined text-rose-600 text-[22px]">notifications_active</span>
-                  </div>
-                  <div className="min-w-0">
-                    <h3 className="font-bold text-slate-800 text-[15px]">Pengaturan Sirine Darurat</h3>
-                    <p className="text-xs text-slate-500 truncate">Atur jenis suara alarm saat ada laporan darurat masuk</p>
-                  </div>
-                </div>
-                <div className="p-5 space-y-5">
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-3">Pilih Jenis Sirine</label>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      {([
-                        { value: 'off' as NotificationSound, label: 'Mati', icon: 'notifications_off', desc: 'Tidak ada suara' },
-                        { value: 'siren' as NotificationSound, label: 'Sirine', icon: 'emergency', desc: 'Suara sirine darurat' },
-                        { value: 'beep' as NotificationSound, label: 'Beep', icon: 'campaign', desc: 'Suara beep berulang' },
-                        { value: 'chime' as NotificationSound, label: 'Lonceng', icon: 'notifications', desc: 'Suara lonceng lembut' },
-                      ]).map(s => (
-                        <button
-                          key={s.value}
-                          onClick={() => handleAlertSoundChange(s.value)}
-                          disabled={savingAlertSound}
-                          className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all duration-200 min-h-[100px] ${
-                            alertSound === s.value
-                              ? s.value === 'off'
-                                ? 'border-slate-400 bg-slate-50 text-slate-700 shadow-md'
-                                : 'border-rose-500 bg-rose-50 text-rose-700 shadow-md shadow-rose-100'
-                              : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:border-slate-300'
-                          } disabled:opacity-60 disabled:cursor-wait`}
-                        >
-                          <span className="material-symbols-outlined text-[28px] mb-1.5" style={alertSound === s.value ? { fontVariationSettings: "'FILL' 1" } : {}}>{s.icon}</span>
-                          <span className="text-sm font-bold leading-tight">{s.label}</span>
-                          <span className="text-[10px] mt-1 opacity-70 leading-tight text-center">{s.desc}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="bg-slate-50 rounded-xl p-4 flex items-start gap-3">
-                    <span className="material-symbols-outlined text-slate-400 text-[20px] mt-0.5 shrink-0">info</span>
-                    <div className="text-xs text-slate-600 leading-relaxed">
-                      <p className="font-semibold text-slate-700 mb-1">Bagaimana alarm bekerja?</p>
-                      <p>Hanya laporan dengan tingkat <strong>Darurat (merah)</strong> yang memutar alarm secara berulang dan dibacakan melalui Text-to-Speech. Laporan <strong>Ringan (biru)</strong> tetap tercatat tanpa suara sirine.</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Section 2: Kategori Temuan ──────────────────── */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center shrink-0">
-                      <span className="material-symbols-outlined text-blue-600 text-[22px]">category</span>
-                    </div>
-                    <div className="min-w-0">
-                      <h3 className="font-bold text-slate-800 text-[15px]">Kelola Kategori Temuan</h3>
-                      <p className="text-xs text-slate-500 truncate">Kategori yang tampil saat petugas membuat laporan kendala</p>
-                    </div>
-                  </div>
-                  {canWrite && (
-                    <button
-                      onClick={() => {
-                        setEditingKategori(null);
-                        setKategoriForm({ key: '', label: '', icon: 'warning', color: 'error' });
-                        setShowKategoriModal(true);
-                      }}
-                      className="flex items-center gap-1.5 px-4 py-2.5 bg-primary text-white text-xs font-bold uppercase tracking-wider rounded-xl hover:bg-primary/90 transition-colors shadow-sm shrink-0"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">add</span>
-                      <span className="hidden sm:inline">Tambah</span>
-                    </button>
-                  )}
-                </div>
-                <div className="p-5">
-                  {kategoriList.length === 0 ? (
-                    <div className="text-center py-10">
-                      <span className="material-symbols-outlined text-slate-300 text-[48px]">category</span>
-                      <p className="text-sm text-slate-400 mt-2">Belum ada kategori. Tambahkan kategori pertama!</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2.5">
-                      {canWrite && kategoriList.length > 1 && (
-                        <p className="flex items-center gap-1.5 text-[11px] text-slate-400 mb-1">
-                          <span className="material-symbols-outlined text-[14px]">drag_indicator</span>
-                          Seret kartu untuk mengatur urutan tampil di petugas
-                          {reorderingKategori && <span className="text-primary font-medium">· menyimpan…</span>}
-                        </p>
-                      )}
-                      {kategoriList.map(k => (
-                        <div
-                          key={k.id}
-                          draggable={canWrite}
-                          onDragStart={() => canWrite && setDragKategoriId(k.id)}
-                          onDragEnd={() => { setDragKategoriId(null); setDragOverKategoriId(null); }}
-                          onDragOver={e => { if (canWrite && dragKategoriId != null) { e.preventDefault(); setDragOverKategoriId(k.id); } }}
-                          onDrop={e => { if (canWrite) { e.preventDefault(); handleKategoriDrop(k.id); } }}
-                          className={`flex items-center justify-between p-4 rounded-xl border transition-all ${canWrite ? 'cursor-grab active:cursor-grabbing' : ''} ${
-                            dragKategoriId === k.id ? 'opacity-40' : ''
-                          } ${
-                            dragOverKategoriId === k.id && dragKategoriId !== k.id ? 'ring-2 ring-primary ring-offset-1' : ''
-                          } ${
-                            k.isActive
-                              ? k.color === 'error'
-                                ? 'bg-rose-50/50 border-rose-200 hover:shadow-sm'
-                                : 'bg-blue-50/50 border-blue-200 hover:shadow-sm'
-                              : 'bg-slate-50 border-slate-200 opacity-60'
-                          }`}
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            {canWrite && (
-                              <span className="material-symbols-outlined text-[18px] text-slate-300 shrink-0 -ml-1" title="Seret untuk mengurutkan">drag_indicator</span>
-                            )}
-                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                              k.color === 'error' ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-600'
-                            }`}>
-                              <span className="material-symbols-outlined text-[22px]">{k.icon}</span>
-                            </div>
-                            <div className="min-w-0">
-                              <p className={`text-sm font-bold truncate ${k.isActive ? 'text-slate-800' : 'text-slate-400 line-through'}`}>{k.label}</p>
-                              <p className="text-[10px] text-slate-400 font-mono truncate">{k.key}</p>
-                            </div>
-                            {!k.isActive && (
-                              <span className="text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-slate-200 text-slate-500 shrink-0">Nonaktif</span>
-                            )}
-                          </div>
-                          {canWrite && (
-                            <div className="flex items-center gap-1 shrink-0 ml-2">
-                              <button
-                                onClick={() => {
-                                  setEditingKategori(k);
-                                  setKategoriForm({ key: k.key, label: k.label, icon: k.icon, color: k.color });
-                                  setShowKategoriModal(true);
-                                }}
-                                className="p-2 rounded-lg hover:bg-white text-slate-500 hover:text-primary transition-colors"
-                                title="Edit kategori"
-                              >
-                                <span className="material-symbols-outlined text-[18px]">edit</span>
-                              </button>
-                              <button
-                                onClick={async () => {
-                                  if (!(await showConfirm(`Hapus kategori "${k.label}"? Tindakan ini permanen.`))) return;
-                                  try {
-                                    await api.delete(`/admin/kategori-temuan/${k.id}`);
-                                    fetchKategori();
-                                    showToast('Kategori dihapus', 'success');
-                                  } catch (err: unknown) {
-                                    showToast(getApiErrorMessage(err, 'Gagal menghapus'), 'error');
-                                  }
-                                }}
-                                className="p-2 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors"
-                                title="Hapus kategori"
-                              >
-                                <span className="material-symbols-outlined text-[18px]">delete</span>
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* ── Section 3: Info Sistem ──────────────────────── */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center shrink-0">
-                    <span className="material-symbols-outlined text-slate-600 text-[22px]">info</span>
-                  </div>
-                  <div className="min-w-0">
-                    <h3 className="font-bold text-slate-800 text-[15px]">Informasi Sistem</h3>
-                    <p className="text-xs text-slate-500 truncate">Detail aplikasi dan sesi Anda saat ini</p>
-                  </div>
-                </div>
-                <div className="p-5">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="bg-slate-50 rounded-xl p-4 flex flex-col">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Aplikasi</p>
-                      <p className="text-sm font-bold text-slate-800 leading-snug">KAI RailTrack PPJ</p>
-                      <p className="text-xs text-slate-500 mt-auto pt-1">v1.0.0 — DAOP 6 Yogyakarta</p>
-                    </div>
-                    <div className="bg-slate-50 rounded-xl p-4 flex flex-col">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Login Sebagai</p>
-                      <p className="text-sm font-bold text-slate-800 leading-snug">{user?.nama || '-'}</p>
-                      <p className="text-xs text-slate-500 mt-auto pt-1">Role: {ROLE_LABEL[userRole] || userRole}</p>
-                    </div>
-                    <div className="bg-slate-50 rounded-xl p-4 flex flex-col">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Statistik</p>
-                      <p className="text-sm font-bold text-slate-800 leading-snug">{stats?.totalPetugas ?? '-'} Petugas</p>
-                      <p className="text-xs text-slate-500 mt-auto pt-1">{kategoriList.filter(k => k.isActive).length} kategori aktif</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-            </div>
-          </div>
-        )}
+        {activeMenu === 'settings' && <AdminSettings isAdmin={isAdmin} handleAlertSoundChange={handleAlertSoundChange} savingAlertSound={savingAlertSound} alertSound={alertSound} canWrite={canWrite} setEditingKategori={setEditingKategori} setKategoriForm={setKategoriForm} setShowKategoriModal={setShowKategoriModal} kategoriList={kategoriList} reorderingKategori={reorderingKategori} setDragKategoriId={setDragKategoriId} setDragOverKategoriId={setDragOverKategoriId} dragKategoriId={dragKategoriId} handleKategoriDrop={handleKategoriDrop} dragOverKategoriId={dragOverKategoriId} fetchKategori={fetchKategori} user={user} ROLE_LABEL={ROLE_LABEL} userRole={userRole} stats={stats} />}
 
       </div>
 
       {/* Create/Edit User Modal (Admin Only) */}
-      {showUserModal && isAdmin && (
-        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
-            <div className="bg-slate-800 px-6 py-4 flex items-center justify-between shrink-0">
-              <h3 className="text-base font-bold text-white flex items-center gap-3 tracking-wide">
-                <span className="material-symbols-outlined text-primary text-[20px]">{editingUser ? 'edit' : 'person_add'}</span>
-                {editingUser ? 'EDIT AKUN' : 'BUAT AKUN BARU'}
-              </h3>
-              <button onClick={() => setShowUserModal(false)} className="text-slate-400 hover:text-white transition-colors"><span className="material-symbols-outlined">close</span></button>
-            </div>
-            <div className="overflow-y-auto p-6 space-y-5 flex-1 bg-slate-50/50">
-              {/* NIPP */}
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">NIPP</label>
-                <input value={userForm.nipp} onChange={e => setUserForm(f => ({ ...f, nipp: e.target.value }))} disabled={!!editingUser} placeholder="Contoh: QC-A001" className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-medium disabled:bg-slate-100 disabled:text-slate-400" />
-              </div>
-              {/* Nama */}
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Nama Lengkap</label>
-                <input value={userForm.nama} onChange={e => setUserForm(f => ({ ...f, nama: e.target.value }))} placeholder="Nama pengguna" className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-medium" />
-              </div>
-              {/* Password */}
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">{editingUser ? 'Password Baru (opsional)' : 'Password'}</label>
-                <input type="password" value={userForm.password} onChange={e => setUserForm(f => ({ ...f, password: e.target.value }))} placeholder={editingUser ? 'Kosongkan jika tidak diubah' : 'Min. 6 karakter'} className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-medium" />
-              </div>
-              {/* Role */}
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Role</label>
-                <select value={userForm.role} onChange={e => setUserForm(f => ({ ...f, role: e.target.value, wilayahIds: [], petugasIds: [] }))} className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-medium">
-                  <option value="ppj">PPJ (Petugas Pemeriksa Jalur)</option>
-                  <option value="qc">QC (Quality Control)</option>
-                  <option value="kupt">KUPT</option>
-                  <option value="guest">Guest (monitoring)</option>
-                </select>
-              </div>
-              {/* Wilayah (for QC/KUPT) */}
-              {(userForm.role === 'qc' || userForm.role === 'kupt') && (
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">
-                    Wilayah {userForm.role === 'kupt' ? '(Minimal 2)' : '(Pilih beberapa)'}
-                  </label>
-                  <div className="border border-slate-300 rounded-xl bg-white p-3 max-h-48 overflow-y-auto space-y-2">
-                    {allWilayah.map(w => {
-                      const checked = userForm.wilayahIds.includes(w.id);
-                      return (
-                        <label key={w.id} className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${checked ? 'bg-primary/5 border border-primary/20' : 'hover:bg-slate-50 border border-transparent'}`}>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => {
-                              setUserForm(f => ({ ...f, wilayahIds: checked ? f.wilayahIds.filter(id => id !== w.id) : [...f.wilayahIds, w.id] }));
-                            }}
-                            className="rounded border-slate-300 text-primary focus:ring-primary"
-                          />
-                          <div className="flex-1">
-                            <span className="text-sm font-semibold text-slate-800">{w.kode}</span>
-                            <span className="text-xs text-slate-500 ml-2">{w.nama}</span>
-                          </div>
-                        </label>
-                      );
-                    })}
-                  </div>
-                  {userForm.wilayahIds.length > 0 && (
-                    <p className={`text-xs font-semibold mt-2 ${userForm.role === 'kupt' && userForm.wilayahIds.length < 2 ? 'text-amber-600' : 'text-primary'}`}>
-                      {userForm.wilayahIds.length} wilayah dipilih{userForm.role === 'kupt' && userForm.wilayahIds.length < 2 ? ' — pilih 1 lagi' : ''}
-                    </p>
-                  )}
-                </div>
-              )}
-              {/* Petugas managed by KUPT */}
-              {userForm.role === 'kupt' && (
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Petugas yang Dikelola</label>
-                  <div className="relative mb-2">
-                    <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[17px]">search</span>
-                    <input
-                      value={managedPetugasSearch}
-                      onChange={e => setManagedPetugasSearch(e.target.value)}
-                      placeholder="Cari nama atau NIPP petugas..."
-                      className="w-full border border-slate-300 rounded-xl pl-9 pr-4 py-2.5 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none"
-                    />
-                  </div>
-                  <div className="border border-slate-300 rounded-xl bg-white p-3 max-h-56 overflow-y-auto space-y-2">
-                    {managedUsers
-                      .filter(candidate => candidate.role === 'ppj')
-                      .filter(candidate => {
-                        const query = managedPetugasSearch.trim().toLowerCase();
-                        return !query || candidate.nama.toLowerCase().includes(query) || candidate.nipp.toLowerCase().includes(query);
-                      })
-                      .map(candidate => {
-                        const checked = userForm.petugasIds.includes(candidate.id);
-                        const currentManager = candidate.managerId
-                          ? managedUsers.find(manager => manager.id === candidate.managerId)
-                          : null;
-                        const managerLabel = candidate.managerId === editingUser?.id
-                          ? 'Dikelola KUPT ini'
-                          : currentManager
-                            ? `Saat ini: ${currentManager.nama}`
-                            : candidate.managerId
-                              ? 'Saat ini: Super Admin'
-                              : 'Belum ada pengelola';
-                        return (
-                          <label key={candidate.id} className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${checked ? 'bg-primary/5 border border-primary/20' : 'hover:bg-slate-50 border border-transparent'}`}>
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => setUserForm(formValue => ({
-                                ...formValue,
-                                petugasIds: checked
-                                  ? formValue.petugasIds.filter(id => id !== candidate.id)
-                                  : [...formValue.petugasIds, candidate.id],
-                              }))}
-                              className="rounded border-slate-300 text-primary focus:ring-primary"
-                            />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-semibold text-slate-800 truncate">{candidate.nama}</p>
-                              <p className="text-[11px] text-slate-500">{candidate.nipp} · {managerLabel}</p>
-                            </div>
-                            {!candidate.isActive && <span className="text-[9px] font-bold uppercase text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded">Nonaktif</span>}
-                          </label>
-                        );
-                      })}
-                    {managedUsers.filter(candidate => candidate.role === 'ppj').length === 0 && (
-                      <p className="text-xs text-slate-500 text-center py-3">Belum ada akun petugas PPJ.</p>
-                    )}
-                  </div>
-                  <p className="text-xs text-primary font-semibold mt-2">{userForm.petugasIds.length} petugas dipilih</p>
-                  <p className="text-[11px] text-slate-500 mt-1">Petugas yang sebelumnya dikelola pihak lain akan dipindahkan ke KUPT ini.</p>
-                </div>
-              )}
-            </div>
-            <div className="p-5 border-t border-slate-200 flex gap-3 shrink-0 bg-white">
-              <button onClick={() => setShowUserModal(false)} className="flex-1 py-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50 transition-colors uppercase tracking-wider">Batal</button>
-              <button onClick={handleSaveUser} disabled={savingUser} className="flex-[2] py-3 rounded-xl bg-primary text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-primary/20 hover:bg-primary/90 disabled:opacity-60 transition-all active:scale-[0.98] uppercase tracking-wider">
-                <span className="material-symbols-outlined text-[18px]">save</span>
-                {savingUser ? 'Menyimpan...' : (editingUser ? 'Simpan Perubahan' : 'Buat Akun')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {showUserModal && isAdmin && <UserEditor editingUser={editingUser} setShowUserModal={setShowUserModal} userForm={userForm} setUserForm={setUserForm} allWilayah={allWilayah} managedPetugasSearch={managedPetugasSearch} setManagedPetugasSearch={setManagedPetugasSearch} managedUsers={managedUsers} handleSaveUser={handleSaveUser} savingUser={savingUser} />}
 
 
 
@@ -1711,346 +1279,13 @@ export default function AdminPage() {
       )}
 
       {/* Assign Task Modal */}
-      {showTaskModal && (
-        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
-            <div className="bg-slate-800 px-6 py-4 flex items-center justify-between shrink-0">
-              <h3 className="text-base font-bold text-white flex items-center gap-3 tracking-wide"><span className="material-symbols-outlined text-primary text-[20px]">add_task</span> TUGASKAN PETUGAS</h3>
-              <button onClick={() => setShowTaskModal(false)} className="text-slate-400 hover:text-white transition-colors flex items-center"><span className="material-symbols-outlined">close</span></button>
-            </div>
-            <div className="overflow-y-auto p-6 space-y-5 flex-1 bg-slate-50/50">
-              {/* Petugas */}
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Pilih Petugas Pemeriksa</label>
-                <select value={form.assignedTo} onChange={e => setForm(f => ({ ...f, assignedTo: e.target.value }))} className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-medium">
-                  <option value="">-- Silakan Pilih Petugas --</option>
-                  {petugas.map(p => <option key={p.id} value={p.id}>{p.nama} ({p.nipp})</option>)}
-                </select>
-              </div>
-
-              {/* Inspection point dropdowns: stations + registered MAP locations */}
-              <div className="bg-white p-4 border border-slate-200 rounded-xl shadow-sm">
-                <label className="text-[10px] font-bold text-slate-700 uppercase tracking-widest block mb-3 flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-primary text-[16px]">train</span> Titik Lokasi Pengecekan
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {/* Start inspection point */}
-                  <div className="flex flex-col gap-2">
-                    <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[14px]">trip_origin</span> Titik Awal
-                    </label>
-                    <select
-                      value={form.startMapLocationId ? `map:${form.startMapLocationId}` : form.startPointName ? `station:${form.startPointName}` : ''}
-                      onChange={e => handleStartPointChange(e.target.value)}
-                      className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none shadow-sm font-medium"
-                    >
-                      <option value="">-- Pilih Titik Awal --</option>
-                      <optgroup label="Stasiun">
-                        {filteredStations.map(s => (
-                          <option key={s.name} value={`station:${s.name}`}>
-                            {s.name} ({s.lat.toFixed(4)}, {s.lng.toFixed(4)})
-                          </option>
-                        ))}
-                      </optgroup>
-                      {isAdmin && registeredMapLocations.length > 0 && (
-                        <optgroup label="Titik MAP Terdaftar">
-                          {registeredMapLocations.map(location => (
-                            <option key={location.id} value={`map:${location.id}`}>
-                              {location.name} ({location.latitude.toFixed(4)}, {location.longitude.toFixed(4)})
-                            </option>
-                          ))}
-                        </optgroup>
-                      )}
-                    </select>
-
-                    {form.startPointLat && (
-                      <div className="flex items-center gap-1.5 text-[10px] text-emerald-600 font-semibold bg-emerald-50 rounded-lg px-3 py-1.5 border border-emerald-100">
-                        <span className="material-symbols-outlined text-[14px]">check_circle</span>
-                        {form.startPointLat}, {form.startPointLong}
-                      </div>
-                    )}
-                  </div>
-                  {/* End inspection point */}
-                  <div className="flex flex-col gap-2">
-                    <label className="text-[10px] font-bold text-rose-600 uppercase tracking-widest flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[14px]">location_on</span> Titik Akhir
-                    </label>
-                    <select
-                      value={form.endMapLocationId ? `map:${form.endMapLocationId}` : form.endPointName ? `station:${form.endPointName}` : ''}
-                      onChange={e => handleEndPointChange(e.target.value)}
-                      className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none shadow-sm font-medium"
-                    >
-                      <option value="">-- Pilih Titik Akhir --</option>
-                      <optgroup label="Stasiun">
-                        {filteredStations.map(s => (
-                          <option key={s.name} value={`station:${s.name}`}>
-                            {s.name} ({s.lat.toFixed(4)}, {s.lng.toFixed(4)})
-                          </option>
-                        ))}
-                      </optgroup>
-                      {isAdmin && registeredMapLocations.length > 0 && (
-                        <optgroup label="Titik MAP Terdaftar">
-                          {registeredMapLocations.map(location => (
-                            <option key={location.id} value={`map:${location.id}`}>
-                              {location.name} ({location.latitude.toFixed(4)}, {location.longitude.toFixed(4)})
-                            </option>
-                          ))}
-                        </optgroup>
-                      )}
-                    </select>
-                    {form.endPointLat && (
-                      <div className="flex items-center gap-1.5 text-[10px] text-rose-600 font-semibold bg-rose-50 rounded-lg px-3 py-1.5 border border-rose-100">
-                        <span className="material-symbols-outlined text-[14px]">check_circle</span>
-                        {form.endPointLat}, {form.endPointLong}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                {form.startPointLat && form.endPointLat && (
-                  <div className="mt-4 flex items-center justify-between bg-blue-50 py-2.5 px-4 rounded-lg border border-blue-100">
-                    <span className="text-[10px] font-bold text-blue-800 uppercase tracking-widest">Estimasi Jarak</span>
-                    <span className="text-sm font-extrabold text-blue-700">{haversineKm(parseFloat(form.startPointLat), parseFloat(form.startPointLong), parseFloat(form.endPointLat), parseFloat(form.endPointLong))} km</span>
-                  </div>
-                )}
-                {isAdmin && (
-                  <p className="mt-3 text-[10px] text-slate-500 flex items-center gap-1.5">
-                    <span className={`material-symbols-outlined text-[14px] ${loadingTaskLocations ? 'animate-spin' : 'text-primary'}`}>{loadingTaskLocations ? 'progress_activity' : 'add_location_alt'}</span>
-                    {loadingTaskLocations ? 'Mengambil titik MAP terdaftar...' : `${registeredMapLocations.length} titik dari menu MAP tersedia untuk penugasan.`}
-                  </p>
-                )}
-              </div>
-
-              {/* Nama Jalur */}
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Nama Jalur Inspeksi</label>
-                <input value={form.jalur} onChange={e => setForm(f => ({ ...f, jalur: e.target.value }))} placeholder="Otomatis terisi dari titik yang dipilih" className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-medium" />
-              </div>
-
-              {/* Tanggal */}
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Tanggal Inspeksi</label>
-                <input type="date" value={form.tanggal} onChange={e => setForm(f => ({ ...f, tanggal: e.target.value }))} className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-medium" />
-              </div>
-
-              {/* Jam Mulai & Jam Selesai */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5 flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[14px] text-emerald-600">schedule</span> Jam Mulai
-                  </label>
-                  <input type="time" value={form.jamMulai} onChange={e => setForm(f => ({ ...f, jamMulai: e.target.value }))} className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-medium" />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5 flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[14px] text-rose-600">schedule</span> Jam Selesai
-                  </label>
-                  <input type="time" value={form.jamSelesai} onChange={e => setForm(f => ({ ...f, jamSelesai: e.target.value }))} className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-medium" />
-                </div>
-              </div>
-            </div>
-
-            <div className="p-5 border-t border-slate-200 flex gap-3 shrink-0 bg-white">
-              <button onClick={() => setShowTaskModal(false)} className="flex-1 py-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50 transition-colors uppercase tracking-wider">Batal</button>
-              <button onClick={handleCreateTugas} disabled={submitting} className="flex-[2] py-3 rounded-xl bg-primary text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-primary/20 hover:bg-primary/90 disabled:opacity-60 transition-all active:scale-[0.98] uppercase tracking-wider">
-                <span className="material-symbols-outlined text-[18px]">send</span>
-                {submitting ? 'Menyimpan...' : 'Simpan & Tugaskan'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {showTaskModal && <AssignmentEditor setShowTaskModal={setShowTaskModal} form={form} setForm={setForm} petugas={petugas} handleStartPointChange={handleStartPointChange} filteredStations={filteredStations} isAdmin={isAdmin} registeredMapLocations={registeredMapLocations} handleEndPointChange={handleEndPointChange} haversineKm={haversineKm} loadingTaskLocations={loadingTaskLocations} handleCreateTugas={handleCreateTugas} submitting={submitting} />}
 
       {/* Add Petugas Modal */}
-      {showAddPetugasModal && (
-        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[85vh]">
-            <div className="bg-slate-800 px-6 py-4 flex items-center justify-between shrink-0">
-              <h3 className="text-base font-bold text-white flex items-center gap-3"><span className="material-symbols-outlined text-primary text-[20px]">person_add</span> TAMBAH PETUGAS</h3>
-              <button onClick={() => setShowAddPetugasModal(false)} className="text-slate-400 hover:text-white transition-colors"><span className="material-symbols-outlined">close</span></button>
-            </div>
-            <div className="p-5 border-b border-slate-100 shrink-0">
-              <div className="relative">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
-                <input 
-                  value={searchPetugas} 
-                  onChange={e => setSearchPetugas(e.target.value)} 
-                  placeholder="Cari nama atau NIPP petugas..." 
-                  className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-xl text-sm bg-slate-50 focus:bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-all"
-                />
-              </div>
-            </div>
-            <div className="flex-1 overflow-y-auto p-2 bg-slate-50/50">
-              {availablePetugas.length === 0 ? (
-                <div className="p-8 text-center text-slate-500 text-sm">Tidak ada petugas yang tersedia.</div>
-              ) : (
-                <div className="space-y-1.5 p-2">
-                  {availablePetugas
-                    .filter(p => p.nama.toLowerCase().includes(searchPetugas.toLowerCase()) || p.nipp.toLowerCase().includes(searchPetugas.toLowerCase()))
-                    .map(p => {
-                      const isSelected = selectedNipps.includes(p.nipp);
-                      return (
-                        <button 
-                          key={p.id}
-                          onClick={() => {
-                            if (isSelected) {
-                              setSelectedNipps(prev => prev.filter(n => n !== p.nipp));
-                            } else {
-                              setSelectedNipps(prev => [...prev, p.nipp]);
-                            }
-                          }}
-                          className={`w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${isSelected ? 'bg-primary-container/10 border-primary shadow-sm' : 'bg-white border-slate-200 hover:border-primary/50 hover:bg-slate-50'}`}
-                        >
-                          <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm text-white shrink-0" style={{ background: petugasColor(p.nipp) }}>
-                            {p.nama.substring(0, 2).toUpperCase()}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className={`font-bold truncate text-sm ${isSelected ? 'text-primary' : 'text-slate-800'}`}>{p.nama}</p>
-                            <p className="text-xs text-slate-500 font-medium">{p.nipp}</p>
-                          </div>
-                          {isSelected ? (
-                            <span className="material-symbols-outlined text-primary">check_circle</span>
-                          ) : (
-                            <div className="w-5 h-5 rounded-full border-2 border-slate-300"></div>
-                          )}
-                        </button>
-                      );
-                  })}
-                  {availablePetugas.filter(p => p.nama.toLowerCase().includes(searchPetugas.toLowerCase()) || p.nipp.toLowerCase().includes(searchPetugas.toLowerCase())).length === 0 && (
-                    <div className="p-4 text-center text-slate-500 text-sm">Pencarian tidak ditemukan.</div>
-                  )}
-                </div>
-              )}
-            </div>
-            <div className="p-5 border-t border-slate-100 flex gap-3 bg-white shrink-0">
-              <button onClick={() => setShowAddPetugasModal(false)} className="flex-1 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50 transition-colors uppercase tracking-wider">Batal</button>
-              <button onClick={handleAddPetugas} disabled={addingPetugas || selectedNipps.length === 0} className="flex-[2] py-2.5 rounded-xl bg-primary text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md hover:bg-primary/90 disabled:opacity-60 transition-all active:scale-[0.98] uppercase tracking-wider">
-                {addingPetugas ? 'Menambahkan...' : `Tambahkan (${selectedNipps.length})`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {showAddPetugasModal && <PetugasPicker setShowAddPetugasModal={setShowAddPetugasModal} searchPetugas={searchPetugas} setSearchPetugas={setSearchPetugas} availablePetugas={availablePetugas} selectedNipps={selectedNipps} setSelectedNipps={setSelectedNipps} handleAddPetugas={handleAddPetugas} addingPetugas={addingPetugas} />}
 
       {/* Riwayat Pekerjaan Modal */}
-      {selectedPetugasHistory && (
-        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[85vh]">
-            <div className="bg-slate-800 px-6 py-4 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm text-white shadow-inner shrink-0" style={{ background: petugasColor(selectedPetugasHistory.nipp) }}>
-                  {selectedPetugasHistory.nama.substring(0, 2).toUpperCase()}
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white">{selectedPetugasHistory.nama}</h3>
-                  <p className="text-xs text-slate-400">{selectedPetugasHistory.nipp}</p>
-                </div>
-              </div>
-              <button onClick={() => setSelectedPetugasHistory(null)} className="text-slate-400 hover:text-white transition-colors"><span className="material-symbols-outlined">close</span></button>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto p-5 bg-slate-50/50">
-              <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Riwayat Pekerjaan Tracking</h4>
-              <div className="space-y-3">
-                {tugas.filter(t => t.user.nipp === selectedPetugasHistory.nipp).length === 0 ? (
-                  <div className="text-center py-8">
-                    <span className="material-symbols-outlined text-slate-300 text-4xl mb-2">history</span>
-                    <p className="text-slate-500 text-sm font-medium">Belum ada riwayat pekerjaan.</p>
-                  </div>
-                ) : (
-                  tugas.filter(t => t.user.nipp === selectedPetugasHistory.nipp).map(t => {
-                    const latestTracking = t.tracking?.[0];
-                    const laporanList = latestTracking?.laporan || [];
-                    
-                    return (
-                      <div key={t.id} className={`rounded-xl border shadow-sm relative overflow-hidden mb-4 ${t.status === 'need_approval' ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200'}`}>
-                        <div className={`absolute top-0 left-0 w-1.5 h-full ${t.status === 'completed' ? 'bg-primary' : t.status === 'need_approval' ? 'bg-amber-400' : t.status === 'in_progress' ? 'bg-blue-500' : 'bg-slate-300'}`}></div>
-                        
-                        <div className="p-4 pl-5 border-b border-slate-100">
-                          <div className="flex justify-between items-start gap-2 mb-1">
-                            <p className="font-bold text-slate-800 text-sm leading-snug">{t.jalur}</p>
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border shrink-0 ${STATUS_COLOR[t.status]}`}>{STATUS_LABEL[t.status]}</span>
-                          </div>
-                          <p className="text-xs font-semibold text-slate-500 mb-2 flex items-center gap-1">
-                            <span className="material-symbols-outlined text-[14px]">calendar_today</span> 
-                            {new Date(t.tanggal).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
-                          </p>
-                          <div className="flex items-center gap-4 pt-2">
-                            <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                              <span className="material-symbols-outlined text-[16px] text-slate-400">route</span>
-                              <span className="font-semibold">{haversineKm(t.startPointLat, t.startPointLong, t.endPointLat, t.endPointLong)} km</span>
-                            </div>
-                            <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                              <span className="material-symbols-outlined text-[16px] text-slate-400">timer</span>
-                              <span className="font-semibold">{
-                                latestTracking?.durasi
-                                  ? latestTracking.durasi >= 3600
-                                    ? `${Math.floor(latestTracking.durasi / 3600)} jam ${Math.floor((latestTracking.durasi % 3600) / 60)} menit`
-                                    : latestTracking.durasi >= 60
-                                    ? `${Math.floor(latestTracking.durasi / 60)} menit`
-                                    : `${latestTracking.durasi} detik`
-                                  : latestTracking?.startTime && latestTracking?.endTime
-                                  ? `${Math.floor((new Date(latestTracking.endTime).getTime() - new Date(latestTracking.startTime).getTime()) / 60000)} menit`
-                                  : '-'
-                              }</span>
-                            </div>
-                            <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                              <span className="material-symbols-outlined text-[16px] text-slate-400">flag</span>
-                              <span className="font-semibold">{laporanList.length} laporan</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Detail Laporan Kendala */}
-                        {laporanList.length > 0 && (
-                          <div className="bg-slate-50 p-4 pl-5">
-                            <h5 className="text-xs font-bold text-slate-700 mb-3 flex items-center gap-2">
-                              <span className="material-symbols-outlined text-rose-500 text-[16px]">warning</span> Laporan Kendala
-                            </h5>
-                            <div className="space-y-3">
-                              {laporanList.map((lap, idx) => (
-                                <div key={lap.id} className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
-                                  {lap.foto && (
-                                    <div className="w-full h-32 relative">
-                                      <img src={lap.foto} alt={`Foto kendala ${idx + 1}`} className="w-full h-full object-cover" />
-                                    </div>
-                                  )}
-                                  <div className="p-3 flex flex-col gap-2">
-                                    <div className="flex items-center justify-between">
-                                      <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-widest ${JENIS_COLOR[lap.jenisTemuan] ?? 'bg-slate-100 text-slate-700'}`}>
-                                        {JENIS_LABEL[lap.jenisTemuan] ?? lap.jenisTemuan}
-                                      </span>
-                                      <span className="font-medium text-[10px] text-slate-500">
-                                        {new Date(lap.createdAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB
-                                      </span>
-                                    </div>
-                                    {lap.deskripsi && <p className="text-xs text-slate-700">{lap.deskripsi}</p>}
-                                    <div className="flex items-center gap-1 text-[10px] text-slate-500 font-medium">
-                                      <span className="material-symbols-outlined text-[14px]">location_on</span>
-                                      <span>{lap.latitude.toFixed(5)}, {lap.longitude.toFixed(5)}</span>
-                                    </div>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {laporanList.length === 0 && (
-                          <div className="bg-slate-50 p-3 pl-5 border-t border-slate-100">
-                            <div className="flex items-center gap-2 text-slate-500 text-xs font-medium">
-                              <span className="material-symbols-outlined text-emerald-500 text-[18px]">verified</span>
-                              Tidak ada kendala yang dilaporkan.
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {selectedPetugasHistory && <PetugasHistory selectedPetugasHistory={selectedPetugasHistory} setSelectedPetugasHistory={setSelectedPetugasHistory} tugas={petugasHistoryTasks} STATUS_COLOR={STATUS_COLOR} STATUS_LABEL={STATUS_LABEL} haversineKm={haversineKm} JENIS_COLOR={JENIS_COLOR} JENIS_LABEL={JENIS_LABEL} />}
 
       {/* ── Task Detail Modal ───────────────────────────── */}
       {selectedTugasDetail && (
@@ -2068,187 +1303,10 @@ export default function AdminPage() {
       )}
 
       {/* ── Import Result Modal ──────────────────────────── */}
-      {importResult && (
-        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-200">
-            <div className="bg-slate-800 px-6 py-4 flex items-center justify-between shrink-0">
-              <h3 className="text-base font-bold text-white flex items-center gap-3 tracking-wide">
-                <span className="material-symbols-outlined text-emerald-400 text-[20px]">task_alt</span>
-                HASIL IMPORT EXCEL
-              </h3>
-              <button onClick={() => setImportResult(null)} className="text-slate-400 hover:text-white transition-colors flex items-center">
-                <span className="material-symbols-outlined">close</span>
-              </button>
-            </div>
-
-            {/* Summary */}
-            <div className="p-5 border-b border-slate-100 bg-slate-50/50">
-              <div className="grid grid-cols-3 gap-3">
-                <div className="bg-white rounded-xl p-3 border border-slate-200 text-center">
-                  <p className="text-2xl font-extrabold text-slate-800">{importResult.total}</p>
-                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">Total Baris</p>
-                </div>
-                <div className="bg-emerald-50 rounded-xl p-3 border border-emerald-200 text-center">
-                  <p className="text-2xl font-extrabold text-emerald-700">{importResult.created}</p>
-                  <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest mt-0.5">Berhasil</p>
-                </div>
-                <div className={`rounded-xl p-3 border text-center ${importResult.failed > 0 ? 'bg-rose-50 border-rose-200' : 'bg-white border-slate-200'}`}>
-                  <p className={`text-2xl font-extrabold ${importResult.failed > 0 ? 'text-rose-700' : 'text-slate-400'}`}>{importResult.failed}</p>
-                  <p className={`text-[10px] font-bold uppercase tracking-widest mt-0.5 ${importResult.failed > 0 ? 'text-rose-600' : 'text-slate-500'}`}>Gagal</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Detail List */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-1.5">
-              {importResult.details.map((d, idx) => (
-                <div
-                  key={idx}
-                  className={`flex items-start gap-3 p-3 rounded-xl border text-sm ${
-                    d.status === 'success'
-                      ? 'bg-emerald-50/50 border-emerald-100'
-                      : 'bg-rose-50/50 border-rose-100'
-                  }`}
-                >
-                  <span className={`material-symbols-outlined text-[18px] mt-0.5 shrink-0 ${
-                    d.status === 'success' ? 'text-emerald-600' : 'text-rose-600'
-                  }`}>
-                    {d.status === 'success' ? 'check_circle' : 'error'}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-500">Baris {d.row}</span>
-                      {d.jalur && <span className="text-xs text-primary font-semibold truncate">{d.jalur}</span>}
-                    </div>
-                    <p className={`text-xs mt-0.5 ${d.status === 'success' ? 'text-emerald-700' : 'text-rose-700'}`}>
-                      {d.message}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Close Button */}
-            <div className="p-4 border-t border-slate-200 bg-white shrink-0">
-              <button
-                onClick={() => setImportResult(null)}
-                className="w-full py-3 rounded-xl bg-primary text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-primary/20 hover:bg-primary/90 transition-all active:scale-[0.98] uppercase tracking-wider"
-              >
-                <span className="material-symbols-outlined text-[18px]">done</span>
-                Tutup
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {importResult && <ImportResult setImportResult={setImportResult} importResult={importResult} />}
 
       {/* ═══ KATEGORI TEMUAN MODAL ═══ */}
-      {showKategoriModal && (
-        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
-            <div className="bg-slate-800 px-6 py-4 flex items-center justify-between shrink-0">
-              <h3 className="text-base font-bold text-white flex items-center gap-3 tracking-wide">
-                <span className="material-symbols-outlined text-rose-400 text-[20px]">category</span>
-                {editingKategori ? 'EDIT KATEGORI' : 'TAMBAH KATEGORI'}
-              </h3>
-              <button onClick={() => setShowKategoriModal(false)} className="text-slate-400 hover:text-white transition-colors">
-                <span className="material-symbols-outlined">close</span>
-              </button>
-            </div>
-            <div className="overflow-y-auto p-6 space-y-5 flex-1">
-              {/* Key */}
-              {!editingKategori && (
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Key (Unik, tanpa spasi)</label>
-                  <input
-                    value={kategoriForm.key}
-                    onChange={e => setKategoriForm(f => ({ ...f, key: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') }))}
-                    className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-mono"
-                    placeholder="contoh: patah_rel"
-                  />
-                </div>
-              )}
-              {/* Label */}
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Label (Tampil di UI)</label>
-                <input
-                  value={kategoriForm.label}
-                  onChange={e => setKategoriForm(f => ({ ...f, label: e.target.value }))}
-                  className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm"
-                  placeholder="contoh: Patah Rel"
-                />
-              </div>
-              {/* Color */}
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Tingkat Kategori</label>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setKategoriForm(f => ({ ...f, color: 'error' }))}
-                    className={`flex-1 py-3 rounded-xl border-2 text-sm font-bold flex items-center justify-center gap-2 transition-all ${kategoriForm.color === 'error' ? 'border-rose-500 bg-rose-50 text-rose-700 shadow-md' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'}`}
-                  >
-                    <div className="w-4 h-4 rounded-full bg-rose-500"></div> Darurat (Merah)
-                  </button>
-                  <button
-                    onClick={() => setKategoriForm(f => ({ ...f, color: 'primary' }))}
-                    className={`flex-1 py-3 rounded-xl border-2 text-sm font-bold flex items-center justify-center gap-2 transition-all ${kategoriForm.color === 'primary' ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-md' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'}`}
-                  >
-                    <div className="w-4 h-4 rounded-full bg-blue-500"></div> Ringan (Biru)
-                  </button>
-                </div>
-              </div>
-              {/* Icon Picker */}
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Pilih Ikon</label>
-                <div className="grid grid-cols-5 gap-2">
-                  {ICON_OPTIONS.map(icon => (
-                    <button
-                      key={icon}
-                      onClick={() => setKategoriForm(f => ({ ...f, icon }))}
-                      className={`flex flex-col items-center justify-center py-3 rounded-xl border-2 transition-all ${kategoriForm.icon === icon ? 'border-primary bg-primary/5 text-primary shadow-md' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:border-slate-300'}`}
-                    >
-                      <span className="material-symbols-outlined text-[24px]">{icon}</span>
-                      <span className="text-[8px] font-medium mt-1 truncate w-full text-center px-1">{icon.replace(/_/g, ' ')}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-            {/* Footer */}
-            <div className="p-5 border-t border-slate-200 flex gap-3 shrink-0 bg-white">
-              <button onClick={() => setShowKategoriModal(false)} className="flex-1 py-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50 transition-colors uppercase tracking-wider">Batal</button>
-              <button
-                disabled={savingKategori || !kategoriForm.label || (!editingKategori && !kategoriForm.key)}
-                onClick={async () => {
-                  try {
-                    setSavingKategori(true);
-                    if (editingKategori) {
-                      await api.patch(`/admin/kategori-temuan/${editingKategori.id}`, {
-                        label: kategoriForm.label,
-                        icon: kategoriForm.icon,
-                        color: kategoriForm.color,
-                      });
-                      showToast('Kategori berhasil diperbarui', 'success');
-                    } else {
-                      await api.post('/admin/kategori-temuan', kategoriForm);
-                      showToast('Kategori berhasil ditambahkan', 'success');
-                    }
-                    setShowKategoriModal(false);
-                    fetchKategori();
-                  } catch (err: unknown) {
-                    showToast(getApiErrorMessage(err, 'Gagal menyimpan kategori'), 'error');
-                  } finally {
-                    setSavingKategori(false);
-                  }
-                }}
-                className="flex-[2] py-3 rounded-xl bg-primary text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-primary/20 hover:bg-primary/90 disabled:opacity-60 transition-all active:scale-[0.98] uppercase tracking-wider"
-              >
-                <span className="material-symbols-outlined text-[18px]">save</span>
-                {savingKategori ? 'Menyimpan...' : (editingKategori ? 'Simpan Perubahan' : 'Tambah Kategori')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {showKategoriModal && <CategoryEditor editingKategori={editingKategori} setShowKategoriModal={setShowKategoriModal} kategoriForm={kategoriForm} setKategoriForm={setKategoriForm} ICON_OPTIONS={ICON_OPTIONS} savingKategori={savingKategori} setSavingKategori={setSavingKategori} fetchKategori={fetchKategori} />}
 
     </div>
   );

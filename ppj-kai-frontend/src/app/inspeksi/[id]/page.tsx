@@ -1,14 +1,18 @@
-// Force Next.js rebuild
 'use client';
+import { haversineMeters as haversineM } from '../../../../../shared/geo';
 
-import React, { useState, useEffect, useRef } from 'react';
-import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
-import dynamic from 'next/dynamic';
+
 import axios from 'axios';
+import dynamic from 'next/dynamic';
+import Link from 'next/link';
+import { useParams,useRouter } from 'next/navigation';
+import React,{ useCallback,useEffect,useMemo,useRef,useState } from 'react';
+import { compactRoute } from '../../../../../shared/route';
+import { useCamera } from '../../../hooks/useCamera';
+import { useGPS } from '../../../hooks/useGPS';
 import api from '../../../lib/api';
+import { playNotification,speakAnnouncement,unlockNotificationAudio } from '../../../lib/audio';
 import { showToast } from '../../../lib/toast';
-import { playNotification, speakAnnouncement, unlockNotificationAudio } from '../../../lib/audio';
 
 const DynamicMap = dynamic(() => import('../../../components/map/DynamicMap'), { ssr: false });
 
@@ -40,44 +44,6 @@ interface TrainAlert { id: number; trainCode: string; trainName: string; origin:
 interface NearbyWarning { startPointName: string; endPointName: string; trainDirectionName?: string; id: number; distanceMeters: number; creator: { nama: string; nipp: string } }
 
 // GPS Hook with improved accuracy and reliability
-function useGPS() {
-  const [position, setPosition] = useState<{ lat: number; lng: number; accuracy: number; timestamp: number } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const watchRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (!navigator.geolocation) { setError('GPS tidak didukung browser ini'); return; }
-
-    // Try high accuracy first
-    watchRef.current = navigator.geolocation.watchPosition(
-      (pos) => {
-        setError(null);
-        setPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, timestamp: pos.timestamp });
-      },
-      (err) => {
-        // If high accuracy fails, try with lower accuracy as fallback
-        if (err.code === err.TIMEOUT && watchRef.current !== null) {
-          navigator.geolocation.clearWatch(watchRef.current);
-          watchRef.current = navigator.geolocation.watchPosition(
-            (pos) => {
-              setError(null);
-              setPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, timestamp: pos.timestamp });
-            },
-            (err2) => setError(err2.message),
-            { enableHighAccuracy: false, timeout: 30000, maximumAge: 10000 }
-          );
-        } else {
-          setError(err.message);
-        }
-      },
-      { enableHighAccuracy: true, timeout: 20000, maximumAge: 5000 }
-    );
-    return () => { if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current); };
-  }, []);
-
-  return { position, error };
-}
-
 export default function TrackingPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -105,9 +71,6 @@ export default function TrackingPage() {
   const [isVerified, setIsVerified] = useState(false);
   const [verifyModalOpen, setVerifyModalOpen] = useState(false);
   const [selfieDataUrl, setSelfieDataUrl] = useState<string | null>(null);
-  const [cameraActive, setCameraActive] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Emergency Modal
@@ -116,9 +79,6 @@ export default function TrackingPage() {
   const [deskripsi, setDeskripsi] = useState('');
   const [isSubmittingLaporan, setIsSubmittingLaporan] = useState(false);
   const [emergencyPhoto, setEmergencyPhoto] = useState<string | null>(null);
-  const [emergencyCameraActive, setEmergencyCameraActive] = useState(false);
-  const emergencyVideoRef = useRef<HTMLVideoElement>(null);
-  const emergencyStreamRef = useRef<MediaStream | null>(null);
 
   // Dynamic emergency categories from API
   const [emergencyCategories, setEmergencyCategories] = useState<{ key: string; icon: string; label: string; color: string }[]>([
@@ -133,13 +93,15 @@ export default function TrackingPage() {
 
   // Stop Confirmation Modal
   const [showStopModal, setShowStopModal] = useState(false);
-  const [, setEndVerified] = useState(false);
   const [endSelfieDataUrl, setEndSelfieDataUrl] = useState<string | null>(null);
-  const [endCameraActive, setEndCameraActive] = useState(false);
-  const endVideoRef = useRef<HTMLVideoElement>(null);
-  const endStreamRef = useRef<MediaStream | null>(null);
   const endFileInputRef = useRef<HTMLInputElement>(null);
   const [isStopping, setIsStopping] = useState(false);
+
+  const { active: cameraActive, videoRef: videoRef, open: openCamera, stop: stopCamera, capture: capturePhoto } = useCamera('user', setSelfieDataUrl);
+
+  const { active: emergencyCameraActive, videoRef: emergencyVideoRef, open: openEmergencyCamera, stop: stopEmergencyCamera, capture: captureEmergencyPhoto } = useCamera('environment', setEmergencyPhoto);
+
+  const { active: endCameraActive, videoRef: endVideoRef, open: openEndCamera, stop: stopEndCamera, capture: captureEndPhoto } = useCamera('user', setEndSelfieDataUrl);
 
   // Temporary deployment-testing bypass. Set the environment variable to false to hide it.
   const [testMode, setTestMode] = useState(false);
@@ -157,13 +119,12 @@ export default function TrackingPage() {
     }).catch(() => { /* keep defaults */ });
   }, []);
 
-  useEffect(() => { fetchTugasDetail(); }, [params.id]);
 
   // Track GPS path when active, persist to localStorage
   useEffect(() => {
     if (status === 'active' && gpsPos) {
       setTrackPath(prev => {
-        const updated: [number, number][] = [...prev, [gpsPos.lat, gpsPos.lng]];
+        const updated = compactRoute([...prev, [gpsPos.lat, gpsPos.lng]]);
         // Update localStorage path (throttle: only every 5 points to reduce writes)
         if (updated.length % 5 === 0) {
           try {
@@ -177,7 +138,7 @@ export default function TrackingPage() {
         return updated;
       });
     }
-  }, [gpsPos, status]);
+  }, [gpsPos, status, STORAGE_KEY]);
 
   // Kirim hanya hasil GPS yang masih baru agar pemilihan penerima warning akurat.
   useEffect(() => {
@@ -243,7 +204,7 @@ export default function TrackingPage() {
     return () => window.clearInterval(interval);
   }, [status, params.id]);
 
-  const fetchTugasDetail = async () => {
+  const fetchTugasDetail = useCallback(async () => {
     try {
       setLoading(true);
       const res = await api.get(`/tugas/${params.id}`);
@@ -288,7 +249,9 @@ export default function TrackingPage() {
       }
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
-  };
+  }, [params.id, router, STORAGE_KEY]);
+
+  useEffect(() => { void fetchTugasDetail(); }, [fetchTugasDetail]);
 
   const handleStartTracking = async () => {
     unlockNotificationAudio();
@@ -345,10 +308,10 @@ export default function TrackingPage() {
     const stopLng = gpsPos?.lng
       ?? (trackPath.length > 0 ? trackPath[trackPath.length - 1][1] : null)
       ?? (testMode ? tugas?.endPointLong : null);
-    if (stopLat === null || stopLng === null) { showToast('Tidak ada posisi GPS yang tersedia.', 'warning'); return; }
+    if (stopLat == null || stopLng == null) { showToast('Tidak ada posisi GPS yang tersedia.', 'warning'); return; }
     try {
       setIsStopping(true);
-      await api.post(`/tracking/stop/${trackingId}`, { lat: stopLat, lng: stopLng, fotoSelesai: endSelfieDataUrl, routePath: trackPath, bypassMode: testMode });
+      await api.post(`/tracking/stop/${trackingId}`, { lat: stopLat, lng: stopLng, fotoSelesai: endSelfieDataUrl, routePath: compactRoute([...trackPath, [stopLat, stopLng]]), bypassMode: testMode });
       if (timerRef.current) clearInterval(timerRef.current);
       localStorage.removeItem(STORAGE_KEY); // Clear persisted session
       router.push(`/inspeksi/${params.id}/selesai`);
@@ -400,65 +363,6 @@ export default function TrackingPage() {
     }
   };
 
-  // Emergency camera functions
-  const openEmergencyCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      emergencyStreamRef.current = stream;
-      setEmergencyCameraActive(true);
-      setTimeout(() => {
-        if (emergencyVideoRef.current) {
-          emergencyVideoRef.current.srcObject = stream;
-          emergencyVideoRef.current.play();
-        }
-      }, 100);
-    } catch { showToast('Tidak dapat mengakses kamera.', 'error'); }
-  };
-
-  const captureEmergencyPhoto = () => {
-    if (!emergencyVideoRef.current) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = emergencyVideoRef.current.videoWidth;
-    canvas.height = emergencyVideoRef.current.videoHeight;
-    canvas.getContext('2d')?.drawImage(emergencyVideoRef.current, 0, 0);
-    setEmergencyPhoto(canvas.toDataURL('image/jpeg', 0.7));
-    stopEmergencyCamera();
-  };
-
-  const stopEmergencyCamera = () => {
-    emergencyStreamRef.current?.getTracks().forEach(t => t.stop());
-    emergencyStreamRef.current = null;
-    setEmergencyCameraActive(false);
-  };
-
-  // Camera functions for Identity Verification
-  const openCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-      streamRef.current = stream;
-      setCameraActive(true);
-      setTimeout(() => {
-        if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play(); }
-      }, 100);
-    } catch { showToast('Tidak dapat mengakses kamera.', 'error'); }
-  };
-
-  const capturePhoto = () => {
-    if (!videoRef.current) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
-    canvas.getContext('2d')?.drawImage(videoRef.current, 0, 0);
-    setSelfieDataUrl(canvas.toDataURL('image/jpeg', 0.7));
-    stopCamera();
-  };
-
-  const stopCamera = () => {
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    streamRef.current = null;
-    setCameraActive(false);
-  };
-
   const handleGalleryUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -477,34 +381,6 @@ export default function TrackingPage() {
     stopCamera();
   };
 
-  // End verification camera functions
-  const openEndCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-      endStreamRef.current = stream;
-      setEndCameraActive(true);
-      setTimeout(() => {
-        if (endVideoRef.current) { endVideoRef.current.srcObject = stream; endVideoRef.current.play(); }
-      }, 100);
-    } catch { showToast('Tidak dapat mengakses kamera.', 'error'); }
-  };
-
-  const captureEndPhoto = () => {
-    if (!endVideoRef.current) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = endVideoRef.current.videoWidth;
-    canvas.height = endVideoRef.current.videoHeight;
-    canvas.getContext('2d')?.drawImage(endVideoRef.current, 0, 0);
-    setEndSelfieDataUrl(canvas.toDataURL('image/jpeg', 0.7));
-    stopEndCamera();
-  };
-
-  const stopEndCamera = () => {
-    endStreamRef.current?.getTracks().forEach(t => t.stop());
-    endStreamRef.current = null;
-    setEndCameraActive(false);
-  };
-
   const handleEndGalleryUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -517,10 +393,6 @@ export default function TrackingPage() {
     e.target.value = '';
   };
 
-  const confirmEndVerification = () => {
-    setEndVerified(true);
-  };
-
   const formatTime = (s: number) => {
     const h = String(Math.floor(s / 3600)).padStart(2, '0');
     const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
@@ -529,21 +401,15 @@ export default function TrackingPage() {
   };
 
   // Haversine distance in meters
-  const haversineM = (lat1: number, lng1: number, lat2: number, lng2: number) => {
-    const R = 6371000;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLng = (lng2 - lng1) * Math.PI / 180;
-    const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  };
+
 
   const GEOFENCE_RADIUS = 500; // meters
 
   // Calculate total distance traveled from trackPath
-  const totalDistanceM = trackPath.reduce((sum, point, i) => {
+  const totalDistanceM = useMemo(() => trackPath.reduce((sum, point, i) => {
     if (i === 0) return 0;
     return sum + haversineM(trackPath[i - 1][0], trackPath[i - 1][1], point[0], point[1]);
-  }, 0);
+  }, 0), [trackPath]);
   const totalDistanceKm = (totalDistanceM / 1000).toFixed(2);
 
   const distanceToStart = gpsPos && tugas
@@ -1047,7 +913,7 @@ export default function TrackingPage() {
               <h3 className="font-h3 text-h3 text-on-error flex items-center gap-sm">
                 <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>stop_circle</span> Selesai Inspeksi
               </h3>
-              <button onClick={() => { setShowStopModal(false); stopEndCamera(); setEndSelfieDataUrl(null); setEndVerified(false); }} className="text-on-error/80 hover:text-on-error">
+              <button onClick={() => { setShowStopModal(false); stopEndCamera(); setEndSelfieDataUrl(null);  }} className="text-on-error/80 hover:text-on-error">
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
@@ -1109,7 +975,7 @@ export default function TrackingPage() {
                 {endSelfieDataUrl ? (
                   <div className="relative w-full aspect-[4/3] rounded-xl overflow-hidden">
                     <img src={endSelfieDataUrl} alt="Selfie akhir" className="w-full h-full object-cover" />
-                    <button onClick={() => { setEndSelfieDataUrl(null); setEndVerified(false); }} className="absolute top-2 right-2 bg-surface/80 backdrop-blur-sm rounded-full p-1.5">
+                    <button onClick={() => { setEndSelfieDataUrl(null);  }} className="absolute top-2 right-2 bg-surface/80 backdrop-blur-sm rounded-full p-1.5">
                       <span className="material-symbols-outlined text-error">refresh</span>
                     </button>
                     <div className="absolute bottom-2 left-2 bg-primary/90 text-on-primary px-2 py-1 rounded-full flex items-center gap-1">
@@ -1170,7 +1036,7 @@ export default function TrackingPage() {
               )}
             </div>
             <div className="p-md bg-surface-container-lowest border-t border-surface-variant flex gap-md shrink-0">
-              <button onClick={() => { setShowStopModal(false); stopEndCamera(); setEndSelfieDataUrl(null); setEndVerified(false); }} className="flex-1 py-3 rounded-xl border border-outline text-on-surface font-label-sm hover:bg-surface-container-low">
+              <button onClick={() => { setShowStopModal(false); stopEndCamera(); setEndSelfieDataUrl(null);  }} className="flex-1 py-3 rounded-xl border border-outline text-on-surface font-label-sm hover:bg-surface-container-low">
                 Batal
               </button>
               <button
@@ -1179,7 +1045,6 @@ export default function TrackingPage() {
                     handleStopTracking();
                     return;
                   }
-                  confirmEndVerification();
                   if (endSelfieDataUrl) handleStopTracking();
                 }}
                 disabled={(!testMode && (!endSelfieDataUrl || !withinEndGeofence)) || isStopping}

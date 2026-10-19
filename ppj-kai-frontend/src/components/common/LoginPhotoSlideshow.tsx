@@ -1,8 +1,7 @@
 'use client';
-
-import { useEffect, useState } from 'react';
+import { useEffect,useState } from 'react';
 import api from '../../lib/api';
-import { LoginPhoto, loginPhotoUrl } from '../../lib/loginPhotos';
+import { LoginPhoto,loginPhotoUrl } from '../../lib/loginPhotos';
 
 export default function LoginPhotoSlideshow() {
   const [photos, setPhotos] = useState<LoginPhoto[]>([]);

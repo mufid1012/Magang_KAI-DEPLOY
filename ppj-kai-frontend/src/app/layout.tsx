@@ -1,8 +1,8 @@
-import type { Metadata, Viewport } from "next";
+import type { Metadata,Viewport } from "next";
 import { Inter } from "next/font/google";
-import "./globals.css";
-import OfflineSyncProvider from "../components/common/OfflineSyncProvider";
 import AuthGuard from "../components/common/AuthGuard";
+import OfflineSyncProvider from "../components/common/OfflineSyncProvider";
+import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
 

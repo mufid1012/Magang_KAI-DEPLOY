@@ -1,1 +1,12 @@
-{}
+{
+  "name": "kai-railtrack-ppj",
+  "private": true,
+  "scripts": {
+    "test": "npm --prefix ppj-kai-backend test && npm --prefix ppj-kai-frontend test",
+    "typecheck": "npm --prefix ppj-kai-backend run typecheck && npm --prefix ppj-kai-frontend run typecheck",
+    "lint": "npm --prefix ppj-kai-frontend run lint",
+    "build": "npm --prefix ppj-kai-frontend run build",
+    "verify": "npm run test && npm run typecheck && npm run lint && npm run build"
+  },
+  "engines": { "node": ">=22.12.0 <26" }
+}

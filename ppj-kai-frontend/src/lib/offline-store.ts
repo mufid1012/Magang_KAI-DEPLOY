@@ -1,4 +1,4 @@
-import { openDB, DBSchema, IDBPDatabase } from 'idb';
+import { DBSchema,IDBPDatabase,openDB } from 'idb';
 
 interface PPJDB extends DBSchema {
   offlineQueue: {
@@ -29,18 +29,6 @@ if (typeof window !== 'undefined') {
   });
 }
 
-export async function addToOfflineQueue(url: string, method: 'POST' | 'PUT' | 'DELETE', body: unknown, headers?: Record<string, string>) {
-  if (!dbPromise) return;
-  const db = await dbPromise;
-  await db.add('offlineQueue', {
-    url,
-    method,
-    body,
-    headers,
-    timestamp: Date.now(),
-  });
-}
-
 export async function getOfflineQueue() {
   if (!dbPromise) return [];
   const db = await dbPromise;
@@ -51,10 +39,4 @@ export async function removeFromOfflineQueue(id: number) {
   if (!dbPromise) return;
   const db = await dbPromise;
   await db.delete('offlineQueue', id);
-}
-
-export async function clearOfflineQueue() {
-  if (!dbPromise) return;
-  const db = await dbPromise;
-  await db.clear('offlineQueue');
 }

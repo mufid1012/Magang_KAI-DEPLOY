@@ -1,3 +1,4 @@
+import { taskScope } from '../lib/accessScope';
 import { Request, Response } from 'express';
 import prisma from '../config/database';
 
@@ -12,7 +13,7 @@ export const createLaporan = async (req: Request, res: Response) => {
     if (!Number.isSafeInteger(parsedTrackingId) || parsedTrackingId <= 0) {
       return res.status(400).json({ success: false, message: 'ID tracking tidak valid' });
     }
-    if (typeof jenisTemuan !== 'string' || !jenisTemuan.trim() || jenisTemuan.length > 20) {
+    if (typeof jenisTemuan !== 'string' || !jenisTemuan.trim() || jenisTemuan.trim().length > 50) {
       return res.status(400).json({ success: false, message: 'Jenis temuan tidak valid' });
     }
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
@@ -37,6 +38,9 @@ export const createLaporan = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Tracking aktif tidak ditemukan' });
     }
 
+    const category = await prisma.kategoriTemuan.findUnique({ where: { key: jenisTemuan.trim() }, select: { isActive: true } });
+    if (!category?.isActive) return res.status(400).json({ success: false, message: 'Kategori temuan tidak tersedia' });
+
     const laporan = await prisma.laporan.create({
       data: {
         trackingId: tracking.id,
@@ -58,37 +62,9 @@ export const createLaporan = async (req: Request, res: Response) => {
 export const getLaporan = async (req: Request, res: Response) => {
   try {
     const user = (req as any).user as { id: number; role: string };
-    let where: any;
-    if (user.role === 'ppj') {
-      where = { tracking: { tugas: { assignedTo: user.id } } };
-    } else if (user.role === 'admin' || user.role === 'kupt') {
-      where = { tracking: { tugas: { user: { managerId: user.id } } } };
-    } else if (user.role === 'qc') {
-      const assignments = await prisma.userWilayah.findMany({
-        where: { userId: user.id },
-        include: { wilayah: true },
-      });
-      const stations = assignments.flatMap(assignment => {
-        try {
-          const parsed = JSON.parse(assignment.wilayah.stations);
-          return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
-        } catch {
-          return [];
-        }
-      });
-      where = {
-        tracking: {
-          tugas: {
-            OR: [
-              { startPointName: { in: stations } },
-              { endPointName: { in: stations } },
-            ],
-          },
-        },
-      };
-    } else {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
+    const scope = await taskScope(user.id, user.role);
+    if (!scope) return res.status(403).json({ success: false, message: 'Access denied' });
+    const where = { tracking: { tugas: scope } };
 
     const laporan = await prisma.laporan.findMany({
       where,

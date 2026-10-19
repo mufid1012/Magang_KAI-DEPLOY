@@ -157,7 +157,7 @@ git clone https://github.com/mufid1012/Magang_KAI-DEPLOY.git
 cd Magang_KAI-DEPLOY
 ```
 
-Package root tidak memiliki script aplikasi. Jalankan perintah di modul masing-masing.
+Package root menyediakan `npm run verify` untuk test, typecheck, lint, dan build kedua modul. Jalankan aplikasi development dari modul masing-masing.
 
 ### Backend dan database development baru
 
@@ -176,7 +176,7 @@ NODE_ENV=development
 ```bash
 cd ppj-kai-backend
 npm ci
-npx prisma db push
+npx prisma migrate deploy
 npx prisma generate
 npx tsx seed-user.ts
 npx tsx seed-kategori.ts
@@ -225,12 +225,12 @@ Akun ini untuk pengembangan. Seeder membuat wilayah JR 6.1–6.13 dan tugas cont
 | Backend | `FRONTEND_URL` | Wajib di production; allowlist origin, pisahkan beberapa origin dengan koma |
 | Backend | `APP_URL` | Referer geocoding; default localhost |
 | Backend | `GEOCODING_API_URL` | Opsional; default pencarian Nominatim OpenStreetMap |
-| Backend | `TRACKING_BYPASS_ENABLED` | Bypass jadwal hanya aktif jika eksplisit bernilai `true` |
+| Backend | `TRACKING_BYPASS_ENABLED` | Bypass tersedia kecuali flag bernilai `false`; request harus mengirim `bypassMode: true` |
 | Frontend | `NEXT_PUBLIC_API_URL` | URL backend berakhiran `/api`; default localhost:5001/api |
-| Frontend | `NEXT_PUBLIC_TRACKING_BYPASS_ENABLED` | Toggle bypass hanya aktif jika eksplisit bernilai `true` |
+| Frontend | `NEXT_PUBLIC_TRACKING_BYPASS_ENABLED` | Toggle bypass tersedia kecuali flag bernilai `false` |
 | Keduanya | `NODE_ENV` | Development/production; memengaruhi validasi konfigurasi dan rincian error |
 
-Mode bypass **tidak terbatas localhost** dan tersedia bila flag tidak diisi. UI dapat melewati pembatasan GPS/geofence/foto/jadwal untuk pengujian; backend mempunyai pemeriksaan bypass jadwal sendiri. Matikan kedua flag untuk pemakaian normal. Geofence UI bukan validasi geofence server.
+Mode bypass **tidak terbatas localhost** dan tersedia bila flag tidak diisi. UI dapat melewati pembatasan GPS/geofence/foto/jadwal untuk pengujian; backend mempunyai pemeriksaan bypass jadwal sendiri. Matikan kedua flag untuk pemakaian normal. Mode normal juga divalidasi geofence/foto di server; request bypass yang diizinkan melewati pemeriksaan tersebut.
 
 `NEXT_PUBLIC_*` dibaca saat build; perubahan URL atau flag frontend membutuhkan rebuild/redeploy.
 
@@ -306,22 +306,9 @@ Verifikasi repository, branch, root directory, dan commit yang digunakan **setia
 
 ### Migrasi database lama
 
-Riwayat SQL belum mencakup seluruh schema terkini, misalnya sejumlah kolom pengguna, waktu tugas, wilayah, dan kategori. `prisma migrate deploy` pada database kosong saja belum menjamin struktur lengkap.
+Riwayat schema dilengkapi oleh `20261019120000_complete_legacy_schema`. Instalasi kosong menggunakan seluruh delapan migrasi. Database hasil db push perlu pemeriksaan dan baseline terlebih dahulu; ikuti [panduan migrasi](docs/MIGRATIONS.md). Jangan menjalankan reset/accept-data-loss pada database berisi data.
 
-- Database development baru: gunakan db push/generate sesuai instalasi.
-- Database berisi data: backup, bandingkan schema aktual terhadap schema.prisma, lalu tinjau/uji perubahan SQL pada salinan atau staging. Jangan memakai reset/accept-data-loss sebagai langkah rutin.
-- Database yang dibuat melalui db push perlu penyelarasan/baseline riwayat sebelum migrate deploy; jangan menambahkan ulang kolom yang sudah ada.
-- db push menyelaraskan struktur, tetapi tidak menjalankan pembaruan data dalam migration SQL.
-
-| Migrasi tersedia | Isi |
-| --- | --- |
-| `20260507225946_init` | Tabel dasar pengguna/tugas/tracking/laporan |
-| `20260718170000_add_map_locations` | Titik MAP |
-| `20260803120000_add_tracking_approval_train_schedules_warnings` | Approval, keselamatan, jadwal, warning |
-| `20260910120000_add_warning_route` | Snapshot stasiun dan ID sesi penerima warning |
-| `20260910130000_add_need_approval_task_status` | Pembaruan tugas lama yang belum approved |
-
-Kode kompatibilitas dapat membuat tabel map_locations yang belum tersedia; ini tidak menyinkronkan seluruh database. `prisma.config.ts` mengimpor `prisma/config` sementara dependensi Prisma 5.20: periksa kesesuaian config/versi jika CLI atau pemeriksaan TypeScript melaporkan modul tersebut tidak ditemukan.
+Mode bypass tetap tersedia untuk testing dengan perilaku flag lama. Mode normal sekarang memvalidasi foto dan geofence di backend. Foto laporan menggunakan LONGTEXT; key kategori/laporan maksimum 50 karakter. Alur approval dan pembatasan unduh PDF tetap berlaku.
 
 ## Verifikasi pengembangan
 
@@ -353,3 +340,11 @@ Test backend memakai Node test runner + tsx: normalisasi import, status approval
 ## Konteks penggunaan
 
 Proyek dikembangkan untuk kebutuhan prototipe/internal. Repository belum menyertakan berkas LICENSE khusus untuk ketentuan penggunaan seluruh proyek.
+
+## Perbaikan audit 19 Oktober 2026
+
+Lihat [pemetaan temuan dan verifikasi](docs/AUDIT_IMPLEMENTATION.md). Gunakan Node 24 dan `npm ci` di masing-masing modul. Konfigurasi dan dependensi lokal harus mengikuti manifest/lockfile; jangan menggunakan node_modules dari versi aplikasi sebelumnya.
+
+`npm run verify` dari root menjalankan pengujian kedua modul, pemeriksaan tipe, lint dan build frontend. `npm run test:db` dari backend menjalankan integrasi HTTP/MySQL pada database terpisah sesuai docs/MIGRATIONS.md. GitHub Actions menjalankan pemeriksaan yang sama.
+
+Aplikasi tetap online-first: jejak GPS dipulihkan melalui localStorage dan sesi backend; laporan baru membutuhkan jaringan. Endpoint API lama dan model template tersimpan dipertahankan untuk kompatibilitas, bukan dihapus hanya karena tidak dipanggil frontend saat ini.

@@ -1,13 +1,15 @@
 'use client';
+import { formatDuration } from '../../../../shared/display';
+import { haversineKm } from '../../../../shared/geo';
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useEffect,useState } from 'react';
 import api from '../../lib/api';
 import { showToast } from '../../lib/toast';
-import { getApiErrorMessage } from '../../lib/utils';
 import { resolveTugasStatus } from '../../lib/tugasStatus';
+import { getApiErrorMessage } from '../../lib/utils';
 
 const DynamicMap = dynamic(() => import('../../components/map/DynamicMap'), { ssr: false });
 
@@ -88,22 +90,9 @@ const statusStyle: Record<string, string> = {
   missed: 'bg-rose-500/10 text-rose-600 border-rose-500/30',
 };
 
-function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number) {
-  const R = 6371;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLng = (lng2 - lng1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
 
-function formatDuration(detik: number | null) {
-  if (!detik) return '-';
-  const h = Math.floor(detik / 3600);
-  const m = Math.floor((detik % 3600) / 60);
-  if (h > 0) return `${h}j ${m}m`;
-  if (m > 0) return `${m} menit`;
-  return `${detik} detik`;
-}
+
+
 
 function formatTime(dateStr: string | null) {
   if (!dateStr) return '-';
