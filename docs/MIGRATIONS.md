@@ -1,7 +1,7 @@
 # Migrasi database
 
 ## Database baru yang kosong
-Gunakan Node 24, `npm ci` di backend, isi DATABASE_URL, lalu jalankan `npx prisma migrate deploy` dan `npx prisma generate`. Seluruh delapan migrasi membangun schema terkini; hasilnya diperiksa dengan `prisma migrate diff` pada MySQL 8.0.30.
+Gunakan Node 24, `npm ci` di backend, isi DATABASE_URL, lalu jalankan `npx prisma migrate deploy` dan `npx prisma generate`. Seluruh sembilan migrasi membangun schema terkini; hasilnya diperiksa dengan `prisma migrate diff` pada MySQL 8.0.30.
 
 ## Database yang memiliki riwayat migrasi
 Backup dahulu dan uji pada salinan. Jalankan `npx prisma migrate status`; tinjau migration `20261019120000_complete_legacy_schema`, lalu deploy menggunakan proses rilis biasa. Migration ini menambahkan kolom/tabel yang hilang secara idempoten, memperlebar foto laporan menjadi LONGTEXT dan key laporan menjadi VARCHAR(50), menyamakan default/role petugas lama menjadi ppj, serta melengkapi foreign key manager.
@@ -33,3 +33,6 @@ npm run test:db
 ```
 
 Pengujian lokal perbaikan ini memakai instance MySQL terpisah pada port 33467. Database aplikasi dari .env tidak dimigrasi atau direset.
+
+## Telemetri kecepatan PPJ
+Migrasi `20261019150000_tracking_telemetry` bersifat additive: menambah tabel sampel/kejadian beserta indeks, FK cascade ke tracking, dan state/ringkasan serta waktu/accuracy posisi terakhir. Tidak mengubah `routePath` atau mengisi speed data historis. Deploy migrasi dan generate Prisma Client sebelum backend/frontend baru. Metode, API, retensi dan checklist perangkat ada di [TELEMETRY.md](TELEMETRY.md).

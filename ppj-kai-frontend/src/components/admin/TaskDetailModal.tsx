@@ -1,4 +1,5 @@
 'use client';
+import TelemetryDetail from './TelemetryDetail';
 import { formatDistanceKm as haversineKm } from '../../../../shared/geo';
 
 
@@ -115,6 +116,7 @@ export default function TaskDetailModal({ tugas, jenisLabel, jenisColor, isDownl
           </div>
 
           <section className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+            {latestTracking && <TelemetryDetail key={latestTracking.id} trackingId={latestTracking.id} />}
             <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3">Data Petugas</p>
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-full bg-primary text-white flex items-center justify-center font-extrabold text-sm shrink-0">

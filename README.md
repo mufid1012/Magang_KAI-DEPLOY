@@ -348,3 +348,5 @@ Lihat [pemetaan temuan dan verifikasi](docs/AUDIT_IMPLEMENTATION.md). Gunakan No
 `npm run verify` dari root menjalankan pengujian kedua modul, pemeriksaan tipe, lint dan build frontend. `npm run test:db` dari backend menjalankan integrasi HTTP/MySQL pada database terpisah sesuai docs/MIGRATIONS.md. GitHub Actions menjalankan pemeriksaan yang sama.
 
 Aplikasi tetap online-first: jejak GPS dipulihkan melalui localStorage dan sesi backend; laporan baru membutuhkan jaringan. Endpoint API lama dan model template tersimpan dipertahankan untuk kompatibilitas, bukan dihapus hanya karena tidak dipanggil frontend saat ini.
+
+Dokumentasi fitur kecepatan PPJ: [metode, konfigurasi, migrasi, pengujian, dan batasan perangkat](docs/TELEMETRY.md).

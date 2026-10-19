@@ -1,10 +1,11 @@
 'use client';
+import TelemetryDetail from '../../components/admin/TelemetryDetail';
 import { petugasColor } from '../../../../shared/display';
 
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { useCallback,useEffect,useMemo,useState } from 'react';
-import { usePolling } from '../../hooks/usePolling';
+import { useLivePositions } from '../../hooks/useLivePositions';
 import api from '../../lib/api';
 import { STATIONS } from '../../lib/stations';
 
@@ -25,6 +26,7 @@ interface Tugas {
   status: string;
   user: { nama: string; nipp: string };
   tracking?: {
+    id: number;
     startTime: string;
     endTime: string;
     durasi: number;
@@ -49,15 +51,6 @@ interface Emergency {
   };
 }
 
-interface LivePosition {
-  petugasNama: string;
-  petugasNipp: string;
-  tugasId: number;
-  jalur: string;
-  latitude: number;
-  longitude: number;
-  updatedAt: string;
-}
 
 interface Stats {
   totalPetugas: number;
@@ -99,10 +92,12 @@ export default function QCPage() {
     role: string;
     wilayahAssignments?: { wilayah: { kode: string; nama: string; stations: string } }[];
   } | null>(null);
+  const [refreshingDashboard, setRefreshingDashboard] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [tugas, setTugas] = useState<Tugas[]>([]);
   const [emergencies, setEmergencies] = useState<Emergency[]>([]);
-  const [livePositions, setLivePositions] = useState<LivePosition[]>([]);
+  const { positions: livePositions, error: liveError } = useLivePositions(!!user);
+  const [telemetryId, setTelemetryId] = useState<number | null>(null);
   const [selectedJalur, setSelectedJalur] = useState<string>('__all__');
   const [selectedEmergency, setSelectedEmergency] = useState<Emergency | null>(null);
   const [loading, setLoading] = useState(true);
@@ -110,15 +105,15 @@ export default function QCPage() {
 
   // ─── Data Fetching ──────────────────────────────────────────────────────
   const fetchAll = useCallback(async () => {
+    setRefreshingDashboard(true);
     try {
       const results = await Promise.allSettled([
         api.get('/admin/stats', { timeout: 12000 }).then(res => setStats(res.data.data)),
         api.get('/admin/tugas', { params: { summary: true }, timeout: 12000 }).then(res => setTugas(res.data.data)),
         api.get('/admin/emergency', { timeout: 12000 }).then(res => setEmergencies(res.data.data)),
-        api.get('/admin/live-positions', { timeout: 12000 }).then(res => setLivePositions(res.data.data)),
-      ]);
+        ]);
       for (const result of results) if (result.status === 'rejected') console.error('QC refresh failed:', result.reason);
-    } finally { setLoading(false); }
+    } finally { setLoading(false); setRefreshingDashboard(false); }
   }, []);
 
   useEffect(() => {
@@ -133,9 +128,12 @@ export default function QCPage() {
     return () => controller.abort();
   }, []);
 
-  usePolling(fetchAll, 15000);
+  useEffect(() => { void fetchAll(); }, [fetchAll]);
+
+  const handleMapEmergencyClick = useCallback((em: {id: number}) => { setSelectedEmergency(emergencies.find(e => e.id === em.id) || null); }, [emergencies]);
 
   const handleLogout = () => {
+    setUser(null);
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     router.replace('/login');
@@ -175,7 +173,7 @@ export default function QCPage() {
   }, [emergencies, selectedJalur, wilayahList]);
 
   // Map data props
-  const mapEmergencies = filteredEmergencies.map(e => ({
+  const mapEmergencies = useMemo(() => filteredEmergencies.map(e => ({
     id: e.id,
     latitude: e.latitude,
     longitude: e.longitude,
@@ -185,9 +183,9 @@ export default function QCPage() {
     createdAt: e.createdAt,
     petugasNama: e.tracking?.tugas?.user?.nama,
     jalur: e.tracking?.tugas?.jalur,
-  }));
+  })), [filteredEmergencies]);
 
-  const mapTasks = filteredTugas.map(t => ({
+  const mapTasks = useMemo(() => filteredTugas.map(t => ({
     id: t.id,
     jalur: t.jalur,
     startPointLat: t.startPointLat,
@@ -199,7 +197,7 @@ export default function QCPage() {
     status: t.status,
     petugasNama: t.user?.nama,
     petugasNipp: t.user?.nipp,
-  }));
+  })), [filteredTugas]);
 
   // Filter live positions by selected wilayah
   const filteredLivePositions = useMemo(() => {
@@ -289,6 +287,7 @@ export default function QCPage() {
             <span className="hidden md:block font-bold text-slate-700 text-sm">{user?.nama}</span>
           </div>
           <div className="w-px h-5 bg-slate-200"></div>
+          <button disabled={refreshingDashboard} onClick={() => void fetchAll()} title="Segarkan tugas dan laporan" className="text-xs font-semibold text-slate-500 disabled:opacity-50">{refreshingDashboard ? 'Memuat…' : 'Segarkan'}</button>
           <button onClick={handleLogout} className="flex items-center gap-1.5 text-slate-400 hover:text-rose-600 transition-colors" title="Logout">
             <span className="material-symbols-outlined text-[20px]">logout</span>
           </button>
@@ -301,11 +300,9 @@ export default function QCPage() {
         <AdminMap
           emergencies={mapEmergencies}
           tasks={mapTasks}
-          livePositions={filteredLivePositions}
+          livePositions={filteredLivePositions} monitoringError={liveError}
           maxBounds={maxBounds}
-          onEmergencyClick={(em) => {
-            setSelectedEmergency(emergencies.find(e => e.id === em.id) || null);
-          }}
+          onEmergencyClick={handleMapEmergencyClick}
         />
 
         {/* ── Overlay: Jalur Dropdown + Stats ───────────────────────────── */}
@@ -369,6 +366,7 @@ export default function QCPage() {
                   <div key={t.id} className="px-3 py-2.5 hover:bg-slate-50 transition-colors">
                     <div className="flex justify-between items-start gap-2 mb-1">
                       <p className="font-bold text-slate-800 text-xs leading-snug truncate flex-1">{t.jalur}</p>
+                      {t.tracking?.[0]?.id && <button className="underline text-xs" onClick={() => setTelemetryId(t.tracking![0].id)}>Kecepatan</button>}
                       <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider border shrink-0 ${STATUS_COLOR[t.status]}`}>
                         {STATUS_LABEL[t.status]}
                       </span>
@@ -495,6 +493,12 @@ export default function QCPage() {
           </div>
         </div>
       )}
+      {telemetryId !== null && <div className="fixed inset-0 z-[9999] bg-slate-900/60 flex items-center justify-center p-4">
+        <div className="bg-white p-4 rounded-xl w-full max-w-lg max-h-[80vh] overflow-auto">
+          <button onClick={() => setTelemetryId(null)} className="float-right text-sm underline">Tutup</button>
+          <h2 className="font-bold">Detail kecepatan</h2><TelemetryDetail key={telemetryId} trackingId={telemetryId} />
+        </div>
+      </div>}
     </div>
   );
 }

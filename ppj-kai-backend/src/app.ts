@@ -1,3 +1,4 @@
+import { TELEMETRY } from '../../shared/telemetry';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -35,6 +36,7 @@ app.use(cors({
   },
   credentials: true,
 }));
+app.use('/api/tracking/update', express.json({ limit: TELEMETRY.MAX_PAYLOAD_BYTES }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -70,6 +72,7 @@ app.get('/api/health', async (_req: Request, res: Response) => {
 
 // Global Error Handler
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  if (err?.type === 'entity.too.large') return res.status(413).json({success: false, message: 'Payload terlalu besar'});
   console.error(err.stack);
   res.status(500).json({
     success: false,

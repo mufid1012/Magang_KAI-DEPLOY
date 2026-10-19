@@ -2,6 +2,8 @@
 import { haversineMeters as haversineM } from '../../../../../shared/geo';
 
 
+import { TELEMETRY, type SpeedState } from '../../../../../shared/telemetry';
+import { TelemetryCard, type TelemetryHandle } from '../../../components/TelemetryCard';
 import axios from 'axios';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
@@ -52,6 +54,11 @@ export default function TrackingPage() {
   const [status, setStatus] = useState<'pending' | 'active'>('pending');
   const [tugas, setTugas] = useState<Tugas | null>(null);
   const [trackingId, setTrackingId] = useState<number | null>(null);
+  const [telemetryStartedAt, setTelemetryStartedAt] = useState(0);
+  const telemetryRef = useRef<TelemetryHandle | null>(null);
+  const [initialTelemetryState, setInitialTelemetryState] = useState<SpeedState | null>(null);
+  const routeSampleAt = useRef(0);
+  const pathRef = useRef<[number, number][]>([]);
   const [loading, setLoading] = useState(true);
   const [trackPath, setTrackPath] = useState<[number, number][]>([]);
   const [trainAlert, setTrainAlert] = useState<TrainAlert | null>(null);
@@ -108,7 +115,8 @@ export default function TrackingPage() {
   const bypassAvailable = process.env.NEXT_PUBLIC_TRACKING_BYPASS_ENABLED !== 'false';
 
   // localStorage key for persisting tracking session
-  const STORAGE_KEY = `tracking_session_${params.id}`;
+  const STORAGE_KEY = `tracking_session_v2:${api.defaults.baseURL}:${params.id}`;
+  useEffect(() => { pathRef.current = trackPath; }, [trackPath]);
 
   // Fetch dynamic emergency categories from API
   useEffect(() => {
@@ -120,38 +128,24 @@ export default function TrackingPage() {
   }, []);
 
 
-  // Track GPS path when active, persist to localStorage
+  // The legacy route is selected at most once per target interval; speed has its own state.
   useEffect(() => {
-    if (status === 'active' && gpsPos) {
-      setTrackPath(prev => {
-        const updated = compactRoute([...prev, [gpsPos.lat, gpsPos.lng]]);
-        // Update localStorage path (throttle: only every 5 points to reduce writes)
-        if (updated.length % 5 === 0) {
-          try {
-            const saved = localStorage.getItem(STORAGE_KEY);
-            if (saved) {
-              const session = JSON.parse(saved);
-              localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...session, trackPath: updated }));
-            }
-          } catch { /* ignore */ }
-        }
-        return updated;
-      });
-    }
-  }, [gpsPos, status, STORAGE_KEY]);
-
-  // Kirim hanya hasil GPS yang masih baru agar pemilihan penerima warning akurat.
+    if (status !== 'active' || !gpsPos || gpsPos.accuracy > TELEMETRY.MAX_ACCURACY_M
+      || Date.now() - gpsPos.timestamp > TELEMETRY.FRESH_MS
+      || gpsPos.timestamp - routeSampleAt.current < TELEMETRY.TELEMETRY_SAMPLE_INTERVAL_MS) return;
+    routeSampleAt.current = gpsPos.timestamp;
+    setTrackPath(prev => compactRoute([...prev, [gpsPos.lat, gpsPos.lng]]));
+  }, [gpsPos, status]);
   useEffect(() => {
     if (status !== 'active' || !trackingId) return;
-    const syncPosition = () => {
-      const position = gpsPosRef.current;
-      if (!position || Date.now() - position.timestamp > 30_000) return;
-      void api.post(`/tracking/update/${trackingId}`, { lat: position.lat, lng: position.lng }).catch(() => {});
+    const persist = () => {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify({trackingId, trackPath: pathRef.current})); }
+      catch { showToast('Jejak peta lokal gagal disimpan. Periksa ruang penyimpanan.', 'warning'); }
     };
-    syncPosition();
-    const interval = window.setInterval(syncPosition, 15000);
-    return () => window.clearInterval(interval);
-  }, [status, trackingId]);
+    const timer = window.setInterval(persist, 30000);
+    window.addEventListener('pagehide', persist);
+    return () => { window.clearInterval(timer); window.removeEventListener('pagehide', persist); };
+  }, [status, trackingId, STORAGE_KEY]);
 
   // Timer tick
   useEffect(() => {
@@ -230,6 +224,9 @@ export default function TrackingPage() {
             : Date.now();
           const secondsElapsed = Math.floor((Date.now() - backendStartTime) / 1000);
 
+          setTelemetryStartedAt(backendStartTime);
+          setInitialTelemetryState(trackRes.data.telemetryState);
+          setTestMode(trackRes.data.telemetryTest === true);
           setTrackingId(trackRes.data.trackingId);
           setStatus('active');
           setElapsed(secondsElapsed > 0 ? secondsElapsed : 0);
@@ -240,7 +237,7 @@ export default function TrackingPage() {
             const saved = localStorage.getItem(STORAGE_KEY);
             if (saved) {
               const session = JSON.parse(saved);
-              if (Array.isArray(session.trackPath) && session.trackPath.length > 0) {
+              if (session.trackingId === trackRes.data.trackingId && Array.isArray(session.trackPath) && session.trackPath.length > 0) {
                 setTrackPath(session.trackPath);
               }
             }
@@ -276,7 +273,8 @@ export default function TrackingPage() {
         bypassMode: testMode,
       });
       const newTrackingId = res.data.trackingId;
-      const startedAt = Date.now();
+      const startedAt = res.data.startTime ? new Date(res.data.startTime).getTime() : Date.now();
+      setTelemetryStartedAt(startedAt);
       const initialPath: [number, number][] = [[startLat, startLng]];
 
       setTrackingId(newTrackingId);
@@ -285,11 +283,11 @@ export default function TrackingPage() {
       setTrackPath(initialPath);
 
       // Persist session to localStorage
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify({
         trackingId: newTrackingId,
         startedAt,
         trackPath: initialPath,
-      }));
+      })); } catch { showToast('Sesi dimulai, tetapi jejak peta lokal gagal disimpan.', 'warning'); }
     } catch (err: unknown) {
       console.error('Failed to start tracking', err);
       const msg = axios.isAxiosError<ApiErrorResponse>(err)
@@ -311,13 +309,16 @@ export default function TrackingPage() {
     if (stopLat == null || stopLng == null) { showToast('Tidak ada posisi GPS yang tersedia.', 'warning'); return; }
     try {
       setIsStopping(true);
-      await api.post(`/tracking/stop/${trackingId}`, { lat: stopLat, lng: stopLng, fotoSelesai: endSelfieDataUrl, routePath: compactRoute([...trackPath, [stopLat, stopLng]]), bypassMode: testMode });
+      if (!telemetryRef.current) throw new Error('Telemetri belum siap');
+      const telemetryFinal = await telemetryRef.current.flush();
+      await api.post(`/tracking/stop/${trackingId}`, { lat: stopLat, lng: stopLng, fotoSelesai: endSelfieDataUrl, reportedLoss: telemetryFinal.reportedLoss, routePath: compactRoute([...trackPath, [stopLat, stopLng]]), bypassMode: testMode }, { timeout: 20000 });
       if (timerRef.current) clearInterval(timerRef.current);
       localStorage.removeItem(STORAGE_KEY); // Clear persisted session
       router.push(`/inspeksi/${params.id}/selesai`);
     } catch (err) {
       console.error('Failed to stop tracking', err);
-      showToast('Gagal menghentikan inspeksi.', 'error');
+      telemetryRef.current?.resume();
+      showToast('Belum selesai: sinkronisasi akhir atau finalisasi gagal. Antrean dipertahankan; periksa koneksi dan coba lagi.', 'error');
     } finally {
       setIsStopping(false);
     }
@@ -712,6 +713,9 @@ export default function TrackingPage() {
           </div>
         ) : (
           <>
+            <div className="fixed top-24 left-container-padding right-container-padding z-40 max-w-sm mx-auto pointer-events-auto">
+                <TelemetryCard startedAt={telemetryStartedAt} ref={telemetryRef} trackingId={trackingId!} position={gpsPos} gpsError={gpsError} initialState={initialTelemetryState} isTest={testMode} />
+            </div>
             {/* Warning PPJ sekitar FAB */}
             <div className="fixed left-container-padding bottom-[180px] z-40 pointer-events-auto">
               <button onClick={handleSendNearbyWarning} disabled={sendingWarning || !gpsPos} className="w-16 h-16 bg-blue-600 text-white rounded-full shadow-[0px_8px_24px_rgba(37,99,235,0.35)] flex items-center justify-center hover:scale-105 transition-transform active:scale-95 disabled:opacity-50" title="Peringatkan PPJ terdekat di masing-masing arah pada jalur yang sama">

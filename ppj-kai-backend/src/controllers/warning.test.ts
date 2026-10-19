@@ -67,7 +67,8 @@ test('sending warning snapshots station names from owned active task', async () 
   });
   stub(prisma.tracking, 'findMany', async (args: any) => {
     assert.equal(args.where.status, 'started');
-    assert.ok(args.where.updatedAt.gte instanceof Date);
+    assert.ok(args.where.OR[0].positionCapturedAt.gte instanceof Date);
+    assert.ok(args.where.OR[1].updatedAt.gte instanceof Date);
     return [{ id: 55, endLat: -7.8, endLong: 110.4, updatedAt: new Date(Date.now() - 100), tugas: { ...route, assignedTo: 8 } }];
   });
   stub(prisma.warningAlert, 'findFirst', async () => null);
@@ -160,8 +161,10 @@ test('stopping tracking moves the assignment to need approval', async () => {
     return { id: 91, tugasId: 12, startTime: new Date(Date.now() - 60_000) };
   });
   const tx = {
+    $queryRaw: async () => [{id: 91}],
     laporan: { count: async () => 0 },
-    tracking: { updateMany: async ({ data }: any) => {
+    speedEvent: {updateMany: async () => ({count: 0})},
+    tracking: {findFirst: async () => ({id: 91, tugasId: 12, telemetryTest: true}), updateMany: async ({ data }: any) => {
       assert.equal(data.status, 'stopped');
       assert.equal(data.approvalStatus, 'not_approved');
       return { count: 1 };

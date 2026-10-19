@@ -1,3 +1,4 @@
+import { speedSummary, type SpeedState } from '../../../shared/telemetry';
 import { emergencyCategoryKeys } from '../lib/reportSeverity';
 import type { Response } from 'express';
 import prisma from '../config/database';
@@ -231,6 +232,7 @@ export const getLivePositions = async (req: AuthRequest, res: Response) => {
         endLat: true,
         endLong: true,
         updatedAt: true,
+        telemetryState: true, telemetryTest: true, positionCapturedAt: true, positionAccuracy: true, telemetryLoss: true,
         tugas: {
           select: {
             id: true,
@@ -250,6 +252,8 @@ export const getLivePositions = async (req: AuthRequest, res: Response) => {
         latitude: t.endLat ?? t.startLat!,
         longitude: t.endLong ?? t.startLong!,
         updatedAt: t.updatedAt,
+        ...speedSummary(t.telemetryState as unknown as SpeedState, Date.now(), t.telemetryTest, t.telemetryLoss),
+        positionCapturedAt: t.positionCapturedAt?.getTime() ?? null, accuracy: t.positionAccuracy,
       }));
 
     return res.json({ success: true, data });

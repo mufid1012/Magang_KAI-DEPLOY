@@ -1,0 +1,22 @@
+{
+  "activePpj": 20,
+  "rounds": 3,
+  "uploadRequests": 60,
+  "samples": 120,
+  "errors": 0,
+  "elapsedSeconds": 20.076539399999998,
+  "uploadP50Ms": 70.13660000000004,
+  "uploadP95Ms": 155.5663999999997,
+  "uploadMaxMs": 157.92289999999957,
+  "livePollMs": [
+    9.513599999999997,
+    11.462499999999636,
+    6.579499999999825
+  ],
+  "livePayloadBytes": [
+    8956,
+    9669,
+    9624
+  ],
+  "environment": "Local Windows, Node v24.21.0, MySQL 8.0.30, isolated audit DB; no production capacity claim"
+}

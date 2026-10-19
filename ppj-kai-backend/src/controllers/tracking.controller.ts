@@ -1,3 +1,7 @@
+import { Prisma } from '@prisma/client';
+import { speedSummary, type SpeedState } from '../../../shared/telemetry';
+import { ingestBatch, lockTracking, parseBatch, TelemetryError } from '../lib/telemetry';
+import { taskScope } from '../lib/accessScope';
 import { parseRoute } from '../../../shared/route';
 import { haversineMeters as distanceMeters } from '../../../shared/geo';
 import { Request, Response } from 'express';
@@ -33,9 +37,9 @@ export const getActiveTracking = async (req: Request, res: Response) => {
     const tracking = await prisma.tracking.findFirst({
       where: { tugasId, status: 'started', tugas: { assignedTo: userId, status: 'in_progress' } },
       orderBy: { startTime: 'desc' },
-      select: { id: true, startTime: true, routePath: true },
+      select: { id: true, startTime: true, routePath: true, telemetryState: true, telemetryTest: true },
     });
-    return res.json({ success: true, trackingId: tracking?.id ?? null, startTime: tracking?.startTime ?? null, routePath: tracking?.routePath ?? null });
+    return res.json({ success: true, trackingId: tracking?.id ?? null, startTime: tracking?.startTime ?? null, routePath: tracking?.routePath ?? null, telemetryState: tracking?.telemetryState ?? null, telemetryTest: tracking?.telemetryTest ?? false });
   } catch (error) {
     return res.status(500).json({ success: false, message: 'Internal server error' });
   }
@@ -149,11 +153,12 @@ export const startTracking = async (req: Request, res: Response) => {
           startLong: longitude,
           status: 'started',
           fotoAwal: fotoAwal || null,
+          telemetryTest: useBypass,
         },
       });
     });
 
-    return res.json({ success: true, trackingId: tracking.id });
+    return res.json({ success: true, trackingId: tracking.id, startTime: tracking.startTime });
   } catch (error) {
     if (error instanceof Error && error.message === 'TRACKING_ALREADY_STARTED') {
       return res.status(409).json({ success: false, message: 'Tracking tugas sudah dimulai' });
@@ -165,27 +170,36 @@ export const startTracking = async (req: Request, res: Response) => {
 
 export const updateTracking = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = Number(req.params.id);
+    const userId = (req as any).user.id as number;
+    if (req.body.samples !== undefined) {
+      const now = Date.now();
+      const loss = req.body.reportedLoss ?? 0;
+      if (!Number.isSafeInteger(loss) || loss < 0 || loss > 2147483647) throw new TelemetryError(400, 'Metadata kehilangan sampel tidak valid');
+      const samples = parseBatch(req.body.samples, now);
+      const result = await prisma.$transaction(async tx => {
+        const tracking = await lockTracking(tx, id, userId);
+        if (loss > tracking.telemetryLoss) await tx.tracking.update({where: {id}, data: {telemetryLoss: loss}});
+        return { ...(await ingestBatch(tx, tracking, samples, now)), isTest: tracking.telemetryTest, reportedLoss: Math.max(loss, tracking.telemetryLoss) };
+      });
+      return res.json({ success: true, acknowledged: result.acknowledged, summary: speedSummary(result.state, now, result.isTest, result.reportedLoss) });
+    }
+    // Legacy clients remain accepted but cannot invent sample timestamps or speed.
     const { lat, lng } = req.body;
     if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
       return res.status(400).json({ success: false, message: 'Posisi GPS tidak valid' });
     }
-    const tracking = await prisma.tracking.findFirst({
-      where: { id: Number(id), status: 'started', tugas: { assignedTo: (req as any).user.id, status: 'in_progress' } }
-    });
-
-    if (!tracking) {
-      return res.status(404).json({ success: false, message: 'Tracking session not found' });
-    }
-
-    // Update end position as latest position
-    await prisma.tracking.update({
-      where: { id: tracking.id },
-      data: { endLat: lat, endLong: lng }
+    const tracking = await prisma.tracking.findFirst({where: {id, status: 'started', tugas: {assignedTo: userId, status: 'in_progress'}}, select: {id: true}});
+    if (!tracking) return res.status(404).json({success: false, message: 'Tracking session not found'});
+    await prisma.$transaction(async tx => {
+      const locked = await lockTracking(tx, id, userId);
+      // Do not replace timestamped telemetry with an un-timestamped legacy position.
+      if (!locked.telemetryState) await tx.tracking.updateMany({where: {id, status: 'started'}, data: {endLat: lat, endLong: lng}});
     });
 
     return res.json({ success: true });
   } catch (error) {
+    if (error instanceof TelemetryError) return res.status(error.status).json({ success: false, message: error.message });
     console.error('Update tracking error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });
   }
@@ -239,7 +253,18 @@ export const stopTracking = async (req: Request, res: Response) => {
     }
     const routePathStr = parsedRoute ? JSON.stringify(parsedRoute) : null;
 
+    const finalLoss = req.body.reportedLoss ?? 0;
+    if (!Number.isSafeInteger(finalLoss) || finalLoss < 0 || finalLoss > 2147483647) throw new TelemetryError(400, 'Metadata kehilangan sampel tidak valid');
+    const finalSamples = req.body.samples === undefined ? [] : parseBatch(req.body.samples, Date.now());
     await prisma.$transaction(async tx => {
+      const locked = await lockTracking(tx, tracking.id, userId);
+      if (finalLoss > locked.telemetryLoss) await tx.tracking.update({where: {id: tracking.id}, data: {telemetryLoss: finalLoss}});
+      if (useBypass && !locked.telemetryTest) {
+        await tx.tracking.update({where: {id: tracking.id}, data: {telemetryTest: true}});
+        await tx.speedEvent.updateMany({where: {trackingId: tracking.id}, data: {isTest: true}});
+        locked.telemetryTest = true;
+      }
+      if (finalSamples.length) await ingestBatch(tx, locked, finalSamples, Date.now());
       const laporanCount = await tx.laporan.count({ where: { trackingId: tracking.id } });
       const stopped = await tx.tracking.updateMany({
         where: { id: tracking.id, status: 'started' },
@@ -271,6 +296,7 @@ export const stopTracking = async (req: Request, res: Response) => {
     if (error instanceof Error && ['TRACKING_ALREADY_STOPPED', 'TRACKING_STATE_CHANGED'].includes(error.message)) {
       return res.status(409).json({ success: false, message: 'Status tracking sudah berubah. Muat ulang data tugas.' });
     }
+    if (error instanceof TelemetryError) return res.status(error.status).json({ success: false, message: error.message });
     console.error('Stop tracking error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });
   }
@@ -359,14 +385,14 @@ export const createNearbyWarning = async (req: Request, res: Response) => {
     }
 
     const candidates = await prisma.tracking.findMany({
-      where: { status: 'started', updatedAt: { gte: new Date(now.getTime() - 120_000) }, tugas: { assignedTo: { not: userId }, status: 'in_progress' } },
+      where: { status: 'started', OR: [{positionCapturedAt: {gte: new Date(now.getTime() - 120_000)}}, {telemetryState: {equals: Prisma.DbNull}, updatedAt: {gte: new Date(now.getTime() - 120_000)}}], tugas: { assignedTo: { not: userId }, status: 'in_progress' } },
       include: { tugas: true },
     });
     const recipients = selectWarningRecipients({ latitude, longitude, userId }, activeTracking.tugas,
       candidates.flatMap(candidate => {
         const lat = candidate.endLat ?? candidate.startLat;
         const lng = candidate.endLong ?? candidate.startLong;
-        return lat == null || lng == null ? [] : [{ id: candidate.id, userId: candidate.tugas.assignedTo, latitude: lat, longitude: lng, updatedAt: candidate.updatedAt, tugas: candidate.tugas }];
+        return lat == null || lng == null ? [] : [{ id: candidate.id, userId: candidate.tugas.assignedTo, latitude: lat, longitude: lng, updatedAt: candidate.positionCapturedAt ?? candidate.updatedAt, tugas: candidate.tugas }];
       }), now);
     if (!recipients.length) {
       return res.status(400).json({ success: false, message: 'Tidak ada PPJ lain pada jalur terkait dengan tracking aktif dan GPS terbaru' });
@@ -449,4 +475,21 @@ export const getNearbyWarnings = async (req: Request, res: Response) => {
     console.error('Get nearby warnings error:', error);
     return res.status(500).json({ success: false, message: 'Gagal mengambil warning sekitar' });
   }
+};
+
+// Detail is fetched on demand, with a bounded event page; no sample history in live payloads.
+export const getTelemetryDetail = async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user as {id: number; role: string};
+    const scope = await taskScope(user.id, user.role);
+    if (!scope) return res.status(403).json({success: false});
+    const tracking = await prisma.tracking.findFirst({where: {id: Number(req.params.id), tugas: scope},
+      select: {id: true, telemetryState: true, telemetryTest: true, telemetryLoss: true, status: true}});
+    if (!tracking) return res.status(404).json({success: false});
+    const cursor = req.query.cursor === undefined ? 0 : Number(req.query.cursor);
+    if (!Number.isSafeInteger(cursor) || cursor < 0) return res.status(400).json({success: false});
+    const events = await prisma.speedEvent.findMany({where: {trackingId: tracking.id, id: {gt: cursor}}, orderBy: {id: 'asc'}, take: 51});
+    return res.json({success: true, summary: speedSummary(tracking.telemetryState as unknown as SpeedState, Date.now(), tracking.telemetryTest, tracking.telemetryLoss),
+      events: events.slice(0,50), nextCursor: events.length > 50 ? events[49]!.id : null});
+  } catch (error) { console.error('Telemetry detail error:', error); return res.status(500).json({success: false}); }
 };

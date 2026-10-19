@@ -1,6 +1,9 @@
 'use client';
 import { petugasColor } from '../../../../shared/display';
 
+import type { LivePosition } from '../admin/types';
+import LiveSpeedList from '../admin/LiveSpeedList';
+import { TELEMETRY, REVIEW_LABEL } from '../../../../shared/telemetry';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useEffect,useRef,useState } from 'react';
@@ -32,15 +35,6 @@ interface TaskPoint {
   petugasNipp?: string;
 }
 
-interface LivePosition {
-  petugasNama: string;
-  petugasNipp: string;
-  tugasId: number;
-  jalur: string;
-  latitude: number;
-  longitude: number;
-  updatedAt: string;
-}
 
 interface AdminMapProps {
   emergencies: EmergencyPoint[];
@@ -48,6 +42,7 @@ interface AdminMapProps {
   onEmergencyClick?: (e: EmergencyPoint) => void;
   /** Live petugas positions — shown as pulsing dots on the map */
   livePositions?: LivePosition[];
+  monitoringError?: string;
   /** If provided, locks the map to this bounding box */
   maxBounds?: [[number, number], [number, number]];
 }
@@ -81,7 +76,7 @@ function makePin(color: string, label: string) {
 // fetchRailwayGeometry is imported from lib/railway.ts
 // which has automatic failover to multiple Overpass API mirrors
 
-export default function AdminMap({ emergencies, tasks, onEmergencyClick, livePositions, maxBounds }: AdminMapProps) {
+export default function AdminMap({ emergencies, tasks, onEmergencyClick, livePositions, monitoringError, maxBounds }: AdminMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layerGroupRef = useRef<L.LayerGroup | null>(null);
@@ -221,13 +216,17 @@ export default function AdminMap({ emergencies, tasks, onEmergencyClick, livePos
         iconAnchor: [20, 20],
       });
 
+      if (pos.accuracy !== null) L.circle([pos.latitude, pos.longitude], {radius: pos.accuracy, weight: 1, color, fillOpacity: 0.08}).addTo(liveLayerRef.current!);
       L.marker([pos.latitude, pos.longitude], { icon, zIndexOffset: 1000 })
-        .bindTooltip(
-          `<div style="text-align:center">
+        .bindTooltip(() => {
+          const fresh = pos.speedAt !== null && Date.now() - pos.speedAt <= TELEMETRY.FRESH_MS;
+          return `<div style="text-align:center">
             <b style="color:${color}">${pos.petugasNama}</b><br>
+            <span>${fresh && pos.speedKmh !== null ? pos.speedKmh.toFixed(1) : "—"} km/jam · ${pos.quality}</span><br>
+            <span>${pos.isTest ? "Data uji" : pos.reviewCount > 0 ? REVIEW_LABEL : ""}</span><br>
             <span style="font-size:10px;color:#64748b">${pos.jalur}</span><br>
-            <span style="font-size:9px;color:#94a3b8">🕐 ${new Date(pos.updatedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
-          </div>`,
+            <span style="font-size:9px;color:#94a3b8">🕐 ${pos.positionCapturedAt ? new Date(pos.positionCapturedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'waktu tidak tersedia'}</span>
+          </div>`; },
           { direction: 'top', offset: [0, -24] }
         )
         .addTo(liveLayerRef.current!);
@@ -237,6 +236,7 @@ export default function AdminMap({ emergencies, tasks, onEmergencyClick, livePos
   return (
     <div className="w-full h-full relative">
       <div ref={containerRef} className="w-full h-full" />
+      {livePositions && <div className="absolute top-14 right-3 z-[1001] w-72 max-w-[75%]"><LiveSpeedList positions={livePositions} error={monitoringError ?? ''} /></div>}
     </div>
   );
 }

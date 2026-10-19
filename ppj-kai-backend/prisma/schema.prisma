@@ -110,10 +110,50 @@ model Tracking {
   tugas          TugasPpj  @relation(fields: [tugasId], references: [id])
   laporan        Laporan[]
   warningRecipients WarningRecipient[]
+  telemetrySamples TrackingSample[]
+  speedEvents SpeedEvent[]
+  telemetryState Json? @map("telemetry_state")
+  telemetryTest Boolean @default(false) @map("telemetry_test")
+  telemetryLoss Int @default(0) @map("telemetry_loss")
+  positionAccuracy Float? @map("position_accuracy")
+  positionCapturedAt DateTime? @map("position_captured_at")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 
   @@map("tracking")
+}
+
+model TrackingSample {
+  id Int @id @default(autoincrement())
+  trackingId Int @map("tracking_id")
+  sampleId String @map("sample_id") @db.VarChar(80)
+  capturedAt DateTime @map("captured_at")
+  receivedAt DateTime @default(now()) @map("received_at")
+  latitude Float
+  longitude Float
+  accuracy Float
+  deviceSpeed Float? @map("device_speed")
+  quality String @db.VarChar(30)
+  tracking Tracking @relation(fields: [trackingId], references: [id], onDelete: Cascade)
+  @@unique([trackingId, sampleId])
+  @@unique([trackingId, capturedAt])
+  @@map("tracking_samples")
+}
+
+model SpeedEvent {
+  id Int @id @default(autoincrement())
+  trackingId Int @map("tracking_id")
+  startAt DateTime @map("start_at")
+  endAt DateTime @map("end_at")
+  durationMs Int @map("duration_ms")
+  maxKmh Float @map("max_kmh")
+  meanKmh Float @map("mean_kmh")
+  sampleCount Int @map("sample_count")
+  worstAccuracy Float @map("worst_accuracy")
+  isTest Boolean @default(false) @map("is_test")
+  tracking Tracking @relation(fields: [trackingId], references: [id], onDelete: Cascade)
+  @@unique([trackingId, startAt])
+  @@map("speed_events")
 }
 
 model TrainSchedule {

@@ -8,7 +8,7 @@ import CategoryEditor from '../../components/admin/CategoryEditor';
 import ImportResult from '../../components/admin/ImportResult';
 import PetugasHistory from '../../components/admin/PetugasHistory';
 import PetugasPicker from '../../components/admin/PetugasPicker';
-import type { Emergency,KategoriTemuan,LivePosition,ManagedUser,Petugas,RegisteredMapLocation,Stats,Tugas,TugasStatusFilter,WilayahItem } from '../../components/admin/types';
+import type { Emergency,KategoriTemuan,ManagedUser,Petugas,RegisteredMapLocation,Stats,Tugas,TugasStatusFilter,WilayahItem } from '../../components/admin/types';
 import UserEditor from '../../components/admin/UserEditor';
 
 
@@ -16,7 +16,7 @@ import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import React,{ useCallback,useEffect,useState } from 'react';
 import TaskDetailModal from '../../components/admin/TaskDetailModal';
-import { usePolling } from '../../hooks/usePolling';
+import { useLivePositions } from '../../hooks/useLivePositions';
 import api from '../../lib/api';
 import { NotificationSound,playNotification,speakEmergencyAnnouncement,startLoopingNotification,stopLoopingNotification } from '../../lib/audio';
 import { showConfirm } from '../../lib/confirm';
@@ -85,17 +85,20 @@ const ICON_OPTIONS = [
 export default function AdminPage() {
   const router = useRouter();
   const [user, setUser] = useState<{ id?: number; nama: string; role: string } | null>(null);
+  const [refreshingDashboard, setRefreshingDashboard] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [petugas, setPetugas] = useState<Petugas[]>([]);
   const [tugas, setTugas] = useState<Tugas[]>([]);
   const [emergencies, setEmergencies] = useState<Emergency[]>([]);
-  const [livePositions, setLivePositions] = useState<LivePosition[]>([]);
+
   const [selectedEmergency, setSelectedEmergency] = useState<Emergency | null>(null);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'map' | 'tasks' | 'emergency'>('map');
 
   // Sidebar menu state
   const [activeMenu, setActiveMenu] = useState<'penugasan' | 'liveview' | 'locationmap' | 'akun' | 'settings'>('penugasan');
+
+  const { positions: livePositions, error: liveError } = useLivePositions(!!user && activeMenu === 'liveview');
 
   // Role-derived permissions
   const userRole = user?.role || 'admin';
@@ -302,14 +305,15 @@ export default function AdminPage() {
   };
 
   const fetchAll = useCallback(async () => {
+    setRefreshingDashboard(true);
     const results = await Promise.allSettled([
       api.get('/admin/stats', { timeout: 12000 }).then(res => setStats(res.data.data)),
       api.get('/admin/petugas', { timeout: 12000 }).then(res => setPetugas(res.data.data)),
       api.get('/admin/tugas', { params: { summary: true }, timeout: 12000 }).then(res => setTugas((Array.isArray(res.data.data) ? res.data.data : []).map(resolveTugasStatus))),
       api.get('/admin/emergency', { timeout: 12000 }).then(res => setEmergencies(res.data.data)),
-      api.get('/admin/live-positions', { timeout: 12000 }).then(res => setLivePositions(res.data.data)),
     ]);
     for (const result of results) if (result.status === 'rejected') console.error('Dashboard refresh failed:', result.reason);
+    setRefreshingDashboard(false);
   }, []);
 
   const detailRequest = React.useRef(0);
@@ -405,9 +409,9 @@ export default function AdminPage() {
     void fetchKategori();
   }, [fetchKategori]);
 
-  usePolling(fetchAll, 15000);
+  useEffect(() => { void fetchAll(); }, [fetchAll]);
 
-  const handleLogout = () => { localStorage.removeItem('token'); localStorage.removeItem('user'); router.replace('/login'); };
+  const handleLogout = () => { setUser(null); localStorage.removeItem('token'); localStorage.removeItem('user'); router.replace('/login'); };
 
   // Account management handlers (admin only)
   const handleOpenCreateUser = () => {
@@ -685,10 +689,12 @@ export default function AdminPage() {
     }
   };
 
-  const mapEmergencies = emergencies.map(e => ({ id: e.id, latitude: e.latitude, longitude: e.longitude, jenisTemuan: e.jenisTemuan, deskripsi: e.deskripsi, foto: e.foto, createdAt: e.createdAt, petugasNama: e.tracking?.tugas?.user?.nama, jalur: e.tracking?.tugas?.jalur }));
-  const mapTasks = tugas
+  const mapEmergencies = React.useMemo(() => emergencies.map(e => ({ id: e.id, latitude: e.latitude, longitude: e.longitude, jenisTemuan: e.jenisTemuan, deskripsi: e.deskripsi, foto: e.foto, createdAt: e.createdAt, petugasNama: e.tracking?.tugas?.user?.nama, jalur: e.tracking?.tugas?.jalur })), [emergencies]);
+  const mapTasks = React.useMemo(() => tugas
     .filter(t => t.status === 'in_progress')
-    .map(t => ({ id: t.id, jalur: t.jalur, startPointLat: t.startPointLat, startPointLong: t.startPointLong, endPointLat: t.endPointLat, endPointLong: t.endPointLong, startPointName: t.startPointName, endPointName: t.endPointName, status: t.status, petugasNama: t.user?.nama, petugasNipp: t.user?.nipp }));
+    .map(t => ({ id: t.id, jalur: t.jalur, startPointLat: t.startPointLat, startPointLong: t.startPointLong, endPointLat: t.endPointLat, endPointLong: t.endPointLong, startPointName: t.startPointName, endPointName: t.endPointName, status: t.status, petugasNama: t.user?.nama, petugasNipp: t.user?.nipp })), [tugas]);
+
+  const handleMapEmergencyClick = useCallback((em: {id: number}) => { setSelectedEmergency(emergencies.find(e => e.id === em.id) || null); }, [emergencies]);
 
   return (
     <div className="h-screen flex flex-col bg-[#F8FAFC] font-sans overflow-hidden">
@@ -775,6 +781,7 @@ export default function AdminPage() {
             </div>
           </div>
           <div className="w-px h-6 bg-slate-200"></div>
+          <button disabled={refreshingDashboard} onClick={() => void fetchAll()} title="Segarkan tugas dan laporan" className="text-xs font-semibold text-slate-500 disabled:opacity-50">{refreshingDashboard ? 'Memuat…' : 'Segarkan'}</button>
           <button onClick={handleLogout} className="flex items-center gap-2 text-slate-500 hover:text-error transition-colors font-label-sm font-semibold p-1">
             <span className="material-symbols-outlined text-[20px] md:text-[20px]">logout</span>
           </button>
@@ -1186,8 +1193,8 @@ export default function AdminPage() {
             <AdminMap
               emergencies={mapEmergencies}
               tasks={mapTasks}
-              livePositions={livePositions}
-              onEmergencyClick={(em) => { setSelectedEmergency(emergencies.find(e => e.id === em.id) || null); }}
+              livePositions={livePositions} monitoringError={liveError}
+              onEmergencyClick={handleMapEmergencyClick}
             />
 
             {/* Legend */}
