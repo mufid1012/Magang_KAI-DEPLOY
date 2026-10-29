@@ -1,4 +1,3 @@
-import { Prisma } from '@prisma/client';
 import { speedSummary, type SpeedState } from '../../../shared/telemetry';
 import { ingestBatch, lockTracking, parseBatch, TelemetryError } from '../lib/telemetry';
 import { taskScope } from '../lib/accessScope';
@@ -6,7 +5,7 @@ import { parseRoute } from '../../../shared/route';
 import { haversineMeters as distanceMeters } from '../../../shared/geo';
 import { Request, Response } from 'express';
 import prisma from '../config/database';
-import { hasWarningRoute, hasOverlappingWarningRoute, haversineMeters, selectWarningRecipients } from '../utils/warningRoute';
+import { hasWarningRoute, hasOverlappingWarningRoute, haversineMeters, resolveWarningPosition, selectWarningRecipients, WARNING_POSITION_TTL_MS } from '../utils/warningRoute';
 
 // Keep the existing API fields while recipient storage supports any number of sessions.
 function warningResponse<T extends { recipients: { trackingId: number }[] }>(record: T) {
@@ -384,15 +383,16 @@ export const createNearbyWarning = async (req: Request, res: Response) => {
       return res.status(429).json({ success: false, message: 'Tunggu 30 detik sebelum mengirim warning lagi' });
     }
 
+    // Jangan saring hanya lewat positionCapturedAt: kolom itu kosong selama belum ada
+    // sampel yang lolos akurasi <= 20 m, padahal sesinya masih aktif mengirim sampel.
     const candidates = await prisma.tracking.findMany({
-      where: { status: 'started', OR: [{positionCapturedAt: {gte: new Date(now.getTime() - 120_000)}}, {telemetryState: {equals: Prisma.DbNull}, updatedAt: {gte: new Date(now.getTime() - 120_000)}}], tugas: { assignedTo: { not: userId }, status: 'in_progress' } },
-      include: { tugas: true },
+      where: { status: 'started', OR: [{ positionCapturedAt: { gte: new Date(now.getTime() - WARNING_POSITION_TTL_MS) } }, { updatedAt: { gte: new Date(now.getTime() - WARNING_POSITION_TTL_MS) } }], tugas: { assignedTo: { not: userId }, status: 'in_progress' } },
+      include: { tugas: true, telemetrySamples: { orderBy: { capturedAt: 'desc' }, take: 1 } },
     });
     const recipients = selectWarningRecipients({ latitude, longitude, userId }, activeTracking.tugas,
       candidates.flatMap(candidate => {
-        const lat = candidate.endLat ?? candidate.startLat;
-        const lng = candidate.endLong ?? candidate.startLong;
-        return lat == null || lng == null ? [] : [{ id: candidate.id, userId: candidate.tugas.assignedTo, latitude: lat, longitude: lng, updatedAt: candidate.positionCapturedAt ?? candidate.updatedAt, tugas: candidate.tugas }];
+        const position = resolveWarningPosition({ ...candidate, latestSample: candidate.telemetrySamples?.[0] ?? null }, now);
+        return position ? [{ id: candidate.id, userId: candidate.tugas.assignedTo, ...position, tugas: candidate.tugas }] : [];
       }), now);
     if (!recipients.length) {
       return res.status(400).json({ success: false, message: 'Tidak ada PPJ lain pada jalur terkait dengan tracking aktif dan GPS terbaru' });

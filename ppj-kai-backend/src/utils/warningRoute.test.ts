@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { hasOverlappingWarningRoute, selectWarningRecipients } from './warningRoute';
+import { hasOverlappingWarningRoute, resolveWarningPosition, selectWarningRecipients } from './warningRoute';
 
 const now = new Date('2026-10-13T05:00:00Z');
 const route = { startPointName: 'Sta. A', endPointName: 'Sta. B', startPointLat: -7, startPointLong: 110, endPointLat: -7, endPointLong: 111 };
@@ -93,4 +93,51 @@ test('GPS exactly two minutes old remains eligible and duplicate users span only
     candidate(2, 110.6),
     { ...candidate(3, 110.4), userId: 2, tugas: { startPointName: 'B', endPointName: 'C' }, updatedAt: new Date(now.getTime() - 1) },
   ], now), [2]);
+});
+
+// --- posisi penerima warning -------------------------------------------------
+const row = (overrides: Partial<Parameters<typeof resolveWarningPosition>[0]> = {}) => ({
+  endLat: null as number | null,
+  endLong: null as number | null,
+  positionCapturedAt: null as Date | null,
+  startLat: -7.8 as number | null,
+  startLong: 110.3 as number | null,
+  startTime: new Date(now.getTime() - 60 * 60_000) as Date | null,
+  latestSample: null as { latitude: number; longitude: number; capturedAt: Date; accuracy: number } | null,
+  ...overrides,
+});
+
+test('posisi live yang lolos filter akurasi dipakai lebih dulu', () => {
+  const position = resolveWarningPosition(row({
+    endLat: -7.79, endLong: 110.35, positionCapturedAt: new Date(now.getTime() - 5_000),
+    latestSample: { latitude: -7.80, longitude: 110.36, capturedAt: new Date(now.getTime() - 3_000), accuracy: 8 },
+  }), now);
+  assert.deepEqual(position, { latitude: -7.79, longitude: 110.35, updatedAt: new Date(now.getTime() - 5_000) });
+});
+
+test('sesi aktif tetap terdeteksi walau belum ada posisi yang lolos akurasi 20 m', () => {
+  // Kasus lapangan: akurasi 35 m -> positionCapturedAt null, tapi sampel baru terus masuk.
+  const sampleAt = new Date(now.getTime() - 9_000);
+  const position = resolveWarningPosition(row({
+    latestSample: { latitude: -7.8091, longitude: 110.3221, capturedAt: sampleAt, accuracy: 35 },
+  }), now);
+  assert.deepEqual(position, { latitude: -7.8091, longitude: 110.3221, updatedAt: sampleAt });
+});
+
+test('sampel basi tidak dipakai; titik awal hanya untuk sesi yang baru dimulai', () => {
+  const staleSample = { latitude: -7.80, longitude: 110.32, capturedAt: new Date(now.getTime() - 10 * 60_000), accuracy: 10 };
+  assert.equal(resolveWarningPosition(row({ latestSample: staleSample }), now), null);
+  assert.deepEqual(
+    resolveWarningPosition(row({ startTime: new Date(now.getTime() - 30_000), latestSample: staleSample }), now),
+    { latitude: -7.8, longitude: 110.3, updatedAt: new Date(now.getTime() - 30_000) },
+  );
+});
+
+test('sampel dengan akurasi tak masuk akal dan timestamp masa depan ditangani', () => {
+  assert.equal(resolveWarningPosition(row({
+    latestSample: { latitude: -7.8, longitude: 110.3, capturedAt: new Date(now.getTime() - 1_000), accuracy: 5_000 },
+  }), now), null);
+  assert.deepEqual(resolveWarningPosition(row({
+    latestSample: { latitude: -7.8, longitude: 110.3, capturedAt: new Date(now.getTime() + 4_000), accuracy: 12 },
+  }), now), { latitude: -7.8, longitude: 110.3, updatedAt: now });
 });

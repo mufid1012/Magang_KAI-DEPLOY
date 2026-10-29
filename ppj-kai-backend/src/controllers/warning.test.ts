@@ -69,7 +69,7 @@ test('sending warning snapshots station names from owned active task', async () 
     assert.equal(args.where.status, 'started');
     assert.ok(args.where.OR[0].positionCapturedAt.gte instanceof Date);
     assert.ok(args.where.OR[1].updatedAt.gte instanceof Date);
-    return [{ id: 55, endLat: -7.8, endLong: 110.4, updatedAt: new Date(Date.now() - 100), tugas: { ...route, assignedTo: 8 } }];
+    return [{ id: 55, endLat: -7.8, endLong: 110.4, positionCapturedAt: new Date(Date.now() - 100), updatedAt: new Date(Date.now() - 100), tugas: { ...route, assignedTo: 8 } }];
   });
   stub(prisma.warningAlert, 'findFirst', async () => null);
   stub(prisma.warningAlert, 'deleteMany', async () => ({ count: 0 }));
@@ -97,7 +97,7 @@ test('sending warning atomically stores more than two recipients across overlapp
     { id: 57, userId: 10, endLong: 110.35, tugas: otherRoute },
     { id: 58, userId: 11, endLong: 110.39, tugas: otherRoute },
     { id: 59, userId: 12, endLong: 110.371, tugas: { ...route, startPointName: 'Sta. Patukan', endPointName: 'Sta. Maguwo' } },
-  ].map(item => ({ ...item, endLat: -7.8, updatedAt: new Date(Date.now() - 100), tugas: { ...item.tugas, assignedTo: item.userId } })));
+  ].map(item => ({ ...item, endLat: -7.8, positionCapturedAt: new Date(Date.now() - 100), updatedAt: new Date(Date.now() - 100), tugas: { ...item.tugas, assignedTo: item.userId } })));
   stub(prisma.warningAlert, 'findFirst', async () => null);
   stub(prisma.warningAlert, 'deleteMany', async () => ({ count: 0 }));
   stub(prisma.warningAlert, 'create', async ({ data }: any) => {
@@ -120,6 +120,35 @@ test('sending warning rejects a task without station names', async () => {
   assert.equal(res.statusCode, 400);
 });
 
+test('warning reaches a PPJ whose GPS accuracy never passes the 20 m filter', async () => {
+  // Regresi: positionCapturedAt null + telemetryState terisi (batches tetap masuk) dulu
+  // membuat PPJ aktif tidak pernah dianggap kandidat penerima.
+  stub(prisma.tracking, 'findFirst', async () => ({ id: 42, tugas: route }));
+  stub(prisma.tracking, 'findMany', async () => [{
+    id: 55,
+    endLat: null,
+    endLong: null,
+    positionCapturedAt: null,
+    startLat: -7.8,
+    startLong: 110.3,
+    startTime: new Date(Date.now() - 600_000),
+    updatedAt: new Date(Date.now() - 3_000),
+    telemetryState: { quality: 'poor_accuracy', position: null },
+    tugas: { ...route, assignedTo: 8 },
+    telemetrySamples: [{ latitude: -7.8, longitude: 110.4, capturedAt: new Date(Date.now() - 4_000), accuracy: 35 }],
+  }]);
+  stub(prisma.warningAlert, 'findFirst', async () => null);
+  stub(prisma.warningAlert, 'deleteMany', async () => ({ count: 0 }));
+  stub(prisma.warningAlert, 'create', async ({ data }: any) => {
+    assert.deepEqual(data.recipients.create, [{ trackingId: 55 }]);
+    return { id: 11, ...data, recipients: data.recipients.create };
+  });
+  const res = response();
+  await createNearbyWarning(request(), res);
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.body.data.recipientOneTrackingId, 55);
+});
+
 test('no eligible recipient reports failure without saving a warning', async () => {
   stub(prisma.tracking, 'findFirst', async () => ({ id: 42, tugas: route }));
   stub(prisma.tracking, 'findMany', async () => []);
@@ -137,6 +166,7 @@ test('sending warning identifies a deployment missing the warning-route schema',
     id: 55,
     endLat: -7.8,
     endLong: 110.4,
+    positionCapturedAt: new Date(Date.now() - 100),
     updatedAt: new Date(Date.now() - 100),
     tugas: { ...route, assignedTo: 8 },
   }]);
