@@ -8,7 +8,8 @@
     "postinstall": "prisma generate",
     "test": "node --import tsx --test src/**/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "test:db": "node --import tsx --test test/*.test.ts"
+    "test:db": "node --import tsx --test test/*.test.ts",
+    "seed:kategori": "tsx seed-kategori.ts"
   },
   "keywords": [],
   "author": "",

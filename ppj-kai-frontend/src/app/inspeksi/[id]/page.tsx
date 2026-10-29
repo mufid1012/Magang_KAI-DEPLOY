@@ -82,7 +82,8 @@ export default function TrackingPage() {
 
   // Emergency Modal
   const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
-  const [jenisTemuan, setJenisTemuan] = useState('ringan');
+  // Kosong = belum dipilih. 'ringan' bukan key kategori di backend, jadi jangan dijadikan default.
+  const [jenisTemuan, setJenisTemuan] = useState('');
   const [deskripsi, setDeskripsi] = useState('');
   const [isSubmittingLaporan, setIsSubmittingLaporan] = useState(false);
   const [emergencyPhoto, setEmergencyPhoto] = useState<string | null>(null);
@@ -326,6 +327,7 @@ export default function TrackingPage() {
 
   const handleKirimLaporan = async () => {
     if (!trackingId || !gpsPos) { showToast('Tracking belum aktif atau GPS belum tersedia.', 'warning'); return; }
+    if (!jenisTemuan) { showToast('Pilih kategori kendala terlebih dahulu.', 'warning'); return; }
     try {
       setIsSubmittingLaporan(true);
       await api.post(`/laporan`, {
@@ -342,7 +344,8 @@ export default function TrackingPage() {
       setEmergencyPhoto(null);
     } catch (err) {
       console.error('Failed to send laporan', err);
-      showToast('Gagal mengirim laporan darurat.', 'error');
+      const message = axios.isAxiosError<{ message?: string }>(err) ? err.response?.data?.message : undefined;
+      showToast(message || 'Gagal mengirim laporan darurat.', 'error');
     } finally { setIsSubmittingLaporan(false); }
   };
 
