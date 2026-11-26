@@ -18,9 +18,13 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
 
   // A previously issued token must not keep a deleted/inactive account signed in.
   try {
-    const user = await prisma.user.findUnique({ where: { id: decoded.id }, select: { id: true, role: true, isActive: true } });
+    const user = await prisma.user.findUnique({ where: { id: decoded.id }, select: { id: true, role: true, isActive: true, tokenVersion: true } });
     if (!user || !user.isActive) {
       return res.status(401).json({ success: false, message: 'Akun sudah dihapus atau dinonaktifkan' });
+    }
+    // Tokens from before this change carry no tv and count as version 0.
+    if ((decoded.tv ?? 0) !== (user.tokenVersion ?? 0)) {
+      return res.status(401).json({ success: false, message: 'Password akun sudah diganti. Silakan login ulang.' });
     }
     (req as any).user = { id: user.id, role: user.role };
   } catch (error) {

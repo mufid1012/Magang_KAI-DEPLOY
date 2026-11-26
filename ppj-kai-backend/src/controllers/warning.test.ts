@@ -193,6 +193,7 @@ test('stopping tracking moves the assignment to need approval', async () => {
   const tx = {
     $queryRaw: async () => [{id: 91}],
     laporan: { count: async () => 0 },
+    trackingSample: { findMany: async () => [] },
     speedEvent: {updateMany: async () => ({count: 0})},
     tracking: {findFirst: async () => ({id: 91, tugasId: 12, telemetryTest: true}), updateMany: async ({ data }: any) => {
       assert.equal(data.status, 'stopped');
@@ -216,17 +217,24 @@ test('stopping tracking moves the assignment to need approval', async () => {
 
 test('approving tracking atomically completes the assignment', async () => {
   stub(prisma.tracking, 'findFirst', async () => ({ id: 91, tugasId: 12, status: 'stopped', approvalStatus: 'not_approved' }));
-  stub(prisma.tracking, 'update', async ({ data }: any) => {
-    assert.equal(data.approvalStatus, 'approved');
-    assert.equal(data.safetyStatus, 'aman');
-    return { id: 91, ...data };
-  });
-  stub(prisma.tugasPpj, 'update', async ({ where, data }: any) => {
-    assert.equal(where.id, 12);
-    assert.equal(data.status, 'completed');
-    return { id: 12, ...data };
-  });
-  stub(prisma, '$transaction', async (operations: Promise<any>[]) => Promise.all(operations));
+  stub(prisma, '$transaction', async (fn: any) => fn({
+    tracking: {
+      updateMany: async ({ data }: any) => {
+        assert.equal(data.approvalStatus, 'approved');
+        assert.equal(data.safetyStatus, 'aman');
+        return { count: 1 };
+      },
+      findUniqueOrThrow: async () => ({ id: 91, approvalStatus: 'approved' }),
+    },
+    adminAuditLog: { create: async () => ({}) },
+    tugasPpj: {
+      updateMany: async ({ where, data }: any) => {
+        assert.equal(where.id, 12);
+        assert.equal(data.status, 'completed');
+        return { count: 1 };
+      },
+    },
+  }));
   const req = { params: { id: '91' }, body: { safetyStatus: 'aman' }, user: { id: 7 } } as any;
   const res = response();
   await approveTracking(req, res);

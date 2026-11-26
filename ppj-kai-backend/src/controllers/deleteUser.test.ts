@@ -8,7 +8,7 @@ afterEach(() => { prisma.$transaction = originalTransaction; });
 const request = (id = '12', role = 'admin') => ({ params: { id }, user: { id: 1, role }, body: { confirmPermanent: true } } as any);
 const response = () => ({ statusCode: 200, body: null as any, status(code: number) { this.statusCode = code; return this; }, json(body: any) { this.body = body; return this; } } as any);
 
-function database(user: any = { id: 12, role: 'ppj' }, active = false) {
+function database(user: any = { id: 12, role: 'ppj' }, active = false, history = 0) {
   const calls: { model: string; method: string; args: any }[] = [];
   const tx: any = {};
   for (const model of ['user', 'tugasPpj', 'tracking', 'laporan', 'warningAlert', 'templateItem', 'templatePenugasan', 'userWilayah', 'mapLocation', 'trainSchedule']) {
@@ -17,9 +17,11 @@ function database(user: any = { id: 12, role: 'ppj' }, active = false) {
       tx[model][method] = async (args: any) => { calls.push({ model, method, args }); return { count: 1 }; };
     }
   }
+  tx.adminAuditLog = { create: async (args: any) => { calls.push({ model: 'adminAuditLog', method: 'create', args }); } };
   tx.user.findUnique = async () => user;
+  tx.user.findMany = async () => [];
   tx.tugasPpj.findFirst = async () => active ? { id: 51 } : null;
-  tx.tracking.findMany = async () => [{ id: 71 }];
+  tx.tracking.count = async () => history;
   prisma.$transaction = (async (fn: any, options: any) => {
     assert.equal(options.isolationLevel, 'Serializable');
     return fn(tx);
@@ -27,7 +29,7 @@ function database(user: any = { id: 12, role: 'ppj' }, active = false) {
   return { tx, calls };
 }
 
-test('deletes the account and its dependencies, releasing managed users without deleting them', async () => {
+test('deletes an account without inspection history, releasing managed users without deleting them', async () => {
   const { calls } = database();
   const res = response();
   await deleteUser(request(), res);
@@ -35,8 +37,7 @@ test('deletes the account and its dependencies, releasing managed users without 
   assert.equal(res.body.success, true);
   assert.deepEqual(calls.at(-1), { model: 'user', method: 'delete', args: { where: { id: 12 } } });
   assert.deepEqual(calls.find(c => c.model === 'user' && c.method === 'updateMany')?.args, { where: { managerId: 12 }, data: { managerId: null } });
-  assert.deepEqual(calls.find(c => c.model === 'laporan')?.args, { where: { trackingId: { in: [71] } } });
-  assert.ok(calls.findIndex(c => c.model === 'laporan') < calls.findIndex(c => c.model === 'tracking' && c.method === 'deleteMany'));
+  assert.equal(calls.filter(c => c.model === 'laporan' || (c.model === 'tracking' && c.method === 'deleteMany')).length, 0);
   assert.ok(calls.find(c => c.model === 'templateItem'));
   assert.equal(calls.filter(c => c.model === 'warningAlert' && c.method === 'updateMany').length, 0);
 });
@@ -76,10 +77,19 @@ test('legacy deactivate requests cannot trigger permanent deletion', async () =>
 
 test('failed dependent deletion aborts before account deletion and reports failure', async () => {
   const { tx, calls } = database();
-  tx.laporan.deleteMany = async () => { throw { code: 'P2034' }; };
+  tx.tugasPpj.deleteMany = async () => { throw { code: 'P2034' }; };
   const res = response();
   await deleteUser(request(), res);
   assert.equal(res.statusCode, 409);
   assert.equal(res.body.success, false);
   assert.equal(calls.some(c => c.model === 'user' && c.method === 'delete'), false);
+});
+
+
+test('an account with inspection history is kept; deactivate it instead', async () => {
+  const { calls } = database({ id: 12, role: 'ppj' }, false, 3);
+  const res = response();
+  await deleteUser(request(), res);
+  assert.equal(res.statusCode, 409);
+  assert.equal(calls.length, 0);
 });

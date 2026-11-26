@@ -75,7 +75,7 @@ test('MySQL telemetry: replay, quality, freshness, scopes, stop races, cascade a
       await json(await request(`/tracking/update/${tracking.id}`,ppj,{samples:[{...samples[0],id:'expired',capturedAt:Date.now()-90000000}]}));
     });
     await t.test('update/stop serialize; completed sessions reject late writes; optional final batch is atomic',async()=>{
-      const stopBody={lat:0,lng:0,fotoSelesai:'end',routePath:[[0,0],[0,0.001]]};
+      const stopBody={lat:0,lng:0,fotoSelesai:'data:image/jpeg;base64,/9j/4AAQSkZJRg==',routePath:[[0,0],[0,0.001]]};
       const results=await Promise.all([request(`/tracking/update/${tracking.id}`,ppj,{samples:[{...samples[24],id:'race',capturedAt:Date.now()+100}]}),request(`/tracking/stop/${tracking.id}`,ppj,stopBody)]);
       assert.ok([200,409].includes(results[0]!.status));await json(results[1]!);
       const before=await prisma.trackingSample.count({where:{trackingId:tracking.id}});

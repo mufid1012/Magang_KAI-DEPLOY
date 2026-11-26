@@ -21,6 +21,8 @@ model User {
   alertSound         String?       @map("alert_sound") @db.VarChar(20) // siren | beep | chime | off
   isActive           Boolean       @default(true) @map("is_active")
   managerId          Int?          @map("manager_id") // ID of the admin who manages this petugas
+  // Bumped on password change so tokens issued before it stop working.
+  tokenVersion       Int           @default(0) @map("token_version")
   tugasPpj           TugasPpj[]
   wilayahAssignments UserWilayah[]
   createdAt          DateTime      @default(now()) @map("created_at")
@@ -32,7 +34,12 @@ model User {
   mapLocations      MapLocation[]
   trainSchedules    TrainSchedule[] @relation("TrainScheduleCreator")
   approvedTrackings Tracking[]      @relation("TrackingApprover")
+  forcedStops       Tracking[]      @relation("TrackingForcedStopper")
+  rejectedTrackings Tracking[]      @relation("TrackingRejecter")
+  handledLaporan    Laporan[]       @relation("LaporanHandler")
+  auditLogs         AdminAuditLog[]
   warningAlerts     WarningAlert[]
+  qcNotes           QcNote[]
 
   @@map("users")
 }
@@ -79,79 +86,108 @@ model TugasPpj {
   jamMulai       String?    @map("jam_mulai") @db.VarChar(10) // e.g. "08:00"
   jamSelesai     String?    @map("jam_selesai") @db.VarChar(10) // e.g. "16:00"
   assignedTo     Int        @map("assigned_to")
-  status         String     @default("pending") @db.VarChar(20) // pending | in_progress | need_approval | completed | cancelled | missed
+  status         String     @default("pending") @db.VarChar(20) // pending | in_progress | need_approval | completed | rejected | cancelled | missed
   user           User       @relation(fields: [assignedTo], references: [id])
   tracking       Tracking[]
+  qcNotes        QcNote[]
   createdAt      DateTime   @default(now()) @map("created_at")
   updatedAt      DateTime   @updatedAt @map("updated_at")
 
   @@map("tugas_ppj")
 }
 
+// Catatan QC pada hasil patroli; dibaca pengelola (admin/KUPT). Catatan tetap ada bila akun penulis dihapus.
+model QcNote {
+  id        Int      @id @default(autoincrement())
+  tugasId   Int      @map("tugas_id")
+  authorId  Int?     @map("author_id")
+  note      String   @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at")
+  tugas     TugasPpj @relation(fields: [tugasId], references: [id], onDelete: Cascade)
+  author    User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([tugasId])
+  @@map("qc_notes")
+}
+
 model Tracking {
-  id             Int       @id @default(autoincrement())
-  tugasId        Int       @map("tugas_id")
-  startTime      DateTime? @map("start_time")
-  endTime        DateTime? @map("end_time")
-  startLat       Float?    @map("start_lat")
-  startLong      Float?    @map("start_long")
-  endLat         Float?    @map("end_lat")
-  endLong        Float?    @map("end_long")
-  durasi         Int?      @default(0)
-  status         String    @default("started") @db.VarChar(20)
-  fotoAwal       String?   @map("foto_awal") @db.LongText
-  fotoSelesai    String?   @map("foto_selesai") @db.LongText
-  routePath      String?   @map("route_path") @db.LongText // JSON: [[lat,lng], ...]
-  approvalStatus String    @default("not_approved") @map("approval_status") @db.VarChar(20) // not_approved | approved
-  safetyStatus   String    @default("aman") @map("safety_status") @db.VarChar(20) // aman | tidak_aman
-  approvedAt     DateTime? @map("approved_at")
-  approvedBy     Int?      @map("approved_by")
-  approver       User?     @relation("TrackingApprover", fields: [approvedBy], references: [id], onDelete: SetNull)
-  tugas          TugasPpj  @relation(fields: [tugasId], references: [id])
-  laporan        Laporan[]
-  warningRecipients WarningRecipient[]
-  telemetrySamples TrackingSample[]
-  speedEvents SpeedEvent[]
-  telemetryState Json? @map("telemetry_state")
-  telemetryTest Boolean @default(false) @map("telemetry_test")
-  telemetryLoss Int @default(0) @map("telemetry_loss")
-  positionAccuracy Float? @map("position_accuracy")
-  positionCapturedAt DateTime? @map("position_captured_at")
-  createdAt      DateTime  @default(now()) @map("created_at")
-  updatedAt      DateTime  @updatedAt @map("updated_at")
+  id                 Int                @id @default(autoincrement())
+  tugasId            Int                @map("tugas_id")
+  startTime          DateTime?          @map("start_time")
+  endTime            DateTime?          @map("end_time")
+  startLat           Float?             @map("start_lat")
+  startLong          Float?             @map("start_long")
+  endLat             Float?             @map("end_lat")
+  endLong            Float?             @map("end_long")
+  durasi             Int?               @default(0)
+  status             String             @default("started") @db.VarChar(20)
+  fotoAwal           String?            @map("foto_awal") @db.LongText
+  fotoSelesai        String?            @map("foto_selesai") @db.LongText
+  routePath          String?            @map("route_path") @db.LongText // JSON: [[lat,lng], ...]
+  approvalStatus     String             @default("not_approved") @map("approval_status") @db.VarChar(20) // not_approved | approved | rejected
+  safetyStatus       String             @default("aman") @map("safety_status") @db.VarChar(20) // aman | tidak_aman
+  approvedAt         DateTime?          @map("approved_at")
+  approvedBy         Int?               @map("approved_by")
+  approver           User?              @relation("TrackingApprover", fields: [approvedBy], references: [id], onDelete: SetNull)
+  // Set when the managing admin/KUPT ends a session the PPJ could not finish (e.g. dead phone).
+  forcedStopBy       Int?               @map("forced_stop_by")
+  forcedStopAt       DateTime?          @map("forced_stop_at")
+  forcedStopReason   String?            @map("forced_stop_reason") @db.VarChar(500)
+  forcedStopper      User?              @relation("TrackingForcedStopper", fields: [forcedStopBy], references: [id], onDelete: SetNull)
+  // Manager turned the result down; the task is closed as rejected and kept as history.
+  rejectedBy         Int?               @map("rejected_by")
+  rejectedAt         DateTime?          @map("rejected_at")
+  rejectionReason    String?            @map("rejection_reason") @db.VarChar(500)
+  rejecter           User?              @relation("TrackingRejecter", fields: [rejectedBy], references: [id], onDelete: SetNull)
+  // PPJ ended before the end point (blocked track, emergency); the end geofence was skipped.
+  earlyStopReason    String?            @map("early_stop_reason") @db.VarChar(500)
+  tugas              TugasPpj           @relation(fields: [tugasId], references: [id])
+  laporan            Laporan[]
+  warningRecipients  WarningRecipient[]
+  telemetrySamples   TrackingSample[]
+  speedEvents        SpeedEvent[]
+  telemetryState     Json?              @map("telemetry_state")
+  telemetryTest      Boolean            @default(false) @map("telemetry_test")
+  telemetryLoss      Int                @default(0) @map("telemetry_loss")
+  positionAccuracy   Float?             @map("position_accuracy")
+  positionCapturedAt DateTime?          @map("position_captured_at")
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
 
   @@map("tracking")
 }
 
 model TrackingSample {
-  id Int @id @default(autoincrement())
-  trackingId Int @map("tracking_id")
-  sampleId String @map("sample_id") @db.VarChar(80)
-  capturedAt DateTime @map("captured_at")
-  receivedAt DateTime @default(now()) @map("received_at")
-  latitude Float
-  longitude Float
-  accuracy Float
-  deviceSpeed Float? @map("device_speed")
-  quality String @db.VarChar(30)
-  tracking Tracking @relation(fields: [trackingId], references: [id], onDelete: Cascade)
+  id          Int      @id @default(autoincrement())
+  trackingId  Int      @map("tracking_id")
+  sampleId    String   @map("sample_id") @db.VarChar(80)
+  capturedAt  DateTime @map("captured_at")
+  receivedAt  DateTime @default(now()) @map("received_at")
+  latitude    Float
+  longitude   Float
+  accuracy    Float
+  deviceSpeed Float?   @map("device_speed")
+  quality     String   @db.VarChar(30)
+  tracking    Tracking @relation(fields: [trackingId], references: [id], onDelete: Cascade)
+
   @@unique([trackingId, sampleId])
   @@unique([trackingId, capturedAt])
   @@map("tracking_samples")
 }
 
 model SpeedEvent {
-  id Int @id @default(autoincrement())
-  trackingId Int @map("tracking_id")
-  startAt DateTime @map("start_at")
-  endAt DateTime @map("end_at")
-  durationMs Int @map("duration_ms")
-  maxKmh Float @map("max_kmh")
-  meanKmh Float @map("mean_kmh")
-  sampleCount Int @map("sample_count")
-  worstAccuracy Float @map("worst_accuracy")
-  isTest Boolean @default(false) @map("is_test")
-  tracking Tracking @relation(fields: [trackingId], references: [id], onDelete: Cascade)
+  id            Int      @id @default(autoincrement())
+  trackingId    Int      @map("tracking_id")
+  startAt       DateTime @map("start_at")
+  endAt         DateTime @map("end_at")
+  durationMs    Int      @map("duration_ms")
+  maxKmh        Float    @map("max_kmh")
+  meanKmh       Float    @map("mean_kmh")
+  sampleCount   Int      @map("sample_count")
+  worstAccuracy Float    @map("worst_accuracy")
+  isTest        Boolean  @default(false) @map("is_test")
+  tracking      Tracking @relation(fields: [trackingId], references: [id], onDelete: Cascade)
+
   @@unique([trackingId, startAt])
   @@map("speed_events")
 }
@@ -175,16 +211,16 @@ model TrainSchedule {
 }
 
 model WarningAlert {
-  recipients WarningRecipient[]
-  startPointName String? @map("start_point_name") @db.VarChar(200)
-  endPointName   String? @map("end_point_name") @db.VarChar(200)
-  id        Int      @id @default(autoincrement())
-  createdBy Int      @map("created_by")
-  creator   User     @relation(fields: [createdBy], references: [id], onDelete: Cascade)
-  latitude  Float
-  longitude Float
-  expiresAt DateTime @map("expires_at")
-  createdAt DateTime @default(now()) @map("created_at")
+  recipients     WarningRecipient[]
+  startPointName String?            @map("start_point_name") @db.VarChar(200)
+  endPointName   String?            @map("end_point_name") @db.VarChar(200)
+  id             Int                @id @default(autoincrement())
+  createdBy      Int                @map("created_by")
+  creator        User               @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  latitude       Float
+  longitude      Float
+  expiresAt      DateTime           @map("expires_at")
+  createdAt      DateTime           @default(now()) @map("created_at")
 
   @@index([createdAt])
   @@index([expiresAt])
@@ -213,7 +249,14 @@ model Laporan {
   longitude   Float
   tracking    Tracking @relation(fields: [trackingId], references: [id])
   createdAt   DateTime @default(now()) @map("created_at")
+  /// Penanganan oleh pengelola: baru -> ditangani -> selesai.
+  handlingStatus String    @default("baru") @map("handling_status") @db.VarChar(20)
+  handledBy      Int?      @map("handled_by")
+  handledAt      DateTime? @map("handled_at")
+  handlingNote   String?   @map("handling_note") @db.VarChar(500)
+  handler        User?     @relation("LaporanHandler", fields: [handledBy], references: [id], onDelete: SetNull)
 
+  @@index([handlingStatus])
   @@map("laporan")
 }
 
@@ -277,4 +320,20 @@ model KategoriTemuan {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("kategori_temuan")
+}
+
+// Who changed or removed what in the admin panel. The row stays if the actor account is deleted.
+model AdminAuditLog {
+  id         Int      @id @default(autoincrement())
+  actorId    Int?     @map("actor_id")
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String   @db.VarChar(50)
+  targetType String   @map("target_type") @db.VarChar(30)
+  targetId   Int      @map("target_id")
+  detail     Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([targetType, targetId])
+  @@map("admin_audit_log")
 }

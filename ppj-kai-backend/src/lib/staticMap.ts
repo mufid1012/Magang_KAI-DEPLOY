@@ -1,8 +1,11 @@
 /**
- * Server-side static map renderer using node-canvas + OSM tiles.
- * Renders a map image with a GPS track polyline — no browser needed.
+ * Server-side static map renderer using node-canvas + OpenStreetMap tiles.
+ * Draws the GPS track, start/end markers and numbered finding markers.
  * NOTE: 'canvas' is loaded lazily so the server still boots if the package is missing.
  */
+import https from 'https';
+import http from 'http';
+
 let createCanvas: any;
 let loadImage: any;
 let canvasAvailable = false;
@@ -15,64 +18,53 @@ try {
   console.warn('[staticMap] "canvas" package not found — PDF map rendering will be disabled. Install with: npm install canvas');
 }
 
-// --- Tile math helpers ---
-function lng2tile(lng: number, zoom: number) { return Math.floor(((lng + 180) / 360) * Math.pow(2, zoom)); }
-function lat2tile(lat: number, zoom: number) {
-  return Math.floor(
-    ((1 - Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) / Math.PI) / 2) *
-      Math.pow(2, zoom)
-  );
+const TILE = 256;
+const MAX_ZOOM = 17;
+
+export type LatLng = [number, number];
+export interface MapMarker { lat: number; lng: number; label: string; color: string }
+export interface StaticMapResult { dataUrl: string; tilesLoaded: number; tilesTotal: number }
+export interface MapView { zoom: number; left: number; top: number }
+
+/** Web-Mercator position in pixels at the given zoom (whole world = 256 * 2^zoom). */
+export function worldPixel(lat: number, lng: number, zoom: number): [number, number] {
+  const size = TILE * 2 ** zoom;
+  const sin = Math.min(Math.max(Math.sin((lat * Math.PI) / 180), -0.9999), 0.9999);
+  return [((lng + 180) / 360) * size, (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size];
 }
 
-
-
-// Convert lat/lng to pixel coordinates on the tile grid
-function latLngToPixel(lat: number, lng: number, zoom: number, originTileX: number, originTileY: number): [number, number] {
-  const n = Math.pow(2, zoom);
-  const xTile = ((lng + 180) / 360) * n;
-  const latRad = (lat * Math.PI) / 180;
-  const yTile = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n;
-  const px = (xTile - originTileX) * 256;
-  const py = (yTile - originTileY) * 256;
-  return [px, py];
-}
-
-// Choose best zoom level for the bounding box to fit in given dimensions
-function bestZoom(minLat: number, maxLat: number, minLng: number, maxLng: number, width: number, height: number): number {
-  for (let z = 17; z >= 1; z--) {
-    const x1 = lng2tile(minLng, z);
-    const x2 = lng2tile(maxLng, z);
-    const y1 = lat2tile(maxLat, z); // note: lat decreases as tile y increases
-    const y2 = lat2tile(minLat, z);
-    const tilesX = x2 - x1 + 1;
-    const tilesY = y2 - y1 + 1;
-    if (tilesX * 256 <= width * 2 && tilesY * 256 <= height * 2) {
-      return z;
-    }
+/**
+ * Highest zoom whose pixel extent of every point fits inside the frame minus padding,
+ * plus the top-left world pixel that centers those points in the frame.
+ */
+export function planMapView(points: LatLng[], width: number, height: number, padding: number): MapView {
+  let zoom = MAX_ZOOM;
+  for (; zoom > 1; zoom--) {
+    const px = points.map(([lat, lng]) => worldPixel(lat, lng, zoom));
+    const spanX = Math.max(...px.map(p => p[0])) - Math.min(...px.map(p => p[0]));
+    const spanY = Math.max(...px.map(p => p[1])) - Math.min(...px.map(p => p[1]));
+    if (spanX <= width - 2 * padding && spanY <= height - 2 * padding) break;
   }
-  return 3;
+  const px = points.map(([lat, lng]) => worldPixel(lat, lng, zoom));
+  const cx = (Math.max(...px.map(p => p[0])) + Math.min(...px.map(p => p[0]))) / 2;
+  const cy = (Math.max(...px.map(p => p[1])) + Math.min(...px.map(p => p[1]))) / 2;
+  return { zoom, left: cx - width / 2, top: cy - height / 2 };
 }
 
-import https from 'https';
-import http from 'http';
-
-// Fetch tile buffer with proper headers to comply with tile usage policies
-function fetchBuffer(url: string): Promise<Buffer> {
+function fetchBuffer(url: string, redirects = 3): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const client = url.startsWith('https') ? https : http;
     const req = client.get(url, {
-      headers: {
-        'User-Agent': 'PPJKAI-TrackInspectionApp/1.0 (https://kai.id)',
-        'Accept': 'image/png,image/*;q=0.8',
-        'Referer': 'https://kai.id/'
-      },
-      timeout: 6000
+      headers: { 'User-Agent': 'PPJKAI-TrackInspectionApp/1.0', 'Accept': 'image/png,image/*;q=0.8' },
+      timeout: 6000,
     }, (res) => {
-      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        fetchBuffer(res.headers.location).then(resolve).catch(reject);
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects > 0) {
+        res.resume();
+        fetchBuffer(res.headers.location, redirects - 1).then(resolve).catch(reject);
         return;
       }
       if (res.statusCode !== 200) {
+        res.resume();
         reject(new Error(`HTTP ${res.statusCode} for ${url}`));
         return;
       }
@@ -86,175 +78,123 @@ function fetchBuffer(url: string): Promise<Buffer> {
   });
 }
 
-// Fetch a single tile with retry and fallback servers
+// CARTO basemaps now answer HTTP 200 with an "API KEY REQUIRED" placeholder image,
+// so they cannot be used as a silent primary source. OSM is what the frontend maps use.
 async function fetchTile(x: number, y: number, z: number, retries = 2): Promise<any> {
-  const subdomains = ['a', 'b', 'c', 'd'];
-  const s = subdomains[Math.abs(x + y) % subdomains.length]!;
-
-  // Primary: CartoDB Voyager (clean, fast, railway-friendly, very reliable for server-side rendering)
-  // Fallback: OpenStreetMap with proper User-Agent
-  const urls = [
-    `https://${s}.basemaps.cartocdn.com/rastertiles/voyager/${z}/${x}/${y}.png`,
-    `https://${s.slice(0, 3)}.tile.openstreetmap.org/${z}/${x}/${y}.png`
-  ];
-
-  for (const url of urls) {
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        const buffer = await fetchBuffer(url);
-        const img = await loadImage(buffer);
-        return img;
-      } catch (err) {
-        if (attempt === retries) break;
-        await new Promise(r => setTimeout(r, 200));
-      }
+  const url = `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await loadImage(await fetchBuffer(url));
+    } catch {
+      if (attempt < retries) await new Promise(r => setTimeout(r, 250));
     }
   }
   return null;
 }
 
+function drawPin(ctx: any, x: number, y: number, radius: number, fill: string, stroke: string, text: string, textColor: string) {
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, 2 * Math.PI);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = stroke;
+  ctx.stroke();
+  ctx.fillStyle = textColor;
+  ctx.font = `bold ${text.length > 1 ? radius * 0.95 : radius * 1.1}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y + 0.5);
+}
+
 /**
- * Render a static map image with a GPS route path drawn on it.
- * @returns base64 data URL (PNG)
+ * Render a static map image. Needs at least one route point or marker.
+ * width/height are layout pixels; the canvas is `scale` times larger for print sharpness.
  */
 export async function renderStaticMap(
-  routePath: [number, number][],
-  width = 800,
-  height = 400
-): Promise<string | null> {
-  if (!routePath || routePath.length < 2) return null;
-  if (!canvasAvailable) return null;
+  route: LatLng[],
+  markers: MapMarker[] = [],
+  options: { width?: number; height?: number; scale?: number; routeColor?: string } = {},
+): Promise<StaticMapResult | null> {
+  const { width = 690, height = 380, scale = 1.5, routeColor = '#004482' } = options;
+  const allPoints: LatLng[] = [...route, ...markers.map(m => [m.lat, m.lng] as LatLng)];
+  if (!canvasAvailable || allPoints.length === 0) return null;
 
   try {
-    // Calculate bounding box with padding
-    let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
-    for (const [lat, lng] of routePath) {
-      if (lat < minLat) minLat = lat;
-      if (lat > maxLat) maxLat = lat;
-      if (lng < minLng) minLng = lng;
-      if (lng > maxLng) maxLng = lng;
-    }
+    const { zoom, left, top } = planMapView(allPoints, width, height, 36);
+    const project = (lat: number, lng: number): [number, number] => {
+      const [x, y] = worldPixel(lat, lng, zoom);
+      return [x - left, y - top];
+    };
 
-    // Add ~10% padding
-    const latPad = (maxLat - minLat) * 0.15 || 0.005;
-    const lngPad = (maxLng - minLng) * 0.15 || 0.005;
-    minLat -= latPad; maxLat += latPad;
-    minLng -= lngPad; maxLng += lngPad;
-
-    const zoom = bestZoom(minLat, maxLat, minLng, maxLng, width, height);
-
-    // Get tile range
-    const tileX1 = lng2tile(minLng, zoom);
-    const tileX2 = lng2tile(maxLng, zoom);
-    const tileY1 = lat2tile(maxLat, zoom);
-    const tileY2 = lat2tile(minLat, zoom);
-
-    const tilesWide = tileX2 - tileX1 + 1;
-    const tilesTall = tileY2 - tileY1 + 1;
-    const tileCanvasW = tilesWide * 256;
-    const tileCanvasH = tilesTall * 256;
-
-    // Create large canvas for all tiles
-    const tileCanvas = createCanvas(tileCanvasW, tileCanvasH);
-    const tileCtx = tileCanvas.getContext('2d');
-
-    // Fill background
-    tileCtx.fillStyle = '#e8e8e8';
-    tileCtx.fillRect(0, 0, tileCanvasW, tileCanvasH);
-
-    // Fetch and draw all tiles in parallel
-    const tilePromises: Promise<void>[] = [];
-    for (let ty = tileY1; ty <= tileY2; ty++) {
-      for (let tx = tileX1; tx <= tileX2; tx++) {
-        tilePromises.push(
-          fetchTile(tx, ty, zoom).then(img => {
-            if (img) {
-              const dx = (tx - tileX1) * 256;
-              const dy = (ty - tileY1) * 256;
-              tileCtx.drawImage(img, dx, dy, 256, 256);
-            }
-          })
-        );
-      }
-    }
-    await Promise.all(tilePromises);
-
-    // Calculate the center of the route in pixel coords to crop from tile canvas
-    const centerLat = (minLat + maxLat) / 2;
-    const centerLng = (minLng + maxLng) / 2;
-    const [centerPx, centerPy] = latLngToPixel(centerLat, centerLng, zoom, tileX1, tileY1);
-
-    // Source rectangle for cropping
-    const sx = Math.max(0, Math.round(centerPx - width / 2));
-    const sy = Math.max(0, Math.round(centerPy - height / 2));
-    const sw = Math.min(width, tileCanvasW - sx);
-    const sh = Math.min(height, tileCanvasH - sy);
-
-    // Create output canvas
-    const outputCanvas = createCanvas(width, height);
-    const ctx = outputCanvas.getContext('2d');
-
-    // Fill bg
+    const canvas = createCanvas(Math.round(width * scale), Math.round(height * scale));
+    const ctx = canvas.getContext('2d');
+    ctx.scale(scale, scale);
     ctx.fillStyle = '#e8e8e8';
     ctx.fillRect(0, 0, width, height);
 
-    // Draw cropped tiles
-    ctx.drawImage(tileCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
-
-    // Draw route polyline
-    ctx.beginPath();
-    ctx.strokeStyle = '#005bac';
-    ctx.lineWidth = 4;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-
-    for (let i = 0; i < routePath.length; i++) {
-      const [lat, lng] = routePath[i]!;
-      const [px, py] = latLngToPixel(lat, lng, zoom, tileX1, tileY1);
-      const x = px - sx;
-      const y = py - sy;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+    // Only fetch tiles that intersect the frame.
+    const tilesPerSide = 2 ** zoom;
+    const tx1 = Math.floor(left / TILE), tx2 = Math.floor((left + width) / TILE);
+    const ty1 = Math.max(0, Math.floor(top / TILE)), ty2 = Math.min(tilesPerSide - 1, Math.floor((top + height) / TILE));
+    const jobs: Promise<boolean>[] = [];
+    for (let ty = ty1; ty <= ty2; ty++) {
+      for (let tx = tx1; tx <= tx2; tx++) {
+        const wrappedX = ((tx % tilesPerSide) + tilesPerSide) % tilesPerSide;
+        jobs.push(fetchTile(wrappedX, ty, zoom).then(img => {
+          if (!img) return false;
+          ctx.drawImage(img, tx * TILE - left, ty * TILE - top, TILE, TILE);
+          return true;
+        }));
+      }
     }
-    ctx.stroke();
+    const loaded = (await Promise.all(jobs)).filter(Boolean).length;
 
-    // Draw start marker (green circle)
-    const [startPx, startPy] = latLngToPixel(routePath[0]![0], routePath[0]![1], zoom, tileX1, tileY1);
-    const sX = startPx - sx, sY = startPy - sy;
-    ctx.beginPath();
-    ctx.arc(sX, sY, 8, 0, 2 * Math.PI);
-    ctx.fillStyle = '#16a34a';
-    ctx.fill();
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 3;
-    ctx.stroke();
-    // Label "A"
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 10px sans-serif';
-    ctx.textAlign = 'center';
+    // Route: white casing under the colored line keeps it legible over busy tiles.
+    if (route.length >= 2) {
+      const path = route.map(([lat, lng]) => project(lat, lng));
+      for (const [color, lineWidth] of [['#ffffff', 7], [routeColor, 4]] as const) {
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = lineWidth;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        path.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+        ctx.stroke();
+      }
+    }
+
+    // Spread markers that land on the same spot so each number stays readable.
+    const placed: [number, number][] = [];
+    for (const marker of markers) {
+      let [x, y] = project(marker.lat, marker.lng);
+      for (let step = 1; placed.some(([px, py]) => Math.hypot(px - x, py - y) < 18) && step < 24; step++) {
+        const angle = step * 2.4;
+        const [bx, by] = project(marker.lat, marker.lng);
+        x = bx + Math.cos(angle) * 9 * Math.sqrt(step);
+        y = by + Math.sin(angle) * 9 * Math.sqrt(step);
+      }
+      placed.push([x, y]);
+      const isEndpoint = marker.label === 'A' || marker.label === 'B';
+      const fill = marker.label === 'A' ? '#ffffff' : marker.color;
+      const text = marker.label === 'A' ? routeColor : '#ffffff';
+      drawPin(ctx, x, y, isEndpoint ? 10 : 9.5, fill, marker.label === 'A' ? routeColor : '#ffffff', marker.label, text);
+    }
+
+    // OSM tile licence requires visible attribution.
+    const credit = '© OpenStreetMap contributors';
+    ctx.font = '10px sans-serif';
+    const creditWidth = ctx.measureText(credit).width + 10;
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fillRect(width - creditWidth, height - 16, creditWidth, 16);
+    ctx.fillStyle = '#333333';
+    ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
-    ctx.fillText('A', sX, sY);
+    ctx.fillText(credit, width - 5, height - 8);
 
-    // Draw end marker (red circle)
-    const last = routePath[routePath.length - 1]!;
-    const [endPx, endPy] = latLngToPixel(last[0], last[1], zoom, tileX1, tileY1);
-    const eX = endPx - sx, eY = endPy - sy;
-    ctx.beginPath();
-    ctx.arc(eX, eY, 8, 0, 2 * Math.PI);
-    ctx.fillStyle = '#dc2626';
-    ctx.fill();
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 3;
-    ctx.stroke();
-    // Label "B"
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 10px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('B', eX, eY);
-
-    // Convert to base64 PNG
-    return outputCanvas.toDataURL('image/png');
+    // JPEG keeps a print-sharp map around a tenth of the PNG size inside the PDF.
+    const jpeg: Buffer = canvas.toBuffer('image/jpeg', { quality: 0.85 });
+    return { dataUrl: `data:image/jpeg;base64,${jpeg.toString('base64')}`, tilesLoaded: loaded, tilesTotal: jobs.length };
   } catch (err) {
     console.error('renderStaticMap error:', err);
     return null;

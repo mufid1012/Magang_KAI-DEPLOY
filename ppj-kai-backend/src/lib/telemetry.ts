@@ -1,10 +1,50 @@
 import type { Prisma, Tracking } from '@prisma/client';
 import { advanceSpeed, initialSpeedState, TELEMETRY, validSampleShape } from '../../../shared/telemetry';
 import type { SpeedEvent, SpeedState, TelemetrySample } from '../../../shared/telemetry';
+import { compactRoute, type RoutePoint } from '../../../shared/route';
 
 export class TelemetryError extends Error {
-  constructor(public status: number, message: string) { super(message); }
+  constructor(public status: number, message: string, public code?: string) { super(message); }
 }
+export const FORCE_STOPPED_CODE = 'TRACKING_FORCE_STOPPED';
+/** Lets the PPJ app tell "your manager ended this session" apart from a generic conflict. */
+export async function forceStoppedError(db: Pick<Prisma.TransactionClient, 'tracking'>, id: number, userId: number): Promise<TelemetryError | null> {
+  const stopped = await db.tracking.findFirst({ where: { id, forcedStopAt: { not: null }, tugas: { assignedTo: userId } }, select: { id: true } });
+  return stopped ? new TelemetryError(409, 'Inspeksi ini sudah dihentikan oleh pengelola dan menunggu approval.', FORCE_STOPPED_CODE) : null;
+}
+type SampleDb = Pick<Prisma.TransactionClient, 'trackingSample'>;
+
+/** Route from server-received samples, for when the device copy is missing (dead phone, reload). */
+export async function serverRoute(db: SampleDb, trackingId: number): Promise<RoutePoint[]> {
+  const samples = await db.trackingSample.findMany({
+    where: { trackingId, accuracy: { lte: TELEMETRY.MAX_ACCURACY_M }, quality: { notIn: ['before_start', 'jump'] } },
+    orderBy: { capturedAt: 'asc' },
+    select: { latitude: true, longitude: true },
+  });
+  return compactRoute(samples.map((sample): RoutePoint => [sample.latitude, sample.longitude]));
+}
+
+export type GpsGap = { from: Date; to: Date };
+
+/** Periods without any sample, counting session start and end as edges. Any accuracy counts: the phone was alive. */
+export function gpsGaps(times: Date[], start: Date | null, end: Date | null, minMs: number = TELEMETRY.GPS_GAP_MS): GpsGap[] {
+  const edges = [start, ...times, end].filter((t): t is Date => t !== null);
+  const gaps: GpsGap[] = [];
+  for (let i = 1; i < edges.length; i++) {
+    if (edges[i]!.getTime() - edges[i - 1]!.getTime() >= minMs) gaps.push({ from: edges[i - 1]!, to: edges[i]! });
+  }
+  return gaps;
+}
+
+export async function loadGpsGaps(db: SampleDb, tracking: { id: number; startTime: Date | null; endTime: Date | null }): Promise<GpsGap[]> {
+  const samples = await db.trackingSample.findMany({
+    where: { trackingId: tracking.id, quality: { not: 'before_start' } },
+    orderBy: { capturedAt: 'asc' },
+    select: { capturedAt: true },
+  });
+  return gpsGaps(samples.map(s => s.capturedAt), tracking.startTime, tracking.endTime);
+}
+
 export function parseBatch(input: unknown, now: number): TelemetrySample[] {
   if (!Array.isArray(input) || input.length > TELEMETRY.MAX_BATCH) throw new TelemetryError(413, 'Batch telemetri terlalu besar/tidak valid');
   if (!input.every(s => validSampleShape(s) && s.capturedAt <= now + TELEMETRY.FUTURE_MS)) {
@@ -17,7 +57,7 @@ type TelemetryTracking = Pick<Tracking, 'id' | 'startTime' | 'telemetryState' | 
 export async function lockTracking(tx: Prisma.TransactionClient, id: number, userId: number) {
   await tx.$queryRaw`SELECT id FROM tracking WHERE id = ${id} FOR UPDATE`;
   const tracking = await tx.tracking.findFirst({ where: { id, status: 'started', tugas: { assignedTo: userId, status: 'in_progress' } }, select: {id: true, startTime: true, telemetryState: true, telemetryTest: true, positionCapturedAt: true, telemetryLoss: true} });
-  if (!tracking) throw new TelemetryError(409, 'Sesi tidak aktif atau bukan milik Anda');
+  if (!tracking) throw (await forceStoppedError(tx, id, userId)) ?? new TelemetryError(409, 'Sesi tidak aktif atau bukan milik Anda');
   return tracking;
 }
 export async function ingestBatch(tx: Prisma.TransactionClient, tracking: TelemetryTracking, samples: TelemetrySample[], now: number) {

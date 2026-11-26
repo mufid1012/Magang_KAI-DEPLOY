@@ -1,6 +1,7 @@
 import { taskScope } from '../lib/accessScope';
 import { Request, Response } from 'express';
 import prisma from '../config/database';
+import { checkPhoto, PHOTO_FORMAT_MESSAGE } from '../lib/photo';
 
 export const createLaporan = async (req: Request, res: Response) => {
   try {
@@ -22,8 +23,9 @@ export const createLaporan = async (req: Request, res: Response) => {
     if (deskripsi !== undefined && (typeof deskripsi !== 'string' || deskripsi.length > 5000)) {
       return res.status(400).json({ success: false, message: 'Deskripsi terlalu panjang' });
     }
-    if (fotoUrl !== undefined && fotoUrl !== null && (typeof fotoUrl !== 'string' || fotoUrl.length > 7_000_000)) {
-      return res.status(413).json({ success: false, message: 'Foto terlalu besar' });
+    const photo = checkPhoto(fotoUrl);
+    if (!photo.ok) {
+      return res.status(photo.status).json({ success: false, message: photo.status === 413 ? 'Foto terlalu besar' : PHOTO_FORMAT_MESSAGE });
     }
 
     const tracking = await prisma.tracking.findFirst({
@@ -46,7 +48,7 @@ export const createLaporan = async (req: Request, res: Response) => {
         trackingId: tracking.id,
         jenisTemuan: jenisTemuan.trim(),
         deskripsi: deskripsi || '',
-        foto: fotoUrl || '',
+        foto: photo.value ?? '',
         latitude,
         longitude,
       }
@@ -66,18 +68,22 @@ export const getLaporan = async (req: Request, res: Response) => {
     if (!scope) return res.status(403).json({ success: false, message: 'Access denied' });
     const where = { tracking: { tugas: scope } };
 
+    // Legacy endpoint: keep its shape but not the payload. Report photos come from
+    // /admin/emergency/:id/foto, and tracking photos/route from the task detail.
     const laporan = await prisma.laporan.findMany({
       where,
-      include: {
+      take: 1000, // shortcut: newest 1000 only, add paging if an old client needs more
+      select: {
+        id: true, trackingId: true, jenisTemuan: true, deskripsi: true, latitude: true, longitude: true, createdAt: true,
         tracking: {
-          include: {
-            tugas: true
-          }
-        }
+          select: {
+            id: true, tugasId: true, startTime: true, endTime: true, durasi: true, status: true,
+            approvalStatus: true, safetyStatus: true, approvedAt: true,
+            tugas: true,
+          },
+        },
       },
-      orderBy: {
-        createdAt: 'desc'
-      }
+      orderBy: { createdAt: 'desc' },
     });
 
     return res.json({ success: true, data: laporan });
