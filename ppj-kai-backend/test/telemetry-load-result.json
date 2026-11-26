@@ -4,19 +4,19 @@
   "uploadRequests": 60,
   "samples": 120,
   "errors": 0,
-  "elapsedSeconds": 20.0665269,
-  "uploadP50Ms": 55.20879999999988,
-  "uploadP95Ms": 105.62460000000033,
-  "uploadMaxMs": 106.37699999999995,
+  "elapsedSeconds": 20.061879700000002,
+  "uploadP50Ms": 49.14050000000134,
+  "uploadP95Ms": 58.6088000000002,
+  "uploadMaxMs": 61.30639999999994,
   "livePollMs": [
-    7.080400000000282,
-    6.687799999999697,
-    6.187799999999697
+    7.660599999999931,
+    6.551199999999881,
+    6.868300000001909
   ],
   "livePayloadBytes": [
     8977,
-    9696,
-    9642
+    9695,
+    9638
   ],
   "environment": "Local Windows, Node v24.21.0, MySQL 8.0.30, isolated audit DB; no production capacity claim"
 }

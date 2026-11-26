@@ -11,8 +11,14 @@ afterEach(()=>{prisma.userWilayah.findMany=original.assignments;prisma.kategoriT
 test('assignment dates and spreadsheet/manual hours follow the same contract',()=>{
  assert.equal(parseAssignmentDate('2026-02-30'),null);assert.equal(parseAssignmentDate('invalid'),null);
  assert.equal(parseAssignmentDate('2026-10-19')?.toISOString(),'2026-10-19T00:00:00.000Z');
- // Day-first text would silently become month-first (10 July -> 7 October); a time part shifts a day in WIB.
- assert.equal(parseAssignmentDate('10/07/2026'),null);assert.equal(parseAssignmentDate('2026-07-10T00:00'),null);
+ // Indonesian order DD-MM-YYYY: never read month-first (10/07 is 10 July, not 7 October), any letter case for month names.
+ for (const text of ['10-07-2026','10/07/2026','10.07.2026','10 07 2026','10-7-2026','10 Juli 2026','10 JULI 2026','10-jul-2026','10 Jul  2026'])
+  assert.equal(parseAssignmentDate(text)?.toISOString(),'2026-07-10T00:00:00.000Z',text);
+ assert.equal(parseAssignmentDate('1-2-2026')?.toISOString(),'2026-02-01T00:00:00.000Z');
+ assert.equal(parseAssignmentDate('17 Agt 2026')?.toISOString(),'2026-08-17T00:00:00.000Z');
+ for (const text of ['31-04-2026','29-02-2026','13-13-2026','10-07-26','2026-07-10T00:00','10 Juliana 2026','07/10/2026x'])
+  assert.equal(parseAssignmentDate(text),null,text);
+ assert.equal(parseAssignmentDate('29-02-2028')?.toISOString(),'2028-02-29T00:00:00.000Z');
  assert.equal(parseAssignmentDate(' 2026-07-10 ')?.toISOString(),'2026-07-10T00:00:00.000Z');
  assert.equal(parseAssignmentDate(46213)?.toISOString(),'2026-07-10T00:00:00.000Z');
  assert.deepEqual(assignmentTimes(1/3,'12:00'),{jamMulai:'08:00',jamSelesai:'12:00'});assert.equal(assignmentTimes('24:01','12:00'),null);

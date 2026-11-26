@@ -779,7 +779,7 @@ Akun-akun ini dibuat oleh seeder (`seed-user.ts`) untuk keperluan **development 
 | 2 | Nama Petugas | Referensi; pencocokan tetap melalui NIPP |
 | 3 | Titik Awal | Nama stasiun/titik tersedia |
 | 4 | Titik Akhir | Berbeda dari titik awal |
-| 5 | Tanggal | Format YYYY-MM-DD (contoh: `2026-09-22`) |
+| 5 | Tanggal | Format DD-MM-YYYY (contoh: `22-09-2026`, `22/09/2026`, atau `22 September 2026`; nama bulan boleh huruf besar/kecil). Format lama YYYY-MM-DD masih diterima |
 | 6 | Jam Mulai | Format HH:mm (contoh: `08:00`); opsional |
 | 7 | Jam Selesai | Format HH:mm (contoh: `16:00`); opsional |
 

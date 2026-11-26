@@ -91,12 +91,14 @@ export const downloadTugasTemplate = async (req: AuthRequest, res: Response) => 
 
     // Sheet 1: Template with headers + example row
     const templateData = [
-      ['NIPP Petugas', 'Nama Petugas', 'Titik Awal', 'Titik Akhir', 'Tanggal (YYYY-MM-DD)', 'Jam Mulai (HH:mm)', 'Jam Selesai (HH:mm)'],
-      [petugasList[0]?.nipp || 'KAI-1234', petugasList[0]?.nama || 'Nama Petugas', 'Sta. Yogyakarta', 'Sta. Solo Balapan', '2026-07-10', '08:00', '16:00'],
+      ['NIPP Petugas', 'Nama Petugas', 'Titik Awal', 'Titik Akhir', 'Tanggal (DD-MM-YYYY)', 'Jam Mulai (HH:mm)', 'Jam Selesai (HH:mm)'],
+      [petugasList[0]?.nipp || 'KAI-1234', petugasList[0]?.nama || 'Nama Petugas', 'Sta. Yogyakarta', 'Sta. Solo Balapan', '10-07-2026', '08:00', '16:00'],
     ];
     const wsTemplate = workbook.addWorksheet('Template Penugasan');
     wsTemplate.addRows(templateData);
     [18, 28, 22, 22, 22, 18, 18].forEach((width, index) => { wsTemplate.getColumn(index + 1).width = width; });
+    // Text column: Excel on a US locale would turn a typed 10-07-2026 into 7 October before upload.
+    wsTemplate.getColumn(5).numFmt = '@';
 
     // Sheet 2: all inspection points available to this importer
     const stationData = [
@@ -249,7 +251,7 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
       // Validate date
       const parsedDate = parseAssignmentDate(row[4]);
       if (!parsedDate) {
-        results.push({ row: rowNum, status: 'error', message: `Tanggal "${rawTanggal}" tidak valid (gunakan format YYYY-MM-DD)` });
+        results.push({ row: rowNum, status: 'error', message: `Tanggal "${rawTanggal}" tidak valid (gunakan format DD-MM-YYYY, contoh 10-07-2026 atau 10 Juli 2026)` });
         continue;
       }
 

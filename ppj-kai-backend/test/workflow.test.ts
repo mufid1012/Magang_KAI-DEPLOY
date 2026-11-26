@@ -150,7 +150,7 @@ test('real MySQL: roles, assignment, tracking, reports, approval, PDF, import, b
       const pdf=await request(`/tugas/${created.data.id}/report`,'GET',undefined,ppj.id);assert.equal(pdf.status,200);assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0,4).toString(),'%PDF');
     });
     await t.test('Excel import matches manual normalization and does not steal other managers staff',async()=>{
-      const workbook=new ExcelJS.Workbook(),sheet=workbook.addWorksheet('Tugas');sheet.addRow(['NIPP','Nama','Awal','Akhir','Tanggal','Mulai','Selesai']);sheet.addRow([ppj.nipp,'PPJ','Jenar','Wojo','2099-10-23',1/3,0.5]);sheet.addRow([other.nipp,'Other','Jenar','Wojo','2099-10-23',1/3,0.5]);
+      const workbook=new ExcelJS.Workbook(),sheet=workbook.addWorksheet('Tugas');sheet.addRow(['NIPP','Nama','Awal','Akhir','Tanggal','Mulai','Selesai']);sheet.addRow([ppj.nipp,'PPJ','Jenar','Wojo','23 OKTOBER 2099',1/3,0.5]);sheet.addRow([other.nipp,'Other','Jenar','Wojo','2099-10-23',1/3,0.5]);
       const form=new FormData();form.append('file',new Blob([new Uint8Array(await workbook.xlsx.writeBuffer())],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),'audit.xlsx');
       const response=await fetch(base+'/admin/tugas/import',{method:'POST',headers:{Authorization:'Bearer '+tokens.get(admin.id)},body:form});const data=await json(response,200);assert.equal(data.data.created,1);assert.equal(data.data.failed,1);
       const imported=await prisma.tugasPpj.findFirstOrThrow({where:{assignedTo:ppj.id,tanggal:new Date('2099-10-23')}});assert.equal(imported.jamMulai,'08:00');assert.equal(imported.jamSelesai,'12:00');
