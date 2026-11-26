@@ -1,5 +1,5 @@
 {
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://hospitals-cult-grow-grows.trycloudflare.com/api/:path*" }
+    { "source": "/api/:path*", "destination": "https://transformation-zoloft-judge-con.trycloudflare.com/api/:path*" }
   ]
 }
