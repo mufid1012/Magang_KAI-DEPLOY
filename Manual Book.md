@@ -141,7 +141,7 @@ NODE_ENV=development
 ```bash
 cd ppj-kai-backend
 npm ci                        # Install dependensi (lebih reproducible dari npm install)
-npx prisma db push            # Sinkronisasi schema ke database
+npx prisma migrate deploy     # Bangun/perbarui schema dari riwayat migrasi
 npx prisma generate           # Generate Prisma Client
 npx tsx seed-user.ts           # Seed wilayah & akun demo
 npx tsx seed-kategori.ts       # Seed kategori temuan default
@@ -149,7 +149,7 @@ npm run dev                    # Jalankan backend (mode development, port 5001)
 ```
 
 > **Penting tentang Seeder:**
-> - `seed-user.ts` **memperbarui password akun demo yang sudah ada** — jangan jalankan otomatis di production
+> - `seed-user.ts` hanya untuk development: menolak jalan bila `NODE_ENV=production`, dan tidak mengubah password akun yang sudah ada
 > - `seed-kategori.ts` **mempertahankan** konfigurasi kategori yang sudah ada (tidak menimpa)
 > - Seeder membuat 13 wilayah (JR 6.1 – JR 6.13) dan tugas contoh
 
@@ -198,7 +198,7 @@ npm run dev                    # Jalankan frontend (mode development, port 3000)
 | `GEOCODING_API_URL` | Tidak | Nominatim OSM | URL API pencarian alamat |
 | `TRACKING_BYPASS_ENABLED` | Tidak | `false` | Bypass validasi jadwal tracking. **Hanya aktif jika bernilai `true`** |
 | `NODE_ENV` | Tidak | — | `development` / `production`. Memengaruhi validasi dan rincian error |
-| `TRUST_PROXY_HOPS` | Tidak | `0` | Jumlah hop proxy tepercaya (untuk rate limiter di belakang reverse proxy) |
+| `TRUST_PROXY_HOPS` | Ya (prod) | `0` | Jumlah hop proxy tepercaya. Isi `1` bila backend di belakang nginx (default server hanya mendengar 127.0.0.1). Tanpa ini semua pengguna dianggap satu IP dan batas login mengunci semua orang. Server menolak start di production bila kosong |
 
 ### 5.2 Variabel Frontend (`ppj-kai-frontend/.env.local`)
 
@@ -279,9 +279,7 @@ Magang_KAI-DEPLOY/
 │       │
 │       ├── lib/
 │       │   ├── scheduler.ts            # Auto-missed task scheduler (setiap 5 menit)
-│       │   ├── staticMap.ts            # Generate peta statis untuk PDF
-│       │   ├── mapLocationsTable.ts    # Inisialisasi tabel map_locations
-│       │   └── loginPhotosTable.ts     # Inisialisasi tabel login_photos
+│       │   └── staticMap.ts            # Generate peta statis untuk PDF
 │       │
 │       └── utils/
 │           ├── jwt.ts                  # Helper JWT sign/verify
@@ -461,7 +459,7 @@ Tabel penugasan inspeksi jalur.
 |--------|------|
 | `pending` | Belum dimulai |
 | `in_progress` | Tracking aktif |
-| `need_approval` | Inspeksi selesai, menunggu approval admin |
+| `need_approval` | Inspeksi selesai, menunggu approval pengelola (admin/KUPT) |
 | `completed` | Selesai setelah di-approve |
 | `missed` | Melewati jendela waktu mulai |
 | `cancelled` | Dibatalkan |
@@ -486,7 +484,7 @@ Sesi pelacakan GPS selama inspeksi.
 | `approval_status` | VARCHAR(20), default `not_approved` | `not_approved` \| `approved` |
 | `safety_status` | VARCHAR(20), default `aman` | `aman` \| `tidak_aman` |
 | `approved_at` | DATETIME, nullable | Waktu approval |
-| `approved_by` | INT, nullable, FK → `users.id` | Admin yang meng-approve |
+| `approved_by` | INT, nullable, FK → `users.id` | Admin/KUPT pengelola yang meng-approve |
 
 #### `laporan`
 
@@ -658,7 +656,7 @@ Sistem memiliki **5 role** yang menentukan akses fitur:
 - Buat tugas inspeksi (manual & import Excel)
 - Kelola titik MAP custom di peta
 - Monitor live tracking semua petugas kelolaannya
-- Approve/reject hasil tracking
+- Approve hasil tracking petugas kelolaannya (belum ada fitur reject)
 - Tentukan status keselamatan (`aman` / `tidak_aman`)
 - CRUD akun pengguna (tambah, edit, aktifkan/nonaktifkan, hapus permanen)
 - CRUD kategori temuan
@@ -678,9 +676,10 @@ Sistem memiliki **5 role** yang menentukan akses fitur:
 - Kelola petugas PPJ dalam kelolaannya
 - Buat tugas inspeksi (manual & import Excel, dibatasi stasiun wilayah)
 - Monitor live tracking petugas kelolaannya
+- Approve hasil tracking petugas kelolaannya
 - CRUD kategori temuan
 - Unduh PDF laporan draft
-- **Tidak bisa:** approve tracking, kelola akun, kelola foto login, kelola MAP
+- **Tidak bisa:** kelola akun, kelola foto login, kelola MAP
 
 ### 8.3 QC (`qc`)
 
@@ -737,7 +736,7 @@ Sistem memiliki **5 role** yang menentukan akses fitur:
 | Import Excel | Ya | Ya | - | - | - |
 | Kelola petugas | Ya | Ya | - | - | - |
 | Kelola akun | Ya | - | - | - | - |
-| Approve tracking | Ya | - | - | - | - |
+| Approve tracking | Ya | Ya | - | - | - |
 | Live monitoring | Ya | Ya | Ya | - | Ya |
 | Tracking GPS | - | - | - | Ya | - |
 | Kirim laporan | - | - | - | Ya | - |
@@ -780,7 +779,7 @@ Akun-akun ini dibuat oleh seeder (`seed-user.ts`) untuk keperluan **development 
 | 2 | Nama Petugas | Referensi; pencocokan tetap melalui NIPP |
 | 3 | Titik Awal | Nama stasiun/titik tersedia |
 | 4 | Titik Akhir | Berbeda dari titik awal |
-| 5 | Tanggal | Format YYYY-MM-DD (contoh: `2026-09-22`) |
+| 5 | Tanggal | Format DD-MM-YYYY (contoh: `22-09-2026`, `22/09/2026`, atau `22 September 2026`; nama bulan boleh huruf besar/kecil). Format lama YYYY-MM-DD masih diterima |
 | 6 | Jam Mulai | Format HH:mm (contoh: `08:00`); opsional |
 | 7 | Jam Selesai | Format HH:mm (contoh: `16:00`); opsional |
 
@@ -1006,7 +1005,9 @@ Aplikasi di-deploy sebagai **2 layanan terpisah**:
 - [ ] `NEXT_PUBLIC_TRACKING_BYPASS_ENABLED=false` di frontend
 - [ ] `NODE_ENV=production` di kedua layanan
 - [ ] HTTPS aktif (diperlukan untuk GPS dan kamera)
-- [ ] Schema database sudah sinkron (`db push` atau migrasi)
+- [ ] Schema database sudah sinkron lewat `npx prisma migrate deploy` (jangan `db push`)
+- [ ] `TRUST_PROXY_HOPS=1` bila backend di belakang nginx
+- [ ] `seed-user.ts` TIDAK dijalankan (seeder menolak jalan bila `NODE_ENV=production`)
 - [ ] Seeder kategori sudah dijalankan (`seed-kategori.ts`)
 - [ ] Akun admin production sudah dibuat (JANGAN pakai akun demo)
 - [ ] Password akun demo sudah diganti atau akun dihapus
@@ -1023,13 +1024,15 @@ Aplikasi di-deploy sebagai **2 layanan terpisah**:
 
 ## 13. Migrasi Database
 
-### 13.1 Database Baru (Development)
+### 13.1 Database Baru
 
 ```bash
 cd ppj-kai-backend
-npx prisma db push      # Sinkronisasi langsung dari schema.prisma
-npx prisma generate      # Generate Prisma Client
+npx prisma migrate deploy   # Seluruh riwayat migrasi membangun schema terkini
+npx prisma generate         # Generate Prisma Client
 ```
+
+Riwayat migrasi adalah sumber kebenaran schema, baik untuk development maupun production. Hindari `db push`: database yang dibuat dengan cara itu tidak punya riwayat migrasi sehingga migrasi berikutnya perlu baseline manual.
 
 ### 13.2 Database Berisi Data (Production)
 
@@ -1038,7 +1041,7 @@ npx prisma generate      # Generate Prisma Client
 1. **Backup database terlebih dahulu**
 2. Bandingkan schema aktual dengan `schema.prisma`
 3. Tinjau dan uji perubahan SQL di staging
-4. Gunakan `prisma migrate deploy` jika riwayat migrasi lengkap
+4. Jalankan `npx prisma migrate deploy`. Database lama hasil `db push` perlu baseline dulu, ikuti `docs/MIGRATIONS.md`
 
 ### 13.3 Riwayat Migrasi
 
@@ -1052,7 +1055,14 @@ npx prisma generate      # Generate Prisma Client
 | `20261013120000_add_warning_recipients` | Tabel warning_recipients |
 | `20261014120000_add_login_photos` | Tabel login_photos |
 
-> **Catatan:** Riwayat SQL belum mencakup seluruh schema terkini (beberapa kolom user, waktu tugas, wilayah, kategori). Database yang dibuat via `db push` perlu baseline sebelum `migrate deploy`. Jangan menambahkan ulang kolom yang sudah ada.
+| `20261019120000_complete_legacy_schema` | Melengkapi kolom/tabel lama (user, waktu tugas, wilayah, kategori) secara idempoten |
+| `20261019150000_tracking_telemetry` | Sampel GPS dan kejadian kecepatan |
+| `20261115120000_tracking_forced_stop` | Hentikan paksa inspeksi oleh pengelola |
+| `20261126120000_review_audit_token` | Penolakan hasil, log audit admin, versi token |
+| `20261127120000_laporan_handling_status` | Status penanganan laporan temuan |
+| `20261128120000_qc_notes` | Catatan QC |
+
+> **Catatan:** Riwayat migrasi sudah lengkap; database kosong cukup `migrate deploy`. Database lama yang dibuat via `db push` perlu baseline sebelum `migrate deploy` (lihat `docs/MIGRATIONS.md`). Jangan menambahkan ulang kolom yang sudah ada.
 
 ---
 

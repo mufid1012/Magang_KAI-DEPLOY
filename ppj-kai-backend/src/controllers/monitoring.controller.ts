@@ -3,8 +3,10 @@ import { emergencyCategoryKeys } from '../lib/reportSeverity';
 import type { Response } from 'express';
 import prisma from '../config/database';
 import type { AuthRequest } from '../types/http';
-import { getStationsForUser, buildStationFilter } from '../lib/accessScope';
+import { getStationsForUser, buildStationFilter, taskScope } from '../lib/accessScope';
 import { resolveTugasStatus } from '../utils/tugasStatus';
+import { countUnfinishedTasks } from '../lib/taskGuards';
+import { audit } from '../lib/audit';
 
 
 
@@ -86,7 +88,7 @@ export const getAllPetugas = async (req: AuthRequest, res: Response) => {
       petugas = await prisma.user.findMany({
         where: { id: { in: ids }, role: 'ppj' },
         select: {
-          id: true, nipp: true, nama: true, foto: true,
+          id: true, nipp: true, nama: true, foto: true, isActive: true,
           tugasPpj: {
             where: { status: { in: ['pending', 'in_progress'] } },
             select: { id: true, jalur: true, status: true },
@@ -99,7 +101,7 @@ export const getAllPetugas = async (req: AuthRequest, res: Response) => {
       petugas = await prisma.user.findMany({
         where: { role: 'ppj', managerId: userId },
         select: {
-          id: true, nipp: true, nama: true, foto: true,
+          id: true, nipp: true, nama: true, foto: true, isActive: true,
           tugasPpj: {
             where: { status: { in: ['pending', 'in_progress'] } },
             select: { id: true, jalur: true, status: true },
@@ -119,7 +121,7 @@ export const getAllPetugas = async (req: AuthRequest, res: Response) => {
 export const getAvailablePetugas = async (_req: AuthRequest, res: Response) => {
   try {
     const petugas = await prisma.user.findMany({
-      where: { role: 'ppj', managerId: null },
+      where: { role: 'ppj', managerId: null, isActive: true }, // add accepts only active PPJ
       select: { id: true, nipp: true, nama: true },
       orderBy: { nama: 'asc' },
     });
@@ -135,20 +137,29 @@ export const addPetugasToManager = async (req: AuthRequest, res: Response) => {
     const managerId = req.user!.id;
     const { nipps } = req.body;
 
-    if (!nipps || !Array.isArray(nipps) || nipps.length === 0) {
+    if (!Array.isArray(nipps) || nipps.length === 0 || nipps.length > 500
+      || !nipps.every(nipp => typeof nipp === 'string' && nipp.trim() && nipp.trim().length <= 20)) {
       return res.status(400).json({ success: false, message: 'Daftar NIPP wajib diisi' });
     }
 
-    await prisma.user.updateMany({
+    const result = await prisma.user.updateMany({
       where: {
-        nipp: { in: nipps },
+        nipp: { in: nipps.map(nipp => nipp.trim()) },
         role: 'ppj',
+        isActive: true,
         managerId: null,
       },
       data: { managerId },
     });
+    if (result.count === 0) {
+      return res.status(409).json({ success: false, message: 'Tidak ada petugas yang dapat ditambahkan. Petugas mungkin sudah dikelola pengelola lain atau nonaktif.' });
+    }
 
-    return res.json({ success: true, message: 'Petugas berhasil ditambahkan ke daftar kelola Anda' });
+    const skipped = new Set(nipps.map(nipp => nipp.trim())).size - result.count;
+    const message = skipped > 0
+      ? `${result.count} petugas ditambahkan; ${skipped} dilewati karena sudah dikelola pengelola lain atau nonaktif`
+      : 'Petugas berhasil ditambahkan ke daftar kelola Anda';
+    return res.json({ success: true, message, data: { added: result.count, skipped } });
   } catch (error) {
     console.error('Add petugas error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });
@@ -160,20 +171,24 @@ export const removePetugasFromManager = async (req: AuthRequest, res: Response) 
     const managerId = req.user!.id;
     const { id } = req.body;
 
-    if (!id) return res.status(400).json({ success: false, message: 'ID Petugas wajib diisi' });
+    const petugasId = Number(id);
+    if (!Number.isSafeInteger(petugasId) || petugasId <= 0) return res.status(400).json({ success: false, message: 'ID Petugas wajib diisi' });
 
-    const petugas = await prisma.user.findFirst({
-      where: { id: parseInt(id), managerId },
+    const result = await prisma.$transaction(async tx => {
+      const petugas = await tx.user.findFirst({ where: { id: petugasId, managerId } });
+      if (!petugas) return { status: 404, message: 'Petugas tidak ditemukan dalam daftar Anda' };
+
+      if (await countUnfinishedTasks(tx, [petugasId]) > 0) {
+        return { status: 409, message: 'Petugas masih memiliki tugas terjadwal, inspeksi berjalan, atau hasil yang menunggu approval. Hapus tugas terjadwal atau selesaikan/approve dulu sebelum melepas petugas.' };
+      }
+
+      const released = await tx.user.updateMany({ where: { id: petugasId, managerId }, data: { managerId: null } });
+      if (released.count !== 1) return { status: 409, message: 'Data petugas baru saja berubah. Muat ulang dan coba lagi.' };
+      await audit(tx, managerId, 'petugas.release', 'user', petugasId, { nipp: petugas.nipp });
+      return { status: 200, message: 'Petugas berhasil dihapus dari daftar kelola Anda' };
     });
 
-    if (!petugas) return res.status(404).json({ success: false, message: 'Petugas tidak ditemukan dalam daftar Anda' });
-
-    await prisma.user.update({
-      where: { id: petugas.id },
-      data: { managerId: null },
-    });
-
-    return res.json({ success: true, message: 'Petugas berhasil dihapus dari daftar kelola Anda' });
+    return res.status(result.status).json({ success: result.status === 200, message: result.message });
   } catch (error) {
     console.error('Remove petugas error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });
@@ -190,12 +205,18 @@ export const getAllEmergency = async (req: AuthRequest, res: Response) => {
       ? buildStationFilter(stations)
       : { user: { managerId: userId } };
 
+    // Photos (up to 7 MB each) are fetched per report from /emergency/:id/foto when opened.
     const laporan = await prisma.laporan.findMany({
       where: { tracking: { tugas: tugasFilter } },
       orderBy: { createdAt: 'desc' },
-      include: {
+      // shortcut: newest 1000 reports only, add date-range paging when the map needs older ones.
+      take: 1000,
+      select: {
+        id: true, trackingId: true, jenisTemuan: true, deskripsi: true, latitude: true, longitude: true, createdAt: true,
+        handlingStatus: true, handledAt: true, handlingNote: true,
+        handler: { select: { nama: true } },
         tracking: {
-          select: { tugas: { select: { jalur: true, user: { select: { nama: true, nipp: true } } } } },
+          select: { tugas: { select: { id: true, jalur: true, user: { select: { nama: true, nipp: true } } } } },
         },
       },
     });
@@ -203,6 +224,64 @@ export const getAllEmergency = async (req: AuthRequest, res: Response) => {
   } catch (error) {
     console.error('Get emergency error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+const HANDLING_STATUSES = new Set(['baru', 'ditangani', 'selesai']);
+
+/** Pengelola PPJ (admin/KUPT sesuai managerId) menandai laporan sedang/sudah ditangani. */
+export const updateEmergencyStatus = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const laporanId = Number(req.params.id);
+    const { status, note } = req.body ?? {};
+    if (typeof status !== 'string' || !HANDLING_STATUSES.has(status)) {
+      return res.status(400).json({ success: false, message: 'Status harus baru, ditangani, atau selesai' });
+    }
+    if (note !== undefined && note !== null && (typeof note !== 'string' || note.length > 500)) {
+      return res.status(400).json({ success: false, message: 'Catatan maksimal 500 karakter' });
+    }
+    const scope = await taskScope(userId, req.user!.role);
+    if (!scope) return res.status(403).json({ success: false, message: 'Access denied' });
+
+    const updated = await prisma.$transaction(async tx => {
+      const found = await tx.laporan.findFirst({ where: { id: laporanId, tracking: { tugas: scope } }, select: { id: true, handlingStatus: true } });
+      if (!found) return null;
+      const trimmedNote = typeof note === 'string' ? note.trim() : undefined;
+      const row = await tx.laporan.update({
+        where: { id: laporanId },
+        data: {
+          handlingStatus: status,
+          handledBy: status === 'baru' ? null : userId,
+          handledAt: status === 'baru' ? null : new Date(),
+          ...(trimmedNote !== undefined ? { handlingNote: trimmedNote || null } : {}),
+        },
+        select: { id: true, handlingStatus: true, handledAt: true, handlingNote: true, handler: { select: { nama: true } } },
+      });
+      await audit(tx, userId, 'laporan.handling', 'laporan', laporanId, { from: found.handlingStatus, to: status });
+      return row;
+    });
+    if (!updated) return res.status(404).json({ success: false, message: 'Laporan tidak ditemukan' });
+    return res.json({ success: true, data: updated });
+  } catch (error) {
+    console.error('Update emergency status error:', error);
+    return res.status(500).json({ success: false, message: 'Gagal memperbarui status laporan' });
+  }
+};
+
+export const getEmergencyPhoto = async (req: AuthRequest, res: Response) => {
+  try {
+    const scope = await taskScope(req.user!.id, req.user!.role);
+    if (!scope) return res.status(403).json({ success: false, message: 'Access denied' });
+    const laporan = await prisma.laporan.findFirst({
+      where: { id: Number(req.params.id), tracking: { tugas: scope } },
+      select: { foto: true },
+    });
+    if (!laporan) return res.status(404).json({ success: false, message: 'Laporan tidak ditemukan' });
+    return res.json({ success: true, data: { foto: laporan.foto || null } });
+  } catch (error) {
+    console.error('Get emergency photo error:', error);
+    return res.status(500).json({ success: false, message: 'Gagal mengambil foto laporan' });
   }
 };
 

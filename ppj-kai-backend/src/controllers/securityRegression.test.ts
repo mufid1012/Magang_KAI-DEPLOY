@@ -86,7 +86,8 @@ test('tracking bypass is enabled when the environment flag is absent', async () 
     return { id: 12, assignedTo: 7, status: 'missed', jamMulai: null };
   }) as any;
   prisma.$transaction = (async (operation: any) => operation({
-    tugasPpj: { updateMany: async () => ({ count: 1 }) },
+    $queryRaw: async () => [{ is_active: 1 }],
+    tugasPpj: { count: async () => 0, updateMany: async () => ({ count: 1 }) },
     tracking: { create: async () => ({ id: 91 }) },
   })) as any;
 
@@ -97,4 +98,31 @@ test('tracking bypass is enabled when the environment flag is absent', async () 
     body: { lat: -7.8, lng: 110.3, bypassMode: true },
   } as any, res);
   assert.equal(res.statusCode, 200);
+});
+
+test('start window: early message is in WIB, late start marks the task missed at once', async () => {
+  const photo = 'data:image/jpeg;base64,AAAA';
+  const originalUpdateMany = prisma.tugasPpj.updateMany;
+  const task = (jamMulai: string, offsetDays: number) => {
+    const wib = new Date(Date.now() + 7 * 3600_000 + offsetDays * 86400_000);
+    return { id: 12, assignedTo: 7, status: 'pending', jamMulai, tanggal: new Date(`${wib.toISOString().slice(0, 10)}T00:00:00Z`), startPointLat: -7.8, startPointLong: 110.3 };
+  };
+  const call = async () => {
+    const res = response();
+    await startTracking({ params: { tugasId: '12' }, user: { id: 7, role: 'ppj' }, body: { lat: -7.8, lng: 110.3, fotoAwal: photo } } as any, res);
+    return res;
+  };
+  try {
+    prisma.tugasPpj.findFirst = (async () => task('16:00', 1)) as any;
+    const early = await call();
+    assert.equal(early.body.code, 'TOO_EARLY');
+    assert.match(early.body.message, /15.00 WIB/);
+
+    let missed: any;
+    prisma.tugasPpj.updateMany = (async (args: any) => { missed = args; return { count: 1 }; }) as any;
+    prisma.tugasPpj.findFirst = (async () => task('00:00', -2)) as any;
+    const late = await call();
+    assert.equal(late.body.code, 'TOO_LATE');
+    assert.deepEqual(missed, { where: { id: 12, status: 'pending' }, data: { status: 'missed' } });
+  } finally { prisma.tugasPpj.updateMany = originalUpdateMany; }
 });

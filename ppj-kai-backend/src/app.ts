@@ -3,7 +3,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import prisma from './config/database';
-import { getAllowedOrigins, validateRuntimeEnvironment } from './config/env';
+import { getAllowedOrigins, getTrustProxyHops, validateRuntimeEnvironment } from './config/env';
 import authRoutes from './routes/auth.routes';
 import tugasRoutes from './routes/tugas.routes';
 import trackingRoutes from './routes/tracking.routes';
@@ -20,10 +20,8 @@ validateRuntimeEnvironment();
 const app = express();
 const allowedOrigins = new Set(getAllowedOrigins());
 
-const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
-if (Number.isSafeInteger(trustProxyHops) && trustProxyHops > 0) {
-  app.set('trust proxy', trustProxyHops);
-}
+const trustProxyHops = getTrustProxyHops();
+if (trustProxyHops > 0) app.set('trust proxy', trustProxyHops);
 
 // Middleware
 app.disable('x-powered-by');
@@ -35,6 +33,8 @@ app.use(cors({
     callback(null, !origin || allowedOrigins.has(origin));
   },
   credentials: true,
+  // The PPJ app corrects its start-window clock with the server's Date header.
+  exposedHeaders: ['Date'],
 }));
 app.use('/api/tracking/update', express.json({ limit: TELEMETRY.MAX_PAYLOAD_BYTES }));
 app.use(express.json({ limit: '10mb' }));

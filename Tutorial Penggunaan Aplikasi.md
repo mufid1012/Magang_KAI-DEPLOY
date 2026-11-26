@@ -243,7 +243,7 @@ Jam Mulai menentukan batas waktu untuk **memulai** tracking: satu jam sebelum sa
 | B | Nama Petugas | Nama untuk membantu pengecekan; pencocokan penerima tetap berdasarkan NIPP. |
 | C | Titik Awal | Salin nama dari Daftar Titik Pengecekan. |
 | D | Titik Akhir | Pilih titik berbeda dari Titik Awal. |
-| E | Tanggal (YYYY-MM-DD) | Contoh `2026-10-20`; sesuaikan jadwal sebenarnya. |
+| E | Tanggal (DD-MM-YYYY) | Contoh `20-10-2026` atau `20 Oktober 2026`; sesuaikan jadwal sebenarnya. |
 | F | Jam Mulai (HH:mm) | Contoh `08:00`, atau sel waktu Excel yang setara. |
 | G | Jam Selesai (HH:mm) | Contoh `09:00`, atau sel waktu Excel yang setara. |
 

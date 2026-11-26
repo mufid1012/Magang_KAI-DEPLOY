@@ -24,6 +24,10 @@ const WILAYAH_DATA = [
 ];
 
 async function main() {
+  // Demo accounts with known passwords; never on a production database.
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('seed-user.ts creates demo accounts with known passwords and must not run with NODE_ENV=production.');
+  }
   console.log('=== Starting seed ===\n');
 
   // ───────────────────────────────────────────────────────────────────────
@@ -70,7 +74,8 @@ async function main() {
   console.log('\n--- Seeding Users ---');
   const admin = await prisma.user.upsert({
     where: { nipp: 'ADMIN-001' },
-    update: { password: hashedAdminPass },
+    // Existing accounts keep their password: a rerun must never reset a real admin to admin123.
+    update: {},
     create: {
       nipp: 'ADMIN-001',
       password: hashedAdminPass,
@@ -93,7 +98,7 @@ async function main() {
   for (const qc of qcUsers) {
     const user = await prisma.user.upsert({
       where: { nipp: qc.nipp },
-      update: { password: hashedQcPass, role: 'qc', nama: qc.nama },
+      update: { role: 'qc', nama: qc.nama },
       create: {
         nipp: qc.nipp,
         password: hashedQcPass,
@@ -123,7 +128,7 @@ async function main() {
   // ───────────────────────────────────────────────────────────────────────
   const kupt = await prisma.user.upsert({
     where: { nipp: 'KUPT-001' },
-    update: { password: hashedKuptPass, role: 'kupt', nama: 'KUPT Jenar' },
+    update: { role: 'kupt', nama: 'KUPT Jenar' },
     create: {
       nipp: 'KUPT-001',
       password: hashedKuptPass,
@@ -151,7 +156,6 @@ async function main() {
   const ppj = await prisma.user.upsert({
     where: { nipp: 'KAI-1234' },
     update: {
-      password: hashedPpjPass,
       role: 'ppj',
       managerId: admin.id,
       jabatan: 'Track Inspector',

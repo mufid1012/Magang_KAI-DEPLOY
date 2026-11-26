@@ -1,18 +1,20 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import prisma from '../config/database';
-import { updateUser } from './admin.controller';
+import { createUser, updateUser } from './admin.controller';
 
 const originalFindUnique = prisma.user.findUnique;
 const originalUserCount = prisma.user.count;
 const originalWilayahCount = prisma.wilayah.count;
 const originalTransaction = prisma.$transaction;
+const originalFindMany = prisma.user.findMany;
 
 afterEach(() => {
   prisma.user.findUnique = originalFindUnique;
   prisma.user.count = originalUserCount;
   prisma.wilayah.count = originalWilayahCount;
   prisma.$transaction = originalTransaction;
+  prisma.user.findMany = originalFindMany;
 });
 
 const response = () => ({
@@ -44,10 +46,15 @@ test('KUPT update atomically replaces wilayah and managed petugas', async () => 
   }) as any;
   prisma.wilayah.count = (async () => 2) as any;
   prisma.user.count = (async () => 2) as any;
+  prisma.user.findMany = (async () => [{ id: 20 }]) as any; // already managed and kept
 
   const calls: { model: string; method: string; args: any }[] = [];
   const tx = {
+    $queryRaw: async () => [],
+    adminAuditLog: { create: async () => ({}) },
+    tugasPpj: { count: async () => 0 },
     user: {
+      findMany: async () => [{ id: 20 }], // already managed and kept
       update: async (args: any) => { calls.push({ model: 'user', method: 'update', args }); },
       updateMany: async (args: any) => { calls.push({ model: 'user', method: 'updateMany', args }); },
     },
@@ -61,6 +68,7 @@ test('KUPT update atomically replaces wilayah and managed petugas', async () => 
   const res = response();
   await updateUser({
     params: { id: '12' },
+    user: { id: 1, role: 'admin' },
     body: { nama: 'KUPT A', role: 'kupt', wilayahIds: [2, 3], petugasIds: [20, 21] },
   } as any, res);
 
@@ -72,4 +80,43 @@ test('KUPT update atomically replaces wilayah and managed petugas', async () => 
   const managerWrites = calls.filter(call => call.model === 'user' && call.method === 'updateMany');
   assert.deepEqual(managerWrites[0]?.args, { where: { role: 'ppj', managerId: 12 }, data: { managerId: null } });
   assert.deepEqual(managerWrites[1]?.args, { where: { id: { in: [20, 21] }, role: 'ppj' }, data: { managerId: 12 } });
+});
+
+// PPJ selected for a KUPT may belong to another manager; that manager's open tasks must not change approver.
+function takeoverTx(writes: string[]) {
+  return {
+    $queryRaw: async () => [],
+    adminAuditLog: { create: async () => ({}) },
+    tugasPpj: { count: async (args: any) => (args.where.assignedTo.in.includes(21) ? 1 : 0) },
+    user: {
+      findMany: async (args: any) => (args.where.NOT ? [{ id: 21 }] : []), // 21 is managed by someone else
+      create: async () => { writes.push('create'); return { id: 30 }; },
+      update: async () => { writes.push('update'); },
+      updateMany: async () => { writes.push('updateMany'); },
+    },
+    userWilayah: { deleteMany: async () => {}, createMany: async () => {} },
+  };
+}
+
+test('KUPT update refuses to take over a PPJ whose current manager still has open tasks', async () => {
+  prisma.user.findUnique = (async () => ({ id: 12, role: 'kupt', managerId: null })) as any;
+  prisma.user.count = (async () => 1) as any;
+  const writes: string[] = [];
+  prisma.$transaction = (async (fn: any) => fn(takeoverTx(writes))) as any;
+  const res = response();
+  await updateUser({ params: { id: '12' }, user: { id: 1, role: 'admin' }, body: { petugasIds: [21] } } as any, res);
+  assert.equal(res.statusCode, 409);
+  assert.deepEqual(writes, []);
+});
+
+test('KUPT creation refuses to take over a PPJ whose current manager still has open tasks', async () => {
+  prisma.user.findUnique = (async () => null) as any;
+  prisma.user.count = (async () => 1) as any;
+  prisma.wilayah.count = (async () => 2) as any;
+  const writes: string[] = [];
+  prisma.$transaction = (async (fn: any) => fn(takeoverTx(writes))) as any;
+  const res = response();
+  await createUser({ user: { id: 1, role: 'admin' }, body: { nipp: 'KUPT-9', nama: 'KUPT B', password: 'rahasia1', role: 'kupt', wilayahIds: [1, 2], petugasIds: [21] } } as any, res);
+  assert.equal(res.statusCode, 409);
+  assert.deepEqual(writes, []);
 });

@@ -1,9 +1,9 @@
-import { parseAssignmentDate } from '../utils/assignmentValidation';
+import { parseAssignmentDate, scheduleProblem } from '../utils/assignmentValidation';
+import { findDuplicateAssignment } from '../lib/taskGuards';
 import type { Response } from 'express';
 import prisma from '../config/database';
 import type { AuthRequest } from '../types/http';
 import { getStationsForUser } from '../lib/accessScope';
-import { ensureMapLocationsTable } from '../lib/mapLocationsTable';
 import ExcelJS from 'exceljs';
 import { STATIONS } from '../../../shared/stations';
 import { findStationMatch, normalizeNipp, normalizeStationName, parseImportTime } from '../utils/importMatching';
@@ -45,7 +45,6 @@ async function getImportInspectionPoints(userId: number, role: string): Promise<
   const points: ImportInspectionPoint[] = STATIONS.map(station => ({ ...station, type: 'Stasiun' }));
   if (role !== 'admin') return points;
 
-  await ensureMapLocationsTable();
   const customLocations = await prisma.mapLocation.findMany({
     where: { createdBy: userId },
     select: { name: true, latitude: true, longitude: true },
@@ -92,12 +91,14 @@ export const downloadTugasTemplate = async (req: AuthRequest, res: Response) => 
 
     // Sheet 1: Template with headers + example row
     const templateData = [
-      ['NIPP Petugas', 'Nama Petugas', 'Titik Awal', 'Titik Akhir', 'Tanggal (YYYY-MM-DD)', 'Jam Mulai (HH:mm)', 'Jam Selesai (HH:mm)'],
-      [petugasList[0]?.nipp || 'KAI-1234', petugasList[0]?.nama || 'Nama Petugas', 'Sta. Yogyakarta', 'Sta. Solo Balapan', '2026-07-10', '08:00', '16:00'],
+      ['NIPP Petugas', 'Nama Petugas', 'Titik Awal', 'Titik Akhir', 'Tanggal (DD-MM-YYYY)', 'Jam Mulai (HH:mm)', 'Jam Selesai (HH:mm)'],
+      [petugasList[0]?.nipp || 'KAI-1234', petugasList[0]?.nama || 'Nama Petugas', 'Sta. Yogyakarta', 'Sta. Solo Balapan', '10-07-2026', '08:00', '16:00'],
     ];
     const wsTemplate = workbook.addWorksheet('Template Penugasan');
     wsTemplate.addRows(templateData);
     [18, 28, 22, 22, 22, 18, 18].forEach((width, index) => { wsTemplate.getColumn(index + 1).width = width; });
+    // Text column: Excel on a US locale would turn a typed 10-07-2026 into 7 October before upload.
+    wsTemplate.getColumn(5).numFmt = '@';
 
     // Sheet 2: all inspection points available to this importer
     const stationData = [
@@ -250,7 +251,7 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
       // Validate date
       const parsedDate = parseAssignmentDate(row[4]);
       if (!parsedDate) {
-        results.push({ row: rowNum, status: 'error', message: `Tanggal "${rawTanggal}" tidak valid (gunakan format YYYY-MM-DD)` });
+        results.push({ row: rowNum, status: 'error', message: `Tanggal "${rawTanggal}" tidak valid (gunakan format DD-MM-YYYY, contoh 10-07-2026 atau 10 Juli 2026)` });
         continue;
       }
 
@@ -258,12 +259,17 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
       // (contoh 08:00 = 0.333333), bukan string "08:00".
       const jamMulai = parseImportTime(rawJamMulai);
       const jamSelesai = parseImportTime(rawJamSelesai);
-      if (!jamMulai.valid) {
-        results.push({ row: rowNum, status: 'error', message: `Jam Mulai "${String(rawJamMulai)}" tidak valid (gunakan format HH:mm)` });
+      if (!jamMulai.valid || !jamMulai.value) {
+        results.push({ row: rowNum, status: 'error', message: jamMulai.valid ? 'Jam Mulai kosong' : `Jam Mulai "${String(rawJamMulai)}" tidak valid (gunakan format HH:mm)` });
         continue;
       }
       if (!jamSelesai.valid) {
         results.push({ row: rowNum, status: 'error', message: `Jam Selesai "${String(rawJamSelesai)}" tidak valid (gunakan format HH:mm)` });
+        continue;
+      }
+      const problem = scheduleProblem(parsedDate, jamMulai.value, jamSelesai.value);
+      if (problem) {
+        results.push({ row: rowNum, status: 'error', message: problem });
         continue;
       }
 
@@ -273,6 +279,12 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
       // Create tugas
       try {
         await prisma.$transaction(async tx => {
+          // Re-uploading the same file must not create the same assignment twice.
+          if (await findDuplicateAssignment(tx, {
+            assignedTo: petugas.id, tanggal: parsedDate, startPointName: startStation.name,
+            endPointName: endStation.name, jamMulai: jamMulai.value,
+          })) throw new Error('DUPLICATE_ASSIGNMENT');
+
           if (petugas.managerId === null) {
             const claimed = await tx.user.updateMany({
               where: { id: petugas.id, managerId: null },
@@ -309,7 +321,10 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
       } catch (err: any) {
         const message = err.message === 'PETUGAS_ALREADY_MANAGED'
           ? `NIPP "${rawNipp}" baru saja dikelola admin lain`
-          : `Gagal menyimpan: ${err.message}`;
+          : err.message === 'DUPLICATE_ASSIGNMENT'
+            ? `Tugas yang sama untuk NIPP "${rawNipp}" pada tanggal dan jam ini sudah ada`
+            : 'Gagal menyimpan baris ini';
+        if (!['PETUGAS_ALREADY_MANAGED', 'DUPLICATE_ASSIGNMENT'].includes(err.message)) console.error(`Import row ${rowNum} error:`, err);
         results.push({ row: rowNum, status: 'error', message });
       }
     }

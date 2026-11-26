@@ -87,7 +87,7 @@ Unduh template melalui dashboard, isi sheet pertama **Template Penugasan**, lalu
 | 2 | Nama Petugas | Referensi; pencocokan tetap melalui NIPP |
 | 3 | Titik Awal | Nama stasiun/titik tersedia |
 | 4 | Titik Akhir | Berbeda dari titik awal |
-| 5 | Tanggal (YYYY-MM-DD) | Contoh `2026-09-22` atau sel tanggal Excel |
+| 5 | Tanggal (DD-MM-YYYY) | Contoh `22-09-2026`, `22 September 2026`, atau sel tanggal Excel |
 | 6 | Jam Mulai (HH:mm) | Contoh `08:00`; opsional |
 | 7 | Jam Selesai (HH:mm) | Contoh `16:00`; opsional |
 

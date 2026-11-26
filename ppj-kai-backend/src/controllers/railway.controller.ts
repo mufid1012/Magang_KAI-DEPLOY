@@ -24,8 +24,8 @@ async function fetchOverpass(query: string): Promise<OverpassResponse> {
         method: 'POST',
         headers: {
           'Content-Type': 'text/plain',
-          // This mirror only accepts its allow-listed Overpass client agents.
-          'User-Agent': 'curl/8.7.1',
+          // Identify honestly; Overpass mirrors block clients that disguise themselves.
+          'User-Agent': 'KAI-RailTrack-PPJ/1.0 (railway geometry proxy)',
         },
         body: query,
         signal: controller.signal,

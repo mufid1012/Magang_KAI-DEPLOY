@@ -11,7 +11,8 @@ function normalizePayload(body: any) {
     destination: String(body.destination || '').trim(),
     departureTime: String(body.departureTime || '').trim(),
     arrivalTime: String(body.arrivalTime || '').trim(),
-    isActive: body.isActive === undefined ? true : Boolean(body.isActive),
+    // Boolean("false") is true; only real booleans are accepted (see validationMessage).
+    isActive: body.isActive === undefined ? true : body.isActive,
   };
 }
 
@@ -19,6 +20,10 @@ function validationMessage(payload: ReturnType<typeof normalizePayload>) {
   if (!payload.trainCode || !payload.trainName || !payload.origin || !payload.destination || !payload.departureTime || !payload.arrivalTime) {
     return 'Kode kereta, nama kereta, rute, jam berangkat, dan jam tiba wajib diisi';
   }
+  if (payload.trainCode.length > 30 || payload.trainName.length > 100 || payload.origin.length > 150 || payload.destination.length > 150) {
+    return 'Kode kereta maksimal 30, nama kereta 100, dan rute 150 karakter';
+  }
+  if (typeof payload.isActive !== 'boolean') return 'Status aktif tidak valid';
   if (!TIME_PATTERN.test(payload.departureTime) || !TIME_PATTERN.test(payload.arrivalTime)) {
     return 'Jam berangkat dan jam tiba harus menggunakan format HH:mm';
   }

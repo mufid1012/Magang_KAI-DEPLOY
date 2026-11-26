@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import prisma from '../config/database';
 import { generateToken } from '../utils/jwt';
+import { checkPhoto } from '../lib/photo';
 
 export const login = async (req: Request, res: Response) => {
   try {
@@ -26,7 +27,7 @@ export const login = async (req: Request, res: Response) => {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
-    const token = generateToken(user.id, user.role);
+    const token = generateToken(user.id, user.role, user.tokenVersion);
 
     return res.json({
       success: true,
@@ -105,9 +106,24 @@ export const updateProfile = async (req: Request, res: Response) => {
     // Build update data — only include fields that were provided
     const updateData: any = {};
 
-    if (nama !== undefined) updateData.nama = nama;
-    if (foto !== undefined) updateData.foto = foto;
-    if (phone !== undefined) updateData.phone = phone;
+    // The name identifies the officer on approved PDF reports, so only the super admin changes it.
+    if (nama !== undefined) {
+      return res.status(403).json({ success: false, message: 'Nama hanya dapat diubah oleh Super Admin' });
+    }
+    if (foto !== undefined) {
+      const photo = checkPhoto(foto);
+      // users.foto is a TEXT column (64 KB); larger values would fail in MySQL.
+      if (!photo.ok || (photo.value && photo.value.length > 60_000)) {
+        return res.status(400).json({ success: false, message: 'Foto profil harus berupa gambar maksimal 60 KB' });
+      }
+      updateData.foto = photo.value;
+    }
+    if (phone !== undefined) {
+      if (phone !== null && (typeof phone !== 'string' || phone.trim().length > 30 || !/^[0-9+()\-\s]*$/.test(phone))) {
+        return res.status(400).json({ success: false, message: 'Nomor telepon tidak valid (maksimal 30 karakter)' });
+      }
+      updateData.phone = typeof phone === 'string' && phone.trim() ? phone.trim() : null;
+    }
     if (alertSound !== undefined) {
       if (!['siren', 'beep', 'chime', 'off'].includes(alertSound)) {
         return res.status(400).json({ success: false, message: 'Invalid alert sound' });
@@ -128,6 +144,7 @@ export const updateProfile = async (req: Request, res: Response) => {
         return res.status(401).json({ success: false, message: 'Current password is incorrect' });
       }
       updateData.password = await bcrypt.hash(password, 10);
+      updateData.tokenVersion = { increment: 1 }; // other devices signed in with the old password log out
     }
 
     const updatedUser = await prisma.user.update({
@@ -145,10 +162,13 @@ export const updateProfile = async (req: Request, res: Response) => {
         phone: true,
         alertSound: true,
         isActive: true,
+        tokenVersion: true,
       },
     });
 
-    return res.json({ success: true, message: 'Profile updated', user: updatedUser });
+    const { tokenVersion, ...user } = updatedUser;
+    // This device keeps its session with a token for the new version.
+    return res.json({ success: true, message: 'Profile updated', user, ...(password ? { token: generateToken(user.id, user.role, tokenVersion) } : {}) });
   } catch (error) {
     console.error('Update Profile error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });

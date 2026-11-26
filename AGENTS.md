@@ -5,10 +5,16 @@
 - Role: admin, qc, kupt, guest, ppj. Alur PPJ tetap login -> /inspeksi -> /inspeksi/[id] -> /inspeksi/[id]/selesai.
 - Bypass WAJIB dipertahankan untuk testing sampai pemilik proyek meminta perubahan. Kedua flag `TRACKING_BYPASS_ENABLED` dan `NEXT_PUBLIC_TRACKING_BYPASS_ENABLED` tersedia jika bukan `false`; request harus mengirim `bypassMode: true`. Jangan mengubah default diam-diam.
 - Mode normal memerlukan foto dan posisi dalam radius 500 m pada start/stop; server memvalidasinya. Bypass tetap melewati syarat tersebut dan jendela waktu.
-- Start hanya pending (atau missed dengan bypass); stop -> need_approval; approval admin -> completed. Pertahankan transaksi/claim bersyarat.
+- Start hanya pending (atau missed dengan bypass); stop -> need_approval; approval oleh pengelola PPJ (admin atau KUPT sesuai managerId) -> completed. Pertahankan transaksi/claim bersyarat, termasuk pada approval.
+- Tugas in_progress/need_approval tidak boleh dihapus, dan PPJ dengan tugas berjalan/menunggu approval tidak boleh dilepas dari pengelolanya (lepas petugas, edit KUPT, hapus akun pengelola). Lihat `src/lib/taskGuards.ts`.
+- Titik tugas manual diambil dari katalog stasiun atau titik MAP di server; koordinat dari klien diabaikan.
+- Pengelola (admin/KUPT sesuai managerId) dapat menghentikan paksa sesi `started` dengan alasan wajib; sesi ditutup dari sampel GPS server, endTime = sampel terakhir, tugas -> need_approval. Tulis PPJ ke sesi itu dibalas 409 `TRACKING_FORCE_STOPPED` agar aplikasi berhenti mencoba ulang.
 - PDF PPJ hanya setelah approval; admin/KUPT pengelola dan QC sesuai wilayah dapat mengunduh draft.
 - Scope read admin/KUPT berdasarkan managerId; QC berdasarkan stasiun wilayah. Jangan menyamakan hak akses seluruh role.
-- Navigasi/header/urutan stasiun yang ada harus dipertahankan ketika refactor.
+- Navigasi/header/urutan stasiun yang ada harus dipertahankan ketika refactor. Tampilan dan navigasi Super Admin sengaja dipertahankan seperti versi lama; jangan didesain ulang tanpa permintaan pemilik proyek.
+- Menu QC (read-only, scope stasiun wilayah): Ringkasan, Pantau, Laporan, Petugas; `?menu=pantau|laporan|petugas`, plus `?laporan=`. Ringkasan (`GET /admin/qc/summary?days=1|7|30`) menandai patroli janggal dengan ambang di `src/lib/qcReview.ts`. QC boleh menulis/menghapus catatannya sendiri (`/admin/tugas/:id/qc-notes`, `/admin/qc-notes/:id`); admin/KUPT hanya membaca di detail tugas.
+- Laporan temuan punya status penanganan baru/ditangani/selesai (`PATCH /admin/emergency/:id/status`, scope managerId); saat ini hanya tampil di QC, halaman admin belum memakainya. Laporan darurat PPJ tetap terkirim tanpa GPS dengan lokasi perkiraan yang ditandai di deskripsi.
+- API akun menerima `managerId` (admin atau KUPT aktif) saat membuat/mengedit akun PPJ; penggantian ditolak bila PPJ masih punya tugas yang belum selesai. Form akun admin versi lama belum memakai field ini.
 
 ## Sumber kebenaran
 - `shared/stations.ts`: katalog stasiun dan subset penugasan/guest yang sengaja berbeda. Frontend re-export melalui lib/stations.ts.
@@ -19,7 +25,9 @@
 - `src/lib/accessScope.ts` backend: scope hak akses dan parsing wilayah.
 - `src/lib/reportSeverity.ts`: kategori `color=error` berarti darurat; key lama emergency/berat hanya fallback jika tidak lagi memiliki konfigurasi kategori.
 - Key kategori dan jenis laporan maksimum 50 karakter; foto laporan LongText. Penghapusan kategori bersifat hard-delete; laporan lama tetap menyimpan key.
-- `frontend/src/components/admin/`: tampilan akun/pengaturan dan dialog dipisahkan dari halaman.
+- `frontend/src/components/admin/`: tampilan akun/pengaturan dan dialog dipisahkan dari halaman. IncidentsView dan PetugasView dipakai halaman QC.
+- `frontend/src/components/common/`: Dialog, ConfirmHost (`showConfirm({ title, message, confirmLabel, tone })`), Field/ReasonField, RouteLine dipakai halaman PPJ dan QC. Halaman admin memakai `showConfirm(teks)` versi lama dan `useEscapeKey`.
+- `frontend/src/lib/statusTheme.ts`, `lib/datetime.ts`, `lib/place.ts`: label/warna status, format tanggal-jam WIB, dan nama stasiun terdekat (PPJ/QC).
 - Tracking memakai hooks/useGPS.ts dan useCamera.ts. Stream wajib berhenti pada close/unmount dan hasil izin terlambat.
 - Route lama yang panjang diterima sampai batas input, lalu disimpan maksimal 20.000 titik dengan endpoint tetap utuh. Jangan menolak shift panjang hanya karena jumlah callback GPS.
 

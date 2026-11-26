@@ -49,15 +49,20 @@ test('real MySQL: roles, assignment, tracking, reports, approval, PDF, import, b
       await json(await request('/tracking/train-alerts','GET',undefined,ppj.id),200);
       await json(await request('/tracking/warnings/nearby?tugasId=1&lat=-7&lng=110','GET',undefined,ppj.id),200);
     });
-    const assignment={jalur:'Audit Jenar-Wojo',tanggal:'2026-10-19',assignedTo:ppj.id,startPointName:'Sta. Jenar',endPointName:'Sta. Wojo',startPointLat:-7.802037,startPointLong:110.000797,endPointLat:-7.862278,endPointLong:110.041092};
+    // Jam mulai is required and normal starts must fall in its window, so schedule "now" in WIB.
+    const wibNow=new Date(Date.now()+7*3600_000).toISOString();
+    const assignment={jalur:'Audit Jenar-Wojo',tanggal:wibNow.slice(0,10),jamMulai:wibNow.slice(11,16),assignedTo:ppj.id,startPointName:'Sta. Jenar',endPointName:'Sta. Wojo',startPointLat:-7.802037,startPointLong:110.000797,endPointLat:-7.862278,endPointLong:110.041092};
     await t.test('manual assignments share date/time/active-user checks and accept zero coordinates',async()=>{
       await json(await request('/admin/tugas','POST',{...assignment,tanggal:'2026-02-30'}),400);
       await json(await request('/admin/tugas','POST',{...assignment,jamMulai:'25:00'}),400);
       await prisma.user.update({where:{id:ppj.id},data:{isActive:false}});
       await json(await request('/admin/tugas','POST',assignment),403);
       await prisma.user.update({where:{id:ppj.id},data:{isActive:true}});
-      const zero=await json(await request('/admin/tugas','POST',{...assignment,startPointLat:0,startPointLong:0,jamMulai:0.33333333333}),201);
+      const zero=await json(await request('/admin/tugas','POST',{...assignment,tanggal:'2099-10-20',startPointLat:0,startPointLong:0,jamMulai:0.33333333333}),201);
       assert.equal(zero.data.jamMulai,'08:00');
+      // Client coordinates are ignored; the station catalog decides the geofence point.
+      assert.deepEqual([zero.data.startPointLat,zero.data.startPointLong],[assignment.startPointLat,assignment.startPointLong]);
+      await json(await request('/admin/tugas','POST',{...assignment,startPointName:'Sta. Tidak Ada'}),400);
       const data=await json(await request('/admin/tugas','POST',assignment),201);taskId=data.data.id;
       const own=await json(await request(`/admin/tugas/${taskId}`),200);assert.equal(own.data.assignedTo,ppj.id);
       await json(await request(`/admin/tugas/${taskId}`,'GET',undefined,otherAdmin.id),404);
@@ -65,11 +70,14 @@ test('real MySQL: roles, assignment, tracking, reports, approval, PDF, import, b
       await json(await request(`/admin/tugas/${taskId}`,'GET',undefined,kupt.id),404);
       await json(await request('/admin/tugas','POST',assignment,qc.id),403);
     });
+    const selfie='data:image/jpeg;base64,/9j/4AAQSkZJRg==';
     await t.test('normal tracking requires both photo and geofence; repeated start is rejected',async()=>{
-      await json(await request(`/tracking/start/${taskId}`,'POST',{lat:0,lng:0,fotoAwal:'selfie'},ppj.id),400);
+      await json(await request(`/tracking/start/${taskId}`,'POST',{lat:0,lng:0,fotoAwal:selfie},ppj.id),400);
+      // Photos must be image data URLs, not arbitrary text.
+      await json(await request(`/tracking/start/${taskId}`,'POST',{lat:assignment.startPointLat,lng:assignment.startPointLong,fotoAwal:'selfie'},ppj.id),400);
       await json(await request(`/tracking/start/${taskId}`,'POST',{lat:assignment.startPointLat,lng:assignment.startPointLong},ppj.id),400);
-      const data=await json(await request(`/tracking/start/${taskId}`,'POST',{lat:assignment.startPointLat,lng:assignment.startPointLong,fotoAwal:'selfie'},ppj.id),200);trackingId=data.trackingId;
-      await json(await request(`/tracking/start/${taskId}`,'POST',{lat:assignment.startPointLat,lng:assignment.startPointLong,fotoAwal:'selfie'},ppj.id),409);
+      const data=await json(await request(`/tracking/start/${taskId}`,'POST',{lat:assignment.startPointLat,lng:assignment.startPointLong,fotoAwal:selfie},ppj.id),200);trackingId=data.trackingId;
+      await json(await request(`/tracking/start/${taskId}`,'POST',{lat:assignment.startPointLat,lng:assignment.startPointLong,fotoAwal:selfie},ppj.id),409);
       await json(await request(`/tracking/update/${trackingId}`,'POST',{lat:assignment.endPointLat,lng:assignment.endPointLong},ppj.id),200);
       await json(await request(`/tracking/update/${trackingId}`,'POST',{lat:0,lng:0},other.id),404);
     });
@@ -87,36 +95,65 @@ test('real MySQL: roles, assignment, tracking, reports, approval, PDF, import, b
       const summary=await json(await request('/tugas/summary','GET',undefined,ppj.id),200);assert.equal(summary.data.emergencyReports,1);
       const lists=await json(await request('/admin/tugas?summary=true'),200);
       const task=lists.data.find((row:any)=>row.id===taskId);assert.equal(task.tracking[0].fotoAwal,undefined);assert.equal(task.tracking[0].laporan[0].foto,undefined);
+      // The PPJ task list stays light; photos and route come from the detail endpoint.
+      const ppjList=await json(await request('/tugas','GET',undefined,ppj.id),200);
+      const ppjTask=ppjList.data.find((row:any)=>row.id===taskId);assert.equal(ppjTask.tracking[0].fotoAwal,undefined);assert.equal(ppjTask.tracking[0].routePath,undefined);assert.equal(ppjTask.tracking[0].status,'started');
       const detail=await json(await request(`/admin/tugas/${taskId}`),200);assert.equal(detail.data.tracking[0].laporan[0].foto,photo);
     });
     await t.test('8-hour high-frequency routes complete, need approval, then allow a real PDF',async()=>{
       const route=Array.from({length:28800},(_,i)=>[assignment.startPointLat+(assignment.endPointLat-assignment.startPointLat)*i/28799,assignment.startPointLong+(assignment.endPointLong-assignment.startPointLong)*i/28799]);
-      await json(await request(`/tracking/stop/${trackingId}`,'POST',{lat:0,lng:0,fotoSelesai:'end'},ppj.id),400);
-      await json(await request(`/tracking/stop/${trackingId}`,'POST',{lat:assignment.endPointLat,lng:assignment.endPointLong,fotoSelesai:'end',routePath:route},ppj.id),200);
+      await json(await request(`/tracking/stop/${trackingId}`,'POST',{lat:0,lng:0,fotoSelesai:selfie},ppj.id),400);
+      await json(await request(`/tracking/stop/${trackingId}`,'POST',{lat:assignment.endPointLat,lng:assignment.endPointLong,fotoSelesai:selfie,routePath:route},ppj.id),200);
       const row=await prisma.tracking.findUniqueOrThrow({where:{id:trackingId},include:{tugas:true}});assert.equal(row.tugas.status,'need_approval');assert.equal(JSON.parse(row.routePath!).length,20000);
       assert.deepEqual(JSON.parse(row.routePath!)[0],route[0]);assert.deepEqual(JSON.parse(row.routePath!).at(-1),route.at(-1));
       await json(await request(`/tugas/${taskId}/report`,'GET',undefined,ppj.id),403);
       await json(await request(`/admin/tracking/${trackingId}/approve`,'POST',{safetyStatus:'tidak_aman'},qc.id),403);
+      // KUPT may approve only PPJ it manages; this PPJ belongs to the admin.
+      await json(await request(`/admin/tracking/${trackingId}/approve`,'POST',{safetyStatus:'tidak_aman'},kupt.id),404);
+      await json(await request(`/admin/tugas/${taskId}`,'DELETE'),409);
       await json(await request(`/admin/tracking/${trackingId}/approve`,'POST',{safetyStatus:'tidak_aman'}),200);
       // Omit external tile network from this integration check; the PDF fallback still executes.
       await prisma.tracking.update({where:{id:trackingId},data:{routePath:null,fotoAwal:null,fotoSelesai:null}});
       const pdf=await request(`/tugas/${taskId}/report`,'GET',undefined,ppj.id);assert.equal(pdf.status,200);assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0,4).toString(),'%PDF');
     });
     await t.test('bypass remains available for missed tasks, start and stop without photos/geofence',async()=>{
-      const data=await json(await request('/admin/tugas','POST',assignment),201);const id=data.data.id;
+      const data=await json(await request('/admin/tugas','POST',{...assignment,tanggal:'2099-10-21'}),201);const id=data.data.id;
       await prisma.tugasPpj.update({where:{id},data:{status:'missed'}});
       const started=await json(await request(`/tracking/start/${id}`,'POST',{lat:0,lng:0,bypassMode:true},ppj.id),200);
       await json(await request(`/tracking/stop/${started.trackingId}`,'POST',{lat:0,lng:0,bypassMode:true,routePath:[[0,0],[0,0.1]]},ppj.id),200);
       process.env.TRACKING_BYPASS_ENABLED='false';
-      const second=await json(await request('/admin/tugas','POST',assignment),201);
+      const second=await json(await request('/admin/tugas','POST',{...assignment,tanggal:'2099-10-22'}),201);
       await json(await request(`/tracking/start/${second.data.id}`,'POST',{lat:0,lng:0,bypassMode:true},ppj.id),400);
       process.env.TRACKING_BYPASS_ENABLED='true';
     });
+    await t.test('manager force stop closes a stuck session for review and blocks further PPJ writes',async()=>{
+      const created=await json(await request('/admin/tugas','POST',{...assignment,tanggal:'2099-10-25'}),201);
+      const started=await json(await request(`/tracking/start/${created.data.id}`,'POST',{lat:assignment.startPointLat,lng:assignment.startPointLong,bypassMode:true},ppj.id),200);
+      // Samples must be after the start; a small step keeps them from reading as a GPS jump.
+      await new Promise(resolve=>setTimeout(resolve,1500));const now=Date.now();
+      const samples=[0,1].map(i=>({id:`fs-${i}`,capturedAt:now-1000+i*1000,lat:assignment.startPointLat-i*0.00001,lng:assignment.startPointLong+i*0.00001,accuracy:5,deviceSpeed:null}));
+      await json(await request(`/tracking/update/${started.trackingId}`,'POST',{samples},ppj.id),200);
+      const reason={reason:'HP petugas mati, dikonfirmasi lewat telepon'};
+      await json(await request(`/admin/tracking/${started.trackingId}/force-stop`,'POST',reason,qc.id),403);
+      await json(await request(`/admin/tracking/${started.trackingId}/force-stop`,'POST',reason,otherAdmin.id),404);
+      await json(await request(`/admin/tracking/${started.trackingId}/force-stop`,'POST',{reason:'x'}),400);
+      await json(await request(`/admin/tracking/${started.trackingId}/force-stop`,'POST',reason),200);
+      await json(await request(`/admin/tracking/${started.trackingId}/force-stop`,'POST',reason),404);
+      const row=await prisma.tracking.findUniqueOrThrow({where:{id:started.trackingId},include:{tugas:true}});
+      assert.equal(row.status,'stopped');assert.equal(row.tugas.status,'need_approval');assert.equal(row.forcedStopBy,admin.id);assert.equal(row.forcedStopReason,reason.reason);
+      assert.equal(JSON.parse(row.routePath!).length,2);
+      const late=await json(await request(`/tracking/update/${started.trackingId}`,'POST',{samples:[{...samples[1],id:'fs-late',capturedAt:Date.now()}]},ppj.id),409);assert.equal(late.code,'TRACKING_FORCE_STOPPED');
+      const stop=await json(await request(`/tracking/stop/${started.trackingId}`,'POST',{lat:0,lng:0,bypassMode:true},ppj.id),409);assert.equal(stop.code,'TRACKING_FORCE_STOPPED');
+      const detail=await json(await request(`/admin/tugas/${created.data.id}`),200);assert.equal(detail.data.tracking[0].forcedStopper.nama,admin.nama);
+      await json(await request(`/admin/tracking/${started.trackingId}/approve`,'POST',{safetyStatus:'aman'}),200);
+      await prisma.tracking.update({where:{id:started.trackingId},data:{routePath:null}});
+      const pdf=await request(`/tugas/${created.data.id}/report`,'GET',undefined,ppj.id);assert.equal(pdf.status,200);assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0,4).toString(),'%PDF');
+    });
     await t.test('Excel import matches manual normalization and does not steal other managers staff',async()=>{
-      const workbook=new ExcelJS.Workbook(),sheet=workbook.addWorksheet('Tugas');sheet.addRow(['NIPP','Nama','Awal','Akhir','Tanggal','Mulai','Selesai']);sheet.addRow([ppj.nipp,'PPJ','Jenar','Wojo','2026-10-20',1/3,0.5]);sheet.addRow([other.nipp,'Other','Jenar','Wojo','2026-10-20',1/3,0.5]);
+      const workbook=new ExcelJS.Workbook(),sheet=workbook.addWorksheet('Tugas');sheet.addRow(['NIPP','Nama','Awal','Akhir','Tanggal','Mulai','Selesai']);sheet.addRow([ppj.nipp,'PPJ','Jenar','Wojo','23 OKTOBER 2099',1/3,0.5]);sheet.addRow([other.nipp,'Other','Jenar','Wojo','2099-10-23',1/3,0.5]);
       const form=new FormData();form.append('file',new Blob([new Uint8Array(await workbook.xlsx.writeBuffer())],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),'audit.xlsx');
       const response=await fetch(base+'/admin/tugas/import',{method:'POST',headers:{Authorization:'Bearer '+tokens.get(admin.id)},body:form});const data=await json(response,200);assert.equal(data.data.created,1);assert.equal(data.data.failed,1);
-      const imported=await prisma.tugasPpj.findFirstOrThrow({where:{assignedTo:ppj.id,tanggal:new Date('2026-10-20')}});assert.equal(imported.jamMulai,'08:00');assert.equal(imported.jamSelesai,'12:00');
+      const imported=await prisma.tugasPpj.findFirstOrThrow({where:{assignedTo:ppj.id,tanggal:new Date('2099-10-23')}});assert.equal(imported.jamMulai,'08:00');assert.equal(imported.jamSelesai,'12:00');
     });
     await t.test('real scheduler catches up expired dates without changing completed assignments',async()=>{
       const {checkMissedTasks}=require('../src/lib/scheduler') as typeof import('../src/lib/scheduler');
@@ -131,6 +168,32 @@ test('real MySQL: roles, assignment, tracking, reports, approval, PDF, import, b
       assert.equal(await prisma.user.count(),before);
       assert.equal((await prisma.tugasPpj.findUniqueOrThrow({where:{id:taskId}})).status,'completed');
       assert.equal((await prisma.laporan.findFirstOrThrow({where:{trackingId}})).jenisTemuan,category);
+    });
+    await t.test('incident handling status is scoped to the managing admin or KUPT',async()=>{
+      const list=await json(await request('/admin/emergency'),200);
+      const report=list.data.find((row:any)=>row.trackingId===trackingId);assert.equal(report.handlingStatus,'baru');assert.equal(report.tracking.tugas.id,taskId);
+      await json(await request(`/admin/emergency/${report.id}/status`,'PATCH',{status:'ditangani'},qc.id),403);
+      await json(await request(`/admin/emergency/${report.id}/status`,'PATCH',{status:'ditangani'},otherAdmin.id),404);
+      await json(await request(`/admin/emergency/${report.id}/status`,'PATCH',{status:'ditangani'},kupt.id),404);
+      await json(await request(`/admin/emergency/${report.id}/status`,'PATCH',{status:'tutup'}),400);
+      await json(await request(`/admin/emergency/${report.id}/status`,'PATCH',{status:'ditangani',note:'x'.repeat(501)}),400);
+      const handled=await json(await request(`/admin/emergency/${report.id}/status`,'PATCH',{status:'ditangani',note:'Tim berangkat dari Sta. Wates'}),200);
+      assert.equal(handled.data.handlingStatus,'ditangani');assert.equal(handled.data.handler.nama,admin.nama);assert.equal(handled.data.handlingNote,'Tim berangkat dari Sta. Wates');
+      const done=await json(await request(`/admin/emergency/${report.id}/status`,'PATCH',{status:'selesai'}),200);assert.equal(done.data.handlingStatus,'selesai');
+      // Reopening clears who handled it.
+      const reopened=await json(await request(`/admin/emergency/${report.id}/status`,'PATCH',{status:'baru'}),200);assert.equal(reopened.data.handler,null);
+      assert.ok(await prisma.adminAuditLog.count({where:{action:'laporan.handling',targetId:report.id}})>=3);
+    });
+    await t.test('PPJ manager is chosen at creation and cannot change while tasks are open',async()=>{
+      const created=await json(await request('/admin/users','POST',{nipp:'N'+suffix,nama:'Managed PPJ',password:'test-password',role:'ppj',managerId:kupt.id}),201);
+      assert.equal((await prisma.user.findUniqueOrThrow({where:{id:created.data.id}})).managerId,kupt.id);
+      await json(await request('/admin/users','POST',{nipp:'M'+suffix,nama:'Bad manager',password:'test-password',role:'ppj',managerId:qc.id}),400);
+      await json(await request('/admin/users','POST',{nipp:'R'+suffix,nama:'QC with manager',password:'test-password',role:'qc',managerId:kupt.id}),400);
+      // The audit PPJ still has scheduled tasks under the admin, so the manager stays.
+      await json(await request(`/admin/users/${ppj.id}`,'PATCH',{managerId:kupt.id}),409);
+      assert.equal((await prisma.user.findUniqueOrThrow({where:{id:ppj.id}})).managerId,admin.id);
+      await json(await request(`/admin/users/${created.data.id}`,'PATCH',{managerId:null}),200);
+      assert.equal((await prisma.user.findUniqueOrThrow({where:{id:created.data.id}})).managerId,null);
     });
     await t.test('deactivated users lose access despite an existing JWT',async()=>{
       await prisma.user.update({where:{id:ppj.id},data:{isActive:false}});

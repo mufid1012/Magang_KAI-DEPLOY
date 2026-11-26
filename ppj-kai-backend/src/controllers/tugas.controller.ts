@@ -1,11 +1,74 @@
-import { formatDuration as formatDurasi } from '../../../shared/display';
+import fs from 'fs';
+import path from 'path';
 import { taskScope } from '../lib/accessScope';
-import { emergencyCategoryKeys } from '../lib/reportSeverity';
-import { haversineMeters as haversineM } from '../../../shared/geo';
+import { categoryLookup, emergencyCategoryKeys } from '../lib/reportSeverity';
+import { speedSummary, type SpeedState } from '../../../shared/telemetry';
 import { Request, Response } from 'express';
 import prisma from '../config/database';
-import { renderStaticMap } from '../lib/staticMap';
+import { renderStaticMap, type LatLng, type MapMarker } from '../lib/staticMap';
+import { buildInspectionReport, distanceAlongRouteKm, REPORT_COLORS, reportRoute, type ReportFinding } from '../lib/inspectionReport';
 import { resolveTugasStatus } from '../utils/tugasStatus';
+import { loadGpsGaps } from '../lib/telemetry';
+
+const PDF_FONTS = { normal: 'Helvetica', bold: 'Helvetica-Bold', italics: 'Helvetica-Oblique', bolditalics: 'Helvetica-BoldOblique' };
+let printer: any = null;
+function pdfPrinter() {
+  if (!printer) {
+    printer = require('pdfmake');
+    printer.fonts = { Helvetica: PDF_FONTS };
+    // Report images are inline data URLs only; never let stored strings make the server fetch or read files.
+    // The built-in font names pass through the same local-file check, so they are the only allowed "paths".
+    const builtInFonts = new Set(Object.values(PDF_FONTS));
+    printer.setUrlAccessPolicy(() => false);
+    printer.setLocalAccessPolicy((file: string) => builtInFonts.has(file));
+  }
+  return printer;
+}
+
+let logoCache: string | null | undefined;
+function reportLogo(): string | null {
+  if (logoCache === undefined) {
+    try {
+      logoCache = `data:image/png;base64,${fs.readFileSync(path.resolve(__dirname, '../../assets/logo-kai.png')).toString('base64')}`;
+    } catch {
+      logoCache = null; // letterhead falls back to text
+    }
+  }
+  return logoCache;
+}
+
+async function reportMap(
+  route: LatLng[],
+  tracking: { status: string; routePath: string | null; startLat: number | null; startLong: number | null; endLat: number | null; endLong: number | null } | null,
+  findings: ReportFinding[],
+): Promise<{ image: string | null; note: string | null }> {
+  if (!tracking) return { image: null, note: 'Peta tersedia setelah petugas memulai inspeksi.' };
+  const markers: MapMarker[] = [];
+  const start: LatLng | null = route[0] ?? (tracking.startLat !== null && tracking.startLong !== null ? [tracking.startLat, tracking.startLong] : null);
+  if (start) markers.push({ lat: start[0], lng: start[1], label: 'A', color: REPORT_COLORS.navy });
+  if (tracking.status !== 'started') {
+    const end: LatLng | null = route.length ? route[route.length - 1]! : tracking.endLat !== null && tracking.endLong !== null ? [tracking.endLat, tracking.endLong] : null;
+    if (end) markers.push({ lat: end[0], lng: end[1], label: 'B', color: REPORT_COLORS.navy });
+  }
+  for (const f of findings) markers.push({ lat: f.lat, lng: f.lng, label: String(f.no), color: f.emergency ? REPORT_COLORS.danger : REPORT_COLORS.accent });
+
+  const notes: string[] = [];
+  if (route.length < 2) {
+    notes.push(tracking.status === 'started'
+      ? 'Jejak GPS belum dikirim; jejak lengkap tersimpan saat petugas menyelesaikan inspeksi.'
+      : 'Jejak GPS tidak terekam selama perjalanan (titik hanya dicatat bila akurasi GPS 20 m atau lebih baik), sehingga peta hanya menampilkan titik mulai, selesai, dan temuan.');
+  }
+  if (!markers.length) return { image: null, note: notes.join(' ') || null };
+
+  const rendered = await renderStaticMap(route, markers);
+  if (!rendered) {
+    notes.push('Peta tidak dapat dibuat di server (modul canvas tidak tersedia atau gagal).');
+    return { image: null, note: notes.join(' ') };
+  }
+  if (rendered.tilesLoaded === 0) notes.push('Latar peta OpenStreetMap tidak dapat dimuat saat laporan dibuat; jejak dan penanda tetap digambar.');
+  else if (rendered.tilesLoaded < rendered.tilesTotal) notes.push('Sebagian latar peta OpenStreetMap gagal dimuat saat laporan dibuat.');
+  return { image: rendered.dataUrl, note: notes.join(' ') || null };
+}
 
 export const getTugasPetugas = async (req: Request, res: Response) => {
   try {
@@ -18,6 +81,12 @@ export const getTugasPetugas = async (req: Request, res: Response) => {
         tracking: {
           orderBy: { createdAt: 'desc' },
           take: 1,
+          // The list only needs status and duration. Photos (up to 7 MB each), the route
+          // (up to 20,000 points) and telemetry come from GET /tugas/:id when opened.
+          select: {
+            id: true, startTime: true, endTime: true, durasi: true, status: true,
+            approvalStatus: true, safetyStatus: true, approvedAt: true, forcedStopAt: true, rejectionReason: true, earlyStopReason: true,
+          },
         },
       },
     });
@@ -133,10 +202,14 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
         },
         tracking: {
           orderBy: { createdAt: 'desc' },
+          take: 1,
           include: {
-            laporan: {
-              orderBy: { createdAt: 'asc' },
-            },
+            laporan: { orderBy: { createdAt: 'asc' } },
+            approver: { select: { nama: true, nipp: true } },
+            forcedStopper: { select: { nama: true, nipp: true } },
+            rejecter: { select: { nama: true, nipp: true } },
+            speedEvents: { orderBy: { startAt: 'asc' }, select: { startAt: true, durationMs: true, maxKmh: true, meanKmh: true } },
+            _count: { select: { telemetrySamples: true } },
           },
         },
       },
@@ -147,7 +220,6 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
     }
 
     const latestTracking = tugas.tracking[0] || null;
-    const laporanList = latestTracking?.laporan || [];
 
     // PPJ hanya boleh mengunduh hasil perjalanan setelah admin menyetujuinya.
     // Admin/KUPT/QC tetap dapat membuka draft laporan untuk kebutuhan review.
@@ -159,207 +231,73 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
       });
     }
 
-    // Parse route path
-    let routePath: [number, number][] = [];
-    if (latestTracking?.routePath) {
-      try {
-        const parsed = JSON.parse(latestTracking.routePath);
-        if (Array.isArray(parsed) && parsed.length > 0) routePath = parsed;
-      } catch { /* ignore */ }
-    }
-
-    // Calculate distance from routePath
-
-    const totalDistanceM = routePath.reduce((sum, point, i) => {
-      if (i === 0) return 0;
-      return sum + haversineM(routePath[i - 1]![0], routePath[i - 1]![1], point[0], point[1]);
-    }, 0);
-    const totalDistanceKm = (totalDistanceM / 1000).toFixed(2);
-
-    // Render static map image server-side from routePath
-    let mapImageBase64: string | null = null;
-    if (routePath.length >= 2) {
-      try {
-        mapImageBase64 = await renderStaticMap(routePath, 800, 400);
-      } catch (mapErr) {
-        console.error('Failed to render static map:', mapErr);
-      }
-    }
-
-    // Setup pdfmake with standard Helvetica font
-    const pdfmake = require('pdfmake');
-    pdfmake.fonts = {
-      Helvetica: {
-        normal: 'Helvetica',
-        bold: 'Helvetica-Bold',
-        italics: 'Helvetica-Oblique',
-        bolditalics: 'Helvetica-BoldOblique'
-      }
-    };
-
-    // Helper formatter
-    const formatTime = (dateStr: Date | null) => {
-      if (!dateStr) return '-';
-      return new Date(dateStr).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }) + ' WIB';
-    };
-    const formatDate = (dateStr: Date) => {
-      return new Date(dateStr).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Jakarta' });
-    };
-
-
-    // Build info table rows
-    const infoRows: any[][] = [
-      ['Petugas', `: ${tugas.user.nama}`],
-      ['NIPP', `: ${tugas.user.nipp}`],
-    ];
-    if (tugas.user.jabatan) infoRows.push(['Jabatan', `: ${tugas.user.jabatan}`]);
-    if (tugas.user.workArea || tugas.user.division) infoRows.push(['Unit/Wilayah', `: ${tugas.user.workArea || tugas.user.division}`]);
-    infoRows.push(
-      ['Jalur', `: ${tugas.jalur}`],
-      ['Tanggal', `: ${formatDate(tugas.tanggal)}`],
-      ['Waktu', `: ${formatTime(latestTracking?.startTime || null)} — ${formatTime(latestTracking?.endTime || null)} (${formatDurasi(latestTracking?.durasi || null)})`],
-      ['Status Tugas', `: ${tugas.status.toUpperCase()}`],
-      ['Status Tracking', `: ${latestTracking?.approvalStatus === 'approved' ? 'APPROVED' : 'NOT APPROVED'}`],
-      ['Status Keselamatan', `: ${latestTracking?.safetyStatus === 'tidak_aman' ? 'TIDAK AMAN' : 'AMAN'}`],
-      ['ID Tugas', `: #PPJ-${String(tugas.id).padStart(6, '0')}`],
-    );
-    if (routePath.length >= 2) {
-      infoRows.push(['Jarak Tempuh', `: ${totalDistanceKm} km (${routePath.length} titik GPS)`]);
-    }
-
-    // Build PDF content
-    const docDefinition: any = {
-      defaultStyle: {
-        font: 'Helvetica',
-        fontSize: 10,
-        lineHeight: 1.5
-      },
-      content: [
-        { text: 'PT KERETA API INDONESIA (Persero)', style: 'header' },
-        { text: 'LAPORAN INSPEKSI JALUR PPJ', style: 'subheader', margin: [0, 0, 0, 20] },
-
-        {
-          layout: 'noBorders',
-          table: {
-            widths: [100, '*'],
-            body: infoRows
-          },
-          margin: [0, 0, 0, 20]
-        },
-      ],
-      styles: {
-        header: { fontSize: 16, bold: true, alignment: 'center' },
-        subheader: { fontSize: 14, bold: true, alignment: 'center', color: '#444444' },
-        sectionHeader: { fontSize: 12, bold: true, decoration: 'underline' },
-        laporanTitle: { fontSize: 11, bold: true },
-        laporanDesc: { fontSize: 10 },
-        laporanMeta: { fontSize: 9, color: '#666666' }
-      }
-    };
-
-    // Add route map image if available
-    if (mapImageBase64) {
-      docDefinition.content.push({ text: 'PETA JALUR INSPEKSI', style: 'sectionHeader', margin: [0, 10, 0, 10] });
-      docDefinition.content.push({
-        image: mapImageBase64,
-        width: 480,
-        alignment: 'center',
-        margin: [0, 0, 0, 5]
-      });
-      docDefinition.content.push({
-        text: `Jalur yang dilalui petugas selama inspeksi (${totalDistanceKm} km)`,
-        style: 'laporanMeta',
-        alignment: 'center',
-        margin: [0, 0, 0, 20]
-      });
-    } else if (routePath.length >= 2) {
-      // Fallback: just mention route info textually
-      docDefinition.content.push({ text: 'JALUR INSPEKSI', style: 'sectionHeader', margin: [0, 10, 0, 10] });
-      docDefinition.content.push({
-        text: `Petugas menempuh ${totalDistanceKm} km dari titik (${routePath[0]![0].toFixed(5)}, ${routePath[0]![1].toFixed(5)}) ke (${routePath[routePath.length - 1]![0].toFixed(5)}, ${routePath[routePath.length - 1]![1].toFixed(5)}).`,
-        margin: [0, 0, 0, 20]
-      });
-    }
-    // Add foto awal and foto selesai if available
-    if (latestTracking && (latestTracking.fotoAwal || latestTracking.fotoSelesai)) {
-      docDefinition.content.push({ text: 'VERIFIKASI IDENTITAS', style: 'sectionHeader', margin: [0, 10, 0, 10] });
-
-      const identityTableBody = [
-        [
-          latestTracking.fotoAwal ? { text: 'Foto Awal (Mulai)', style: 'laporanTitle', alignment: 'center' } : '',
-          latestTracking.fotoSelesai ? { text: 'Foto Akhir (Selesai)', style: 'laporanTitle', alignment: 'center' } : ''
-        ],
-        [
-          latestTracking.fotoAwal && latestTracking.fotoAwal.startsWith('data:image/') ? { image: latestTracking.fotoAwal, width: 200, alignment: 'center' } : '',
-          latestTracking.fotoSelesai && latestTracking.fotoSelesai.startsWith('data:image/') ? { image: latestTracking.fotoSelesai, width: 200, alignment: 'center' } : ''
-        ]
-      ];
-
-      docDefinition.content.push({
-        layout: 'noBorders',
-        table: {
-          widths: ['*', '*'],
-          body: identityTableBody
-        },
-        margin: [0, 0, 0, 20]
-      });
-    }
-
-    docDefinition.content.push({ text: 'DAFTAR TEMUAN', style: 'sectionHeader', margin: [0, 10, 0, 10] });
-
-    if (!latestTracking) {
-      docDefinition.content.push({ text: 'Petugas belum memulai inspeksi untuk tugas ini.', italics: true, color: '#8a5a00' });
-    } else if (laporanList.length === 0) {
-      const emptyMessage = tugas.status === 'completed'
-        ? 'Inspeksi selesai tanpa ada temuan kendala.'
-        : 'Belum ada temuan kendala yang dilaporkan.';
-      docDefinition.content.push({ text: emptyMessage, italics: true, color: '#555555' });
-    } else {
-      laporanList.forEach((lap, idx) => {
-        docDefinition.content.push({
-          text: `${idx + 1}. [${lap.jenisTemuan.toUpperCase()}] ${formatTime(lap.createdAt)}`,
-          style: 'laporanTitle',
-          margin: [0, 10, 0, 2]
-        });
-
-        if (lap.deskripsi) {
-          docDefinition.content.push({
-            text: `Deskripsi: ${lap.deskripsi}`,
-            style: 'laporanDesc',
-            margin: [15, 0, 0, 2]
-          });
-        }
-
-        docDefinition.content.push({
-          text: `Koordinat: ${lap.latitude.toFixed(5)}, ${lap.longitude.toFixed(5)}`,
-          style: 'laporanMeta',
-          margin: [15, 0, 0, 5]
-        });
-
-        // if there's a photo, and it's base64, embed it
-        if (lap.foto && lap.foto.startsWith('data:image/')) {
-          try {
-            docDefinition.content.push({
-              image: lap.foto,
-              width: 250,
-              margin: [15, 5, 0, 10]
-            });
-          } catch (e) {
-            console.error('Failed to embed image for laporan', lap.id, e);
-          }
-        }
-      });
-    }
-
-    docDefinition.content.push({
-      text: `\n\nDicetak pada: ${formatDate(new Date())} ${formatTime(new Date())}`,
-      style: 'laporanMeta',
-      alignment: 'right',
-      margin: [0, 30, 0, 0]
+    const route = latestTracking ? reportRoute(latestTracking) : [];
+    const category = await categoryLookup();
+    const findings: ReportFinding[] = (latestTracking?.laporan ?? []).map((lap, i) => {
+      const info = category(lap.jenisTemuan);
+      return {
+        no: i + 1,
+        label: info.label,
+        emergency: info.emergency,
+        createdAt: lap.createdAt,
+        lat: lap.latitude,
+        lng: lap.longitude,
+        deskripsi: lap.deskripsi,
+        foto: lap.foto,
+        kmFromStart: distanceAlongRouteKm(route, lap.latitude, lap.longitude),
+      };
     });
 
-    const doc = pdfmake.createPdf(docDefinition);
-    const buffer = await doc.getBuffer();
+    const map = await reportMap(route, latestTracking, findings);
+    const telemetry = latestTracking
+      ? speedSummary(latestTracking.telemetryState as SpeedState | null, Date.now(), latestTracking.telemetryTest, latestTracking.telemetryLoss)
+      : null;
+    const point = (lat: number | null, lng: number | null) => (lat !== null && lng !== null ? { lat, lng } : null);
+
+    const docDefinition = buildInspectionReport({
+      id: tugas.id,
+      jalur: tugas.jalur,
+      tanggal: tugas.tanggal,
+      jamMulai: tugas.jamMulai,
+      jamSelesai: tugas.jamSelesai,
+      startPoint: { name: tugas.startPointName, lat: tugas.startPointLat, lng: tugas.startPointLong },
+      endPoint: { name: tugas.endPointName, lat: tugas.endPointLat, lng: tugas.endPointLong },
+      petugas: { nama: tugas.user.nama, nipp: tugas.user.nipp, jabatan: tugas.user.jabatan, unit: tugas.user.workArea || tugas.user.division },
+      tracking: latestTracking && {
+        status: latestTracking.status,
+        startTime: latestTracking.startTime,
+        endTime: latestTracking.endTime,
+        durasi: latestTracking.durasi,
+        start: point(latestTracking.startLat, latestTracking.startLong),
+        end: point(latestTracking.endLat, latestTracking.endLong),
+        fotoAwal: latestTracking.fotoAwal,
+        fotoSelesai: latestTracking.fotoSelesai,
+        approved: latestTracking.approvalStatus === 'approved',
+        approvedAt: latestTracking.approvedAt,
+        approver: latestTracking.approver,
+        unsafe: latestTracking.safetyStatus === 'tidak_aman',
+        testMode: latestTracking.telemetryTest,
+        forcedStop: latestTracking.forcedStopAt
+          ? { at: latestTracking.forcedStopAt, by: latestTracking.forcedStopper, reason: latestTracking.forcedStopReason ?? '' }
+          : null,
+        rejection: latestTracking.rejectedAt
+          ? { at: latestTracking.rejectedAt, by: latestTracking.rejecter, reason: latestTracking.rejectionReason ?? '' }
+          : null,
+        earlyStopReason: latestTracking.earlyStopReason,
+        reportedLoss: latestTracking.telemetryLoss,
+        sampleCount: latestTracking._count.telemetrySamples,
+        averageKmh: telemetry?.averageKmh ?? null,
+        gpsGaps: await loadGpsGaps(prisma, latestTracking),
+      },
+      route,
+      map,
+      findings,
+      speedEvents: latestTracking?.speedEvents ?? [],
+      logo: reportLogo(),
+      printedAt: new Date(),
+    });
+
+    const buffer = await pdfPrinter().createPdf(docDefinition).getBuffer();
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="Laporan_Inspeksi_PPJ_${tugas.id}.pdf"`);

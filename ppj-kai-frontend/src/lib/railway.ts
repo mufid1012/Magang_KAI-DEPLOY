@@ -284,9 +284,11 @@ async function fetchRailwayData(
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    // The proxy requires login; every map that calls it is on a signed-in page.
+    const token = typeof window === 'undefined' ? null : localStorage.getItem('token');
     const response = await fetch(`${apiUrl}/railway/geometry`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify(request),
       signal: controller.signal,
     });

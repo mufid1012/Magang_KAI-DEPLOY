@@ -9,8 +9,10 @@ export const TELEMETRY = {
   MAX_SPEED_MPS: 55, DEVICE_TOLERANCE_MPS: 0.75, SMOOTHING_ALPHA: 0.5,
   REVIEW_KMH: 12, REVIEW_DURATION_MS: 60000, MAX_BATCH: 120, MAX_QUEUE: 1440,
   REQUEST_TIMEOUT_MS: 15000, MAX_BACKOFF_MS: 60000, STOP_TIMEOUT_MS: 45000,
+  // Longer than this without any received sample = phone screen off, app closed or no signal.
+  GPS_GAP_MS: 120000,
 } as const;
-export const REVIEW_LABEL = 'Kecepatan tidak wajar — perlu ditinjau';
+export const REVIEW_LABEL = 'Kecepatan tidak wajar, perlu ditinjau';
 export interface TelemetrySample {
   id: string; capturedAt: number; lat: number; lng: number; accuracy: number; deviceSpeed: number | null;
 }

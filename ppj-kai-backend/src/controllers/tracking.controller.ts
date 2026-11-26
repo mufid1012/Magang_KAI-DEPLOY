@@ -1,10 +1,13 @@
+import { forceStoppedError, ingestBatch, lockTracking, parseBatch, serverRoute, TelemetryError } from '../lib/telemetry';
 import { speedSummary, type SpeedState } from '../../../shared/telemetry';
-import { ingestBatch, lockTracking, parseBatch, TelemetryError } from '../lib/telemetry';
 import { taskScope } from '../lib/accessScope';
 import { parseRoute } from '../../../shared/route';
 import { haversineMeters as distanceMeters } from '../../../shared/geo';
 import { Request, Response } from 'express';
 import prisma from '../config/database';
+import { checkPhoto, PHOTO_FORMAT_MESSAGE } from '../lib/photo';
+import { startWindow } from '../utils/schedule';
+import { audit } from '../lib/audit';
 import { hasWarningRoute, hasOverlappingWarningRoute, haversineMeters, resolveWarningPosition, selectWarningRecipients, WARNING_POSITION_TTL_MS } from '../utils/warningRoute';
 
 // Keep the existing API fields while recipient storage supports any number of sessions.
@@ -58,8 +61,9 @@ export const startTracking = async (req: Request, res: Response) => {
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
       return res.status(400).json({ success: false, message: 'Posisi GPS tidak valid' });
     }
-    if (fotoAwal !== undefined && fotoAwal !== null && (typeof fotoAwal !== 'string' || fotoAwal.length > 7_000_000)) {
-      return res.status(413).json({ success: false, message: 'Foto awal terlalu besar' });
+    const photo = checkPhoto(fotoAwal);
+    if (!photo.ok) {
+      return res.status(photo.status).json({ success: false, message: photo.status === 413 ? 'Foto awal terlalu besar' : PHOTO_FORMAT_MESSAGE });
     }
     const bypassEnabled = process.env.TRACKING_BYPASS_ENABLED !== 'false';
     const useBypass = bypassEnabled && bypassMode === true;
@@ -72,48 +76,33 @@ export const startTracking = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Tugas not found' });
     }
 
-    if (!useBypass && (!fotoAwal || distanceMeters(latitude, longitude, tugas.startPointLat, tugas.startPointLong) > 500)) {
+    if (!useBypass && (!photo.value || distanceMeters(latitude, longitude, tugas.startPointLat, tugas.startPointLong) > 500)) {
       return res.status(400).json({ success: false, message: 'Foto awal dan posisi dalam radius 500 meter dari titik awal wajib dipenuhi' });
     }
-    // Reject if task is already missed or cancelled
+    // Reject if task is already missed
     if (!useBypass && tugas.status === 'missed') {
       return res.status(400).json({ success: false, message: 'Tugas sudah melewati batas waktu (missed). Tidak dapat memulai tracking.' });
-    }
-    if (tugas.status === 'cancelled') {
-      return res.status(400).json({ success: false, message: 'Tugas sudah dibatalkan.' });
     }
     if (tugas.status !== 'pending' && !(useBypass && tugas.status === 'missed')) {
       return res.status(409).json({ success: false, message: 'Tugas tidak dapat memulai tracking pada status saat ini' });
     }
 
-    // Time-window validation: only allow start within 1 hour before and 1 hour after jam_mulai
-    if (!useBypass && tugas.jamMulai) {
-      const [hours, minutes] = tugas.jamMulai.split(':').map(Number);
-      if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours === undefined || minutes === undefined || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    // Start only within 1 hour either side of jam mulai (legacy tasks without a time: their own day).
+    if (!useBypass) {
+      const window = startWindow(tugas.tanggal, tugas.jamMulai);
+      if (!window) {
         return res.status(500).json({ success: false, message: 'Jadwal tugas tidak valid' });
       }
-      const tugasDate = new Date(tugas.tanggal);
-
-      // Build scheduled start time in WIB (UTC+7)
-      // tugas.tanggal is a Date object from Prisma — use its UTC date parts since it's stored as DATE
-      const scheduledTime = new Date(Date.UTC(
-        tugasDate.getUTCFullYear(),
-        tugasDate.getUTCMonth(),
-        tugasDate.getUTCDate(),
-        hours - 7, // Convert WIB to UTC
-        minutes
-      ));
-
-      const windowStart = new Date(scheduledTime.getTime() - 60 * 60 * 1000); // 1 hour before
-      const windowEnd = new Date(scheduledTime.getTime() + 60 * 60 * 1000);   // 1 hour after
+      const { opensAt: windowStart, closesAt: windowEnd } = window;
       const now = new Date();
 
       if (now < windowStart) {
-        const windowStartWIB = new Date(windowStart.getTime() + 7 * 60 * 60 * 1000);
-        const timeStr = windowStartWIB.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false });
+        // Format in WIB explicitly; the server's own time zone must not shift the clock.
+        const day = windowStart.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' });
+        const timeStr = `${day}, ${windowStart.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Jakarta' })}`;
         return res.status(400).json({
           success: false,
-          message: `Tracking belum bisa dimulai. Dibuka mulai pukul ${timeStr} WIB.`,
+          message: `Tracking belum bisa dimulai. Dibuka mulai ${timeStr} WIB.`,
           code: 'TOO_EARLY',
           windowStart: windowStart.toISOString(),
           windowEnd: windowEnd.toISOString()
@@ -121,6 +110,8 @@ export const startTracking = async (req: Request, res: Response) => {
       }
 
       if (now > windowEnd) {
+        // Don't wait for the 5-minute scheduler: dashboards should show "missed" now.
+        await prisma.tugasPpj.updateMany({ where: { id: tugas.id, status: 'pending' }, data: { status: 'missed' } });
         return res.status(400).json({
           success: false,
           message: 'Waktu tracking telah berakhir. Tugas akan ditandai sebagai tidak selesai.',
@@ -134,6 +125,11 @@ export const startTracking = async (req: Request, res: Response) => {
 
 
     const tracking = await prisma.$transaction(async tx => {
+      // Same user-row lock as account updates: a deactivation and a start cannot interleave,
+      // and two starts by one PPJ are serialized so only one inspection runs at a time.
+      const [account] = await tx.$queryRaw<{ is_active: number }[]>`SELECT is_active FROM users WHERE id = ${userId} FOR UPDATE`;
+      if (!account?.is_active) throw new Error('ACCOUNT_INACTIVE');
+      if (await tx.tugasPpj.count({ where: { assignedTo: userId, status: 'in_progress' } })) throw new Error('ANOTHER_TRACKING_ACTIVE');
       const claimed = await tx.tugasPpj.updateMany({
         where: {
           id: tugas.id,
@@ -151,7 +147,7 @@ export const startTracking = async (req: Request, res: Response) => {
           startLat: latitude,
           startLong: longitude,
           status: 'started',
-          fotoAwal: fotoAwal || null,
+          fotoAwal: photo.value,
           telemetryTest: useBypass,
         },
       });
@@ -161,6 +157,12 @@ export const startTracking = async (req: Request, res: Response) => {
   } catch (error) {
     if (error instanceof Error && error.message === 'TRACKING_ALREADY_STARTED') {
       return res.status(409).json({ success: false, message: 'Tracking tugas sudah dimulai' });
+    }
+    if (error instanceof Error && error.message === 'ANOTHER_TRACKING_ACTIVE') {
+      return res.status(409).json({ success: false, code: 'ANOTHER_TRACKING_ACTIVE', message: 'Masih ada inspeksi lain yang berjalan. Selesaikan inspeksi itu dulu.' });
+    }
+    if (error instanceof Error && error.message === 'ACCOUNT_INACTIVE') {
+      return res.status(401).json({ success: false, message: 'Akun sudah dihapus atau dinonaktifkan' });
     }
     console.error('Start tracking error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });
@@ -189,7 +191,11 @@ export const updateTracking = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Posisi GPS tidak valid' });
     }
     const tracking = await prisma.tracking.findFirst({where: {id, status: 'started', tugas: {assignedTo: userId, status: 'in_progress'}}, select: {id: true}});
-    if (!tracking) return res.status(404).json({success: false, message: 'Tracking session not found'});
+    if (!tracking) {
+      const forced = await forceStoppedError(prisma, id, userId);
+      if (forced) throw forced;
+      return res.status(404).json({success: false, message: 'Tracking session not found'});
+    }
     await prisma.$transaction(async tx => {
       const locked = await lockTracking(tx, id, userId);
       // Do not replace timestamped telemetry with an un-timestamped legacy position.
@@ -198,7 +204,7 @@ export const updateTracking = async (req: Request, res: Response) => {
 
     return res.json({ success: true });
   } catch (error) {
-    if (error instanceof TelemetryError) return res.status(error.status).json({ success: false, message: error.message });
+    if (error instanceof TelemetryError) return res.status(error.status).json({ success: false, message: error.message, code: error.code });
     console.error('Update tracking error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });
   }
@@ -220,8 +226,9 @@ export const stopTracking = async (req: Request, res: Response) => {
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
       return res.status(400).json({ success: false, message: 'Posisi GPS tidak valid' });
     }
-    if (fotoSelesai !== undefined && fotoSelesai !== null && (typeof fotoSelesai !== 'string' || fotoSelesai.length > 7_000_000)) {
-      return res.status(413).json({ success: false, message: 'Foto akhir terlalu besar' });
+    const photo = checkPhoto(fotoSelesai);
+    if (!photo.ok) {
+      return res.status(photo.status).json({ success: false, message: photo.status === 413 ? 'Foto akhir terlalu besar' : PHOTO_FORMAT_MESSAGE });
     }
 
     const tracking = await prisma.tracking.findFirst({
@@ -234,11 +241,20 @@ export const stopTracking = async (req: Request, res: Response) => {
     });
 
     if (!tracking) {
+      const forced = await forceStoppedError(prisma, trackingId, userId);
+      if (forced) throw forced;
       return res.status(404).json({ success: false, message: 'Tracking session not found' });
     }
 
-    if (!useBypass && (!fotoSelesai || distanceMeters(latitude, longitude, tracking.tugas.endPointLat, tracking.tugas.endPointLong) > 500)) {
-      return res.status(400).json({ success: false, message: 'Foto akhir dan posisi dalam radius 500 meter dari titik akhir wajib dipenuhi' });
+    // Blocked track or an emergency: the PPJ may end before the end point with a reason.
+    // The photo stays required, and the manager sees the reason when reviewing.
+    const earlyStopReason = typeof req.body.earlyStopReason === 'string' ? req.body.earlyStopReason.trim() : '';
+    if (earlyStopReason && (earlyStopReason.length < 5 || earlyStopReason.length > 500)) {
+      return res.status(400).json({ success: false, message: 'Alasan mengakhiri lebih awal 5 sampai 500 karakter' });
+    }
+    const atEnd = useBypass || distanceMeters(latitude, longitude, tracking.tugas.endPointLat, tracking.tugas.endPointLong) <= 500;
+    if (!useBypass && (!photo.value || (!atEnd && !earlyStopReason))) {
+      return res.status(400).json({ success: false, message: 'Foto akhir dan posisi dalam radius 500 meter dari titik akhir wajib dipenuhi, atau isi alasan mengakhiri lebih awal' });
     }
 
     // Calculate duration in seconds
@@ -250,7 +266,6 @@ export const stopTracking = async (req: Request, res: Response) => {
     if (routePath !== undefined && routePath !== null && !parsedRoute) {
       return res.status(400).json({ success: false, message: 'Rute GPS tidak valid' });
     }
-    const routePathStr = parsedRoute ? JSON.stringify(parsedRoute) : null;
 
     const finalLoss = req.body.reportedLoss ?? 0;
     if (!Number.isSafeInteger(finalLoss) || finalLoss < 0 || finalLoss > 2147483647) throw new TelemetryError(400, 'Metadata kehilangan sampel tidak valid');
@@ -264,6 +279,9 @@ export const stopTracking = async (req: Request, res: Response) => {
         locked.telemetryTest = true;
       }
       if (finalSamples.length) await ingestBatch(tx, locked, finalSamples, Date.now());
+      // Device trail lost (reload, cleared storage): fall back to what the server received.
+      const route = parsedRoute && parsedRoute.length >= 2 ? parsedRoute : await serverRoute(tx, tracking.id);
+      const routePathStr = route.length >= 2 ? JSON.stringify(route) : null;
       const laporanCount = await tx.laporan.count({ where: { trackingId: tracking.id } });
       const stopped = await tx.tracking.updateMany({
         where: { id: tracking.id, status: 'started' },
@@ -273,8 +291,10 @@ export const stopTracking = async (req: Request, res: Response) => {
           endLong: longitude,
           durasi: durasiDetik,
           status: 'stopped',
-          fotoSelesai: fotoSelesai || null,
+          fotoSelesai: photo.value,
           routePath: routePathStr,
+          // Only recorded when it actually mattered: an end inside the geofence is a normal stop.
+          earlyStopReason: earlyStopReason && !atEnd ? earlyStopReason : null,
           approvalStatus: 'not_approved',
           safetyStatus: laporanCount > 0 ? 'tidak_aman' : 'aman',
           approvedAt: null,
@@ -295,7 +315,7 @@ export const stopTracking = async (req: Request, res: Response) => {
     if (error instanceof Error && ['TRACKING_ALREADY_STOPPED', 'TRACKING_STATE_CHANGED'].includes(error.message)) {
       return res.status(409).json({ success: false, message: 'Status tracking sudah berubah. Muat ulang data tugas.' });
     }
-    if (error instanceof TelemetryError) return res.status(error.status).json({ success: false, message: error.message });
+    if (error instanceof TelemetryError) return res.status(error.status).json({ success: false, message: error.message, code: error.code });
     console.error('Stop tracking error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });
   }
@@ -314,6 +334,7 @@ export const approveTracking = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Status keselamatan harus aman atau tidak_aman' });
     }
 
+    // Approver is the PPJ's manager: the super admin or KUPT that manages them.
     const tracking = await prisma.tracking.findFirst({
       where: { id: trackingId, tugas: { user: { managerId: adminId } } },
     });
@@ -327,25 +348,145 @@ export const approveTracking = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Hasil tracking sudah disetujui' });
     }
 
-    const [data] = await prisma.$transaction([
-      prisma.tracking.update({
-        where: { id: trackingId },
-        data: {
-          approvalStatus: 'approved',
-          safetyStatus,
-          approvedAt: new Date(),
-          approvedBy: adminId,
-        },
-      }),
-      prisma.tugasPpj.update({
-        where: { id: tracking.tugasId },
+    // Conditional claims: a double click or two approvers cannot overwrite each other.
+    // Legacy tasks may already be 'completed' while their tracking is unapproved.
+    const data = await prisma.$transaction(async tx => {
+      const claimed = await tx.tracking.updateMany({
+        where: { id: trackingId, status: 'stopped', approvalStatus: 'not_approved', tugas: { user: { managerId: adminId } } },
+        data: { approvalStatus: 'approved', safetyStatus, approvedAt: new Date(), approvedBy: adminId },
+      });
+      if (claimed.count !== 1) throw new Error('APPROVAL_STATE_CHANGED');
+      const task = await tx.tugasPpj.updateMany({
+        where: { id: tracking.tugasId, status: { in: ['need_approval', 'completed'] } },
         data: { status: 'completed' },
-      }),
-    ]);
+      });
+      if (task.count !== 1) throw new Error('APPROVAL_STATE_CHANGED');
+      await audit(tx, adminId, 'tracking.approve', 'tracking', trackingId, { safetyStatus });
+      return tx.tracking.findUniqueOrThrow({ where: { id: trackingId } });
+    });
     return res.json({ success: true, message: 'Hasil tracking berhasil disetujui', data, tugasStatus: 'completed' });
   } catch (error) {
+    if (error instanceof Error && error.message === 'APPROVAL_STATE_CHANGED') {
+      return res.status(409).json({ success: false, message: 'Status hasil tracking sudah berubah. Muat ulang data tugas.' });
+    }
     console.error('Approve tracking error:', error);
     return res.status(500).json({ success: false, message: 'Gagal menyetujui hasil tracking' });
+  }
+};
+
+/**
+ * The managing admin/KUPT turns a result down (bypass misuse, wrong photo, route not walked).
+ * Nothing is deleted: the tracking keeps its data with the reason, and the task closes as
+ * 'rejected'. A re-inspection is a new task.
+ */
+export const rejectTracking = async (req: Request, res: Response) => {
+  try {
+    const trackingId = Number(req.params.id);
+    const managerId = (req as any).user.id as number;
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+    if (reason.length < 5 || reason.length > 500) {
+      return res.status(400).json({ success: false, message: 'Alasan penolakan wajib diisi, 5 sampai 500 karakter' });
+    }
+    const rejected = await prisma.$transaction(async tx => {
+      const tracking = await tx.tracking.findFirst({
+        where: { id: trackingId, status: 'stopped', approvalStatus: 'not_approved', tugas: { user: { managerId } } },
+        select: { tugasId: true },
+      });
+      if (!tracking) return false;
+      const claimed = await tx.tracking.updateMany({
+        where: { id: trackingId, status: 'stopped', approvalStatus: 'not_approved' },
+        data: { approvalStatus: 'rejected', rejectedBy: managerId, rejectedAt: new Date(), rejectionReason: reason },
+      });
+      const task = await tx.tugasPpj.updateMany({ where: { id: tracking.tugasId, status: { in: ['need_approval', 'completed'] } }, data: { status: 'rejected' } });
+      if (claimed.count !== 1 || task.count !== 1) throw new Error('APPROVAL_STATE_CHANGED');
+      await audit(tx, managerId, 'tracking.reject', 'tracking', trackingId, { reason });
+      return true;
+    });
+    if (!rejected) return res.status(404).json({ success: false, message: 'Hasil yang menunggu approval tidak ditemukan dalam kelolaan Anda' });
+    return res.json({ success: true, message: 'Hasil inspeksi ditolak', tugasStatus: 'rejected' });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'APPROVAL_STATE_CHANGED') {
+      return res.status(409).json({ success: false, message: 'Status hasil tracking sudah berubah. Muat ulang data tugas.' });
+    }
+    console.error('Reject tracking error:', error);
+    return res.status(500).json({ success: false, message: 'Gagal menolak hasil tracking' });
+  }
+};
+
+/**
+ * The managing admin/KUPT ends a session the PPJ cannot finish (dead phone, lost signal,
+ * account issue). The task moves to need_approval so the result is still reviewed.
+ * The route comes from server-received GPS samples because the device copy is unavailable;
+ * end time is the last received sample, so idle hours after the phone died are not counted.
+ */
+export const forceStopTracking = async (req: Request, res: Response) => {
+  try {
+    const trackingId = Number(req.params.id);
+    const managerId = (req as any).user.id as number;
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+    if (!Number.isSafeInteger(trackingId) || trackingId <= 0) {
+      return res.status(400).json({ success: false, message: 'ID tracking tidak valid' });
+    }
+    if (reason.length < 5 || reason.length > 500) {
+      return res.status(400).json({ success: false, message: 'Alasan wajib diisi, 5 sampai 500 karakter' });
+    }
+
+    const stopped = await prisma.$transaction(async tx => {
+      // Same lock as PPJ update/stop, so a simultaneous normal stop cannot interleave.
+      await tx.$queryRaw`SELECT id FROM tracking WHERE id = ${trackingId} FOR UPDATE`;
+      const tracking = await tx.tracking.findFirst({
+        where: { id: trackingId, status: 'started', tugas: { status: 'in_progress', user: { managerId } } },
+        select: { id: true, tugasId: true, startTime: true, startLat: true, startLong: true, endLat: true, endLong: true },
+      });
+      if (!tracking) return null;
+
+      const route = await serverRoute(tx, trackingId);
+      const lastSample = await tx.trackingSample.findFirst({
+        where: { trackingId, quality: { not: 'before_start' } },
+        orderBy: { capturedAt: 'desc' },
+        select: { capturedAt: true, latitude: true, longitude: true },
+      });
+      const now = new Date();
+      const endTime = lastSample && tracking.startTime && lastSample.capturedAt > tracking.startTime ? lastSample.capturedAt : now;
+      const durasi = tracking.startTime ? Math.max(0, Math.round((endTime.getTime() - tracking.startTime.getTime()) / 1000)) : 0;
+      const laporanCount = await tx.laporan.count({ where: { trackingId } });
+
+      const updated = await tx.tracking.updateMany({
+        where: { id: trackingId, status: 'started' },
+        data: {
+          status: 'stopped',
+          endTime,
+          durasi,
+          endLat: tracking.endLat ?? lastSample?.latitude ?? tracking.startLat,
+          endLong: tracking.endLong ?? lastSample?.longitude ?? tracking.startLong,
+          fotoSelesai: null,
+          routePath: route.length >= 2 ? JSON.stringify(route) : null,
+          approvalStatus: 'not_approved',
+          safetyStatus: laporanCount > 0 ? 'tidak_aman' : 'aman',
+          approvedAt: null,
+          approvedBy: null,
+          forcedStopBy: managerId,
+          forcedStopAt: now,
+          forcedStopReason: reason,
+        },
+      });
+      if (updated.count !== 1) throw new Error('TRACKING_STATE_CHANGED');
+      const task = await tx.tugasPpj.updateMany({ where: { id: tracking.tugasId, status: 'in_progress' }, data: { status: 'need_approval' } });
+      if (task.count !== 1) throw new Error('TRACKING_STATE_CHANGED');
+      await audit(tx, managerId, 'tracking.force_stop', 'tracking', trackingId, { reason });
+      return { tugasId: tracking.tugasId, forcedStopAt: now };
+    });
+
+    if (!stopped) {
+      return res.status(404).json({ success: false, message: 'Inspeksi aktif tidak ditemukan dalam kelolaan Anda' });
+    }
+    return res.json({ success: true, message: 'Inspeksi dihentikan paksa dan menunggu approval', tugasStatus: 'need_approval', data: stopped });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'TRACKING_STATE_CHANGED') {
+      return res.status(409).json({ success: false, message: 'Status inspeksi sudah berubah. Muat ulang data tugas.' });
+    }
+    console.error('Force stop tracking error:', error);
+    return res.status(500).json({ success: false, message: 'Gagal menghentikan inspeksi' });
   }
 };
 
