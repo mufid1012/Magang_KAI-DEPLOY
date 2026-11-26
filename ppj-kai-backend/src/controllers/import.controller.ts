@@ -1,9 +1,9 @@
-import { parseAssignmentDate } from '../utils/assignmentValidation';
+import { parseAssignmentDate, scheduleProblem } from '../utils/assignmentValidation';
+import { findDuplicateAssignment } from '../lib/taskGuards';
 import type { Response } from 'express';
 import prisma from '../config/database';
 import type { AuthRequest } from '../types/http';
 import { getStationsForUser } from '../lib/accessScope';
-import { ensureMapLocationsTable } from '../lib/mapLocationsTable';
 import ExcelJS from 'exceljs';
 import { STATIONS } from '../../../shared/stations';
 import { findStationMatch, normalizeNipp, normalizeStationName, parseImportTime } from '../utils/importMatching';
@@ -45,7 +45,6 @@ async function getImportInspectionPoints(userId: number, role: string): Promise<
   const points: ImportInspectionPoint[] = STATIONS.map(station => ({ ...station, type: 'Stasiun' }));
   if (role !== 'admin') return points;
 
-  await ensureMapLocationsTable();
   const customLocations = await prisma.mapLocation.findMany({
     where: { createdBy: userId },
     select: { name: true, latitude: true, longitude: true },
@@ -258,12 +257,17 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
       // (contoh 08:00 = 0.333333), bukan string "08:00".
       const jamMulai = parseImportTime(rawJamMulai);
       const jamSelesai = parseImportTime(rawJamSelesai);
-      if (!jamMulai.valid) {
-        results.push({ row: rowNum, status: 'error', message: `Jam Mulai "${String(rawJamMulai)}" tidak valid (gunakan format HH:mm)` });
+      if (!jamMulai.valid || !jamMulai.value) {
+        results.push({ row: rowNum, status: 'error', message: jamMulai.valid ? 'Jam Mulai kosong' : `Jam Mulai "${String(rawJamMulai)}" tidak valid (gunakan format HH:mm)` });
         continue;
       }
       if (!jamSelesai.valid) {
         results.push({ row: rowNum, status: 'error', message: `Jam Selesai "${String(rawJamSelesai)}" tidak valid (gunakan format HH:mm)` });
+        continue;
+      }
+      const problem = scheduleProblem(parsedDate, jamMulai.value, jamSelesai.value);
+      if (problem) {
+        results.push({ row: rowNum, status: 'error', message: problem });
         continue;
       }
 
@@ -273,6 +277,12 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
       // Create tugas
       try {
         await prisma.$transaction(async tx => {
+          // Re-uploading the same file must not create the same assignment twice.
+          if (await findDuplicateAssignment(tx, {
+            assignedTo: petugas.id, tanggal: parsedDate, startPointName: startStation.name,
+            endPointName: endStation.name, jamMulai: jamMulai.value,
+          })) throw new Error('DUPLICATE_ASSIGNMENT');
+
           if (petugas.managerId === null) {
             const claimed = await tx.user.updateMany({
               where: { id: petugas.id, managerId: null },
@@ -309,7 +319,10 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
       } catch (err: any) {
         const message = err.message === 'PETUGAS_ALREADY_MANAGED'
           ? `NIPP "${rawNipp}" baru saja dikelola admin lain`
-          : `Gagal menyimpan: ${err.message}`;
+          : err.message === 'DUPLICATE_ASSIGNMENT'
+            ? `Tugas yang sama untuk NIPP "${rawNipp}" pada tanggal dan jam ini sudah ada`
+            : 'Gagal menyimpan baris ini';
+        if (!['PETUGAS_ALREADY_MANAGED', 'DUPLICATE_ASSIGNMENT'].includes(err.message)) console.error(`Import row ${rowNum} error:`, err);
         results.push({ row: rowNum, status: 'error', message });
       }
     }

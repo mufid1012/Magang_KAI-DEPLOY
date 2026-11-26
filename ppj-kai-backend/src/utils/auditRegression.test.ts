@@ -11,6 +11,10 @@ afterEach(()=>{prisma.userWilayah.findMany=original.assignments;prisma.kategoriT
 test('assignment dates and spreadsheet/manual hours follow the same contract',()=>{
  assert.equal(parseAssignmentDate('2026-02-30'),null);assert.equal(parseAssignmentDate('invalid'),null);
  assert.equal(parseAssignmentDate('2026-10-19')?.toISOString(),'2026-10-19T00:00:00.000Z');
+ // Day-first text would silently become month-first (10 July -> 7 October); a time part shifts a day in WIB.
+ assert.equal(parseAssignmentDate('10/07/2026'),null);assert.equal(parseAssignmentDate('2026-07-10T00:00'),null);
+ assert.equal(parseAssignmentDate(' 2026-07-10 ')?.toISOString(),'2026-07-10T00:00:00.000Z');
+ assert.equal(parseAssignmentDate(46213)?.toISOString(),'2026-07-10T00:00:00.000Z');
  assert.deepEqual(assignmentTimes(1/3,'12:00'),{jamMulai:'08:00',jamSelesai:'12:00'});assert.equal(assignmentTimes('24:01','12:00'),null);
  assert.equal(scheduledStart('2026-10-19','00:30')?.toISOString(),'2026-10-18T17:30:00.000Z');assert.equal(scheduledStart('2026-10-19','bad'),null);
 });

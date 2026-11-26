@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { loadImage } from 'canvas';
 import prisma from '../config/database';
-import { ensureLoginPhotosTable } from '../lib/loginPhotosTable';
 
 const metadata = { id: true, title: true, isActive: true, sortOrder: true, updatedAt: true } as const;
 const orderBy = [{ sortOrder: 'asc' }, { id: 'asc' }] as const;
@@ -44,7 +43,6 @@ async function imagePayload(file?: Express.Multer.File) {
 
 export async function getPublicLoginPhotos(_req: Request, res: Response, next: NextFunction) {
   try {
-    await ensureLoginPhotosTable();
     const photos = await prisma.loginPhoto.findMany({ where: { isActive: true }, select: metadata, orderBy: [...orderBy] });
     return res.set('Cache-Control', 'no-store').json({ success: true, data: photos.map(withUrl) });
   } catch (error) { next(error); }
@@ -52,7 +50,6 @@ export async function getPublicLoginPhotos(_req: Request, res: Response, next: N
 
 export async function getLoginPhotos(_req: Request, res: Response, next: NextFunction) {
   try {
-    await ensureLoginPhotosTable();
     const photos = await prisma.loginPhoto.findMany({ select: metadata, orderBy: [...orderBy] });
     return res.set('Cache-Control', 'no-store').json({ success: true, data: photos.map(withUrl) });
   } catch (error) { next(error); }
@@ -63,7 +60,6 @@ export async function getLoginPhotoImage(req: Request, res: Response, next: Next
   const id = photoId(req);
   if (!id) return res.status(400).json({ success: false, message: 'ID foto tidak valid' });
   try {
-    await ensureLoginPhotosTable();
     const photo = await prisma.loginPhoto.findUnique({ where: { id }, select: { image: true, mimeType: true } });
     if (!photo) return res.status(404).json({ success: false, message: 'Foto tidak ditemukan' });
     return res.set({ 'Content-Type': photo.mimeType, 'Cache-Control': 'no-store', 'Cross-Origin-Resource-Policy': 'cross-origin' }).send(photo.image);
@@ -77,7 +73,6 @@ export async function createLoginPhoto(req: Request, res: Response, next: NextFu
     data = { ...payload(req), ...await imagePayload(req.file) };
   } catch (error) { return res.status(400).json({ success: false, message: (error as Error).message }); }
   try {
-    await ensureLoginPhotosTable();
     const photo = await prisma.loginPhoto.create({ data: { ...data, image: data.image!, mimeType: data.mimeType! }, select: metadata });
     return res.status(201).json({ success: true, data: withUrl(photo) });
   } catch (error) { next(error); }
@@ -90,7 +85,6 @@ export async function updateLoginPhoto(req: Request, res: Response, next: NextFu
   try { data = { ...payload(req), ...await imagePayload(req.file) }; }
   catch (error) { return res.status(400).json({ success: false, message: (error as Error).message }); }
   try {
-    await ensureLoginPhotosTable();
     const photo = await prisma.loginPhoto.update({ where: { id }, data, select: metadata });
     return res.json({ success: true, data: withUrl(photo) });
   } catch (error) {
@@ -103,7 +97,6 @@ export async function deleteLoginPhoto(req: Request, res: Response, next: NextFu
   const id = photoId(req);
   if (!id) return res.status(400).json({ success: false, message: 'ID foto tidak valid' });
   try {
-    await ensureLoginPhotosTable();
     await prisma.loginPhoto.delete({ where: { id } });
     return res.json({ success: true, message: 'Foto login dihapus' });
   } catch (error) {

@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import prisma from '../config/database';
 import type { AuthRequest } from '../types/http';
+import { audit } from '../lib/audit';
 
 
 
@@ -46,8 +47,8 @@ export const createKategoriTemuan = async (req: AuthRequest, res: Response) => {
 export const updateKategoriTemuan = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const { label, icon, color, sortOrder } = req.body;
-    if ((label !== undefined && (typeof label !== 'string' || !label.trim() || label.length > 100)) || (icon !== undefined && (typeof icon !== 'string' || !icon.trim() || icon.length > 50)) || (color !== undefined && (typeof color !== 'string' || !color || color.length > 20)) || (sortOrder !== undefined && (!Number.isSafeInteger(sortOrder) || sortOrder < 0))) {
+    const { label, icon, color, sortOrder, isActive } = req.body;
+    if ((isActive !== undefined && typeof isActive !== 'boolean') || (label !== undefined && (typeof label !== 'string' || !label.trim() || label.length > 100)) || (icon !== undefined && (typeof icon !== 'string' || !icon.trim() || icon.length > 50)) || (color !== undefined && (typeof color !== 'string' || !color || color.length > 20)) || (sortOrder !== undefined && (!Number.isSafeInteger(sortOrder) || sortOrder < 0))) {
       return res.status(400).json({ success: false, message: 'Data kategori tidak valid' });
     }
 
@@ -63,6 +64,8 @@ export const updateKategoriTemuan = async (req: AuthRequest, res: Response) => {
         ...(icon !== undefined && { icon }),
         ...(color !== undefined && { color }),
         ...(sortOrder !== undefined && { sortOrder }),
+        // Turning a category off hides it from PPJ while old reports keep its label.
+        ...(isActive !== undefined && { isActive }),
       },
     });
 
@@ -77,8 +80,11 @@ export const reorderKategoriTemuan = async (req: AuthRequest, res: Response) => 
   try {
     const { order } = req.body as { order?: number[] };
 
-    if (!Array.isArray(order) || order.length === 0 || !order.every(id => Number.isInteger(id))) {
+    if (!Array.isArray(order) || order.length === 0 || order.length > 500 || !order.every(id => Number.isSafeInteger(id) && id > 0) || new Set(order).size !== order.length) {
       return res.status(400).json({ success: false, message: 'Body harus berisi { order: number[] } dari id kategori' });
+    }
+    if (await prisma.kategoriTemuan.count({ where: { id: { in: order } } }) !== order.length) {
+      return res.status(400).json({ success: false, message: 'Sebagian kategori tidak ditemukan. Muat ulang daftar kategori.' });
     }
 
     await prisma.$transaction(
@@ -109,7 +115,10 @@ export const deleteKategoriTemuan = async (req: AuthRequest, res: Response) => {
 
     // Hard-delete: remove the row entirely. Laporan store jenisTemuan as a plain
     // string (no FK), and the frontend falls back to the raw key for old records.
-    await prisma.kategoriTemuan.delete({ where: { id: Number(id) } });
+    await prisma.$transaction(async tx => {
+      await tx.kategoriTemuan.delete({ where: { id: Number(id) } });
+      await audit(tx, req.user!.id, 'kategori.delete', 'kategori', existing.id, { key: existing.key, label: existing.label });
+    });
 
     return res.json({ success: true, message: 'Kategori dihapus' });
   } catch (error) {

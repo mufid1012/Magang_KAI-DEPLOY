@@ -1,11 +1,14 @@
 import { taskScope } from '../lib/accessScope';
-import { parseAssignmentDate, assignmentTimes } from '../utils/assignmentValidation';
+import { parseAssignmentDate, assignmentTimes, scheduleProblem } from '../utils/assignmentValidation';
+import { findDuplicateAssignment } from '../lib/taskGuards';
+import { audit } from '../lib/audit';
 import type { Response } from 'express';
 import prisma from '../config/database';
 import type { AuthRequest } from '../types/http';
 import { getStationsForUser, buildStationFilter } from '../lib/accessScope';
-import { ensureMapLocationsTable } from '../lib/mapLocationsTable';
 import { resolveTugasStatus } from '../utils/tugasStatus';
+import { loadGpsGaps } from '../lib/telemetry';
+import { STATIONS } from '../../../shared/stations';
 
 
 
@@ -19,17 +22,24 @@ export const getAllTugas = async (req: AuthRequest, res: Response) => {
       ? buildStationFilter(stations)
       : { user: { managerId: userId } };
 
+    const petugasId = req.query.petugasId === undefined ? undefined : Number(req.query.petugasId);
+    if (petugasId !== undefined && (!Number.isSafeInteger(petugasId) || petugasId <= 0 || petugasId > 2147483647)) {
+      return res.status(400).json({ success: false, message: 'ID petugas tidak valid' });
+    }
+
     const tugas = await prisma.tugasPpj.findMany({
-      where: { ...whereClause, ...(req.query.petugasId ? { assignedTo: Number(req.query.petugasId) } : {}) },
+      where: { ...whereClause, ...(petugasId ? { assignedTo: petugasId } : {}) },
       include: {
         user: { select: { id: true, nama: true, nipp: true, jabatan: true, division: true, workArea: true } },
         tracking: {
           orderBy: { createdAt: 'desc' as const },
           take: 1,
-          ...(req.query.summary === 'true' ? { select: {
-            id: true, startTime: true, endTime: true, durasi: true, status: true, approvalStatus: true, safetyStatus: true, approvedAt: true,
-            laporan: { select: { id: true, jenisTemuan: true, deskripsi: true, latitude: true, longitude: true, createdAt: true } },
-          } } : { include: { laporan: true } }),
+          // Start/stop photos (up to 7 MB each), the route and telemetry come from GET /admin/tugas/:id.
+          // Without summary the petugas history still needs report photos, so only those are added.
+          select: {
+            id: true, startTime: true, endTime: true, durasi: true, status: true, approvalStatus: true, safetyStatus: true, approvedAt: true, forcedStopAt: true, rejectionReason: true, earlyStopReason: true,
+            laporan: { select: { id: true, jenisTemuan: true, deskripsi: true, latitude: true, longitude: true, createdAt: true, ...(req.query.summary === 'true' ? {} : { foto: true }) } },
+          },
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -49,30 +59,29 @@ export const createTugas = async (req: AuthRequest, res: Response) => {
   try {
     const managerId = req.user!.id;
     const role = req.user!.role;
+    // Client coordinates (startPointLat etc.) are ignored: points are resolved from the
+    // station catalog or a registered MAP point so the PPJ geofence matches the name.
     const {
-      jalur, tanggal, startPointLat, startPointLong, endPointLat, endPointLong,
-      startPointName, endPointName, startMapLocationId, endMapLocationId,
+      jalur, tanggal, startPointName, endPointName, startMapLocationId, endMapLocationId,
       jamMulai, jamSelesai, assignedTo,
     } = req.body;
 
-    if (typeof jalur !== 'string' || !jalur.trim() || jalur.length > 200 || !tanggal || [startPointLat,startPointLong,endPointLat,endPointLong].some(value => value === null || value === undefined || value === '') || !Number.isSafeInteger(Number(assignedTo)) || Number(assignedTo) <= 0) {
+    if (typeof jalur !== 'string' || !jalur.trim() || jalur.length > 200 || !tanggal || !Number.isSafeInteger(Number(assignedTo)) || Number(assignedTo) <= 0) {
       return res.status(400).json({ success: false, message: 'Field wajib tidak lengkap' });
     }
 
     const parsedDate = parseAssignmentDate(tanggal);
     const times = assignmentTimes(jamMulai, jamSelesai);
     if (!parsedDate || !times) return res.status(400).json({ success: false, message: 'Tanggal atau jam tugas tidak valid' });
+    const problem = scheduleProblem(parsedDate, times.jamMulai, times.jamSelesai);
+    if (problem) return res.status(400).json({ success: false, message: problem });
 
-    let resolvedStart = {
-      name: String(startPointName || ''),
-      latitude: Number(startPointLat),
-      longitude: Number(startPointLong),
+    const catalogPoint = (name: unknown) => {
+      const station = typeof name === 'string' ? STATIONS.find(item => item.name === name.trim()) : undefined;
+      return station ? { name: station.name, latitude: station.lat, longitude: station.lng } : null;
     };
-    let resolvedEnd = {
-      name: String(endPointName || ''),
-      latitude: Number(endPointLat),
-      longitude: Number(endPointLong),
-    };
+    let resolvedStart = catalogPoint(startPointName) ?? { name: '', latitude: NaN, longitude: NaN };
+    let resolvedEnd = catalogPoint(endPointName) ?? { name: '', latitude: NaN, longitude: NaN };
 
     const requestedMapLocationIds = [startMapLocationId, endMapLocationId]
       .filter((value): value is string | number => value !== undefined && value !== null && value !== '')
@@ -83,7 +92,6 @@ export const createTugas = async (req: AuthRequest, res: Response) => {
         return res.status(400).json({ success: false, message: 'Titik MAP tidak valid' });
       }
 
-      await ensureMapLocationsTable();
       const registeredLocations = await prisma.mapLocation.findMany({
         where: { id: { in: requestedMapLocationIds }, createdBy: managerId },
       });
@@ -101,24 +109,18 @@ export const createTugas = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    if (
-      ![resolvedStart.latitude, resolvedStart.longitude, resolvedEnd.latitude, resolvedEnd.longitude].every(Number.isFinite) ||
-      Math.abs(resolvedStart.latitude) > 90 || Math.abs(resolvedEnd.latitude) > 90 ||
-      Math.abs(resolvedStart.longitude) > 180 || Math.abs(resolvedEnd.longitude) > 180
-    ) {
-      return res.status(400).json({ success: false, message: 'Koordinat titik pengecekan tidak valid' });
+    if (!resolvedStart.name || !resolvedEnd.name) {
+      return res.status(400).json({ success: false, message: 'Pilih titik awal dan akhir dari daftar stasiun atau titik MAP' });
     }
 
-    if ((resolvedStart.name && resolvedStart.name === resolvedEnd.name) || (resolvedStart.latitude === resolvedEnd.latitude && resolvedStart.longitude === resolvedEnd.longitude)) {
+    if (resolvedStart.name === resolvedEnd.name || (resolvedStart.latitude === resolvedEnd.latitude && resolvedStart.longitude === resolvedEnd.longitude)) {
       return res.status(400).json({ success: false, message: 'Titik awal dan akhir tidak boleh sama' });
     }
     // KUPT: validate that station names are within their wilayah
     if (role === 'kupt') {
       const stations = await getStationsForUser(managerId, role);
       if (stations) {
-        const startOk = !resolvedStart.name || stations.includes(resolvedStart.name);
-        const endOk = !resolvedEnd.name || stations.includes(resolvedEnd.name);
-        if (!startOk || !endOk) {
+        if (!stations.includes(resolvedStart.name) || !stations.includes(resolvedEnd.name)) {
           return res.status(403).json({ success: false, message: 'Stasiun di luar wilayah Anda' });
         }
       }
@@ -130,6 +132,11 @@ export const createTugas = async (req: AuthRequest, res: Response) => {
     });
 
     if (!petugasCheck) return res.status(403).json({ success: false, message: 'Petugas tidak ditemukan dalam daftar kelola Anda' });
+    if (await findDuplicateAssignment(prisma, {
+      assignedTo: Number(assignedTo), tanggal: parsedDate, startPointName: resolvedStart.name, endPointName: resolvedEnd.name, jamMulai: times.jamMulai,
+    })) {
+      return res.status(409).json({ success: false, message: 'Tugas yang sama untuk petugas ini pada tanggal dan jam tersebut sudah ada' });
+    }
 
     const tugas = await prisma.tugasPpj.create({
       data: {
@@ -164,9 +171,23 @@ export const deleteTugas = async (req: AuthRequest, res: Response) => {
     // Check if task belongs to a managed user
     const tugas = await prisma.tugasPpj.findFirst({
       where: { id: Number(id), user: { managerId } },
+      include: { tracking: { orderBy: { createdAt: 'desc' }, take: 1, select: { status: true, approvalStatus: true } } },
     });
 
     if (!tugas) return res.status(403).json({ success: false, message: 'Tugas tidak ditemukan atau tidak diizinkan' });
+
+    // Do not pull a running inspection from under the PPJ, nor discard one awaiting review.
+    const effectiveStatus = resolveTugasStatus(tugas.status, tugas.tracking);
+    if (effectiveStatus === 'in_progress' || tugas.tracking[0]?.status === 'started') {
+      return res.status(409).json({ success: false, message: 'Tugas sedang dikerjakan petugas dan tidak dapat dihapus' });
+    }
+    if (effectiveStatus === 'need_approval') {
+      return res.status(409).json({ success: false, message: 'Tugas menunggu approval. Approve hasil inspeksi sebelum menghapus tugas.' });
+    }
+    // Photos, findings and the GPS trail are the inspection record; deleting would erase it for good.
+    if (tugas.tracking.length > 0) {
+      return res.status(409).json({ success: false, message: 'Tugas sudah memiliki hasil inspeksi dan tidak dapat dihapus agar riwayatnya tetap tersimpan.' });
+    }
 
     // KUPT: additionally validate task is within their wilayah
     if (role === 'kupt') {
@@ -180,15 +201,20 @@ export const deleteTugas = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    // Cascade delete: laporan → tracking → tugas
     const tugasId = Number(id);
-    await prisma.$transaction([
-      prisma.laporan.deleteMany({ where: { tracking: { tugasId } } }),
-      prisma.tracking.deleteMany({ where: { tugasId } }),
-      prisma.tugasPpj.delete({ where: { id: tugasId } }),
-    ]);
+    await prisma.$transaction(async tx => {
+      // Delete only while the status is still the one checked, so a PPJ start racing this fails cleanly.
+      // A started task has a tracking row, which also blocks the delete via its foreign key.
+      if (await tx.tracking.count({ where: { tugasId } })) throw new Error('TASK_STATE_CHANGED');
+      const deleted = await tx.tugasPpj.deleteMany({ where: { id: tugasId, status: tugas.status } });
+      if (deleted.count !== 1) throw new Error('TASK_STATE_CHANGED');
+      await audit(tx, managerId, 'task.delete', 'task', tugasId, { jalur: tugas.jalur, tanggal: tugas.tanggal.toISOString().slice(0, 10), assignedTo: tugas.assignedTo, status: tugas.status });
+    });
     return res.json({ success: true, message: 'Tugas dihapus' });
   } catch (error) {
+    if (error instanceof Error && error.message === 'TASK_STATE_CHANGED') {
+      return res.status(409).json({ success: false, message: 'Status tugas baru saja berubah. Muat ulang data tugas.' });
+    }
     console.error('Delete tugas error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });
   }
@@ -201,8 +227,9 @@ export const getAdminTugasById = async (req: AuthRequest, res: Response) => {
     if (!Number.isSafeInteger(id) || id<=0) return res.status(400).json({success:false,message:'ID tugas tidak valid'});
     const scope=await taskScope(req.user!.id,req.user!.role);
     if (!scope) return res.status(403).json({success:false,message:'Access denied'});
-    const task=await prisma.tugasPpj.findFirst({ where:{id,...scope}, include:{ user:{select:{id:true,nama:true,nipp:true,jabatan:true,division:true,workArea:true}}, tracking:{orderBy:{createdAt:'desc'},take:1,include:{laporan:true}}} });
+    const task=await prisma.tugasPpj.findFirst({ where:{id,...scope}, include:{ user:{select:{id:true,nama:true,nipp:true,jabatan:true,division:true,workArea:true}}, tracking:{orderBy:{createdAt:'desc'},take:1,include:{laporan:true,forcedStopper:{select:{nama:true,nipp:true}},rejecter:{select:{nama:true,nipp:true}}}}} });
     if (!task) return res.status(404).json({success:false,message:'Tugas tidak ditemukan'});
-    return res.json({success:true,data:{...task,status:resolveTugasStatus(task.status,task.tracking)}});
+    const tracking=await Promise.all(task.tracking.map(async t=>({...t,gpsGaps:await loadGpsGaps(prisma,t)})));
+    return res.json({success:true,data:{...task,tracking,status:resolveTugasStatus(task.status,task.tracking)}});
   } catch(error) { console.error('Task detail error:',error); return res.status(500).json({success:false,message:'Gagal mengambil detail tugas'}); }
 };

@@ -1,7 +1,7 @@
 # Migrasi database
 
 ## Database baru yang kosong
-Gunakan Node 24, `npm ci` di backend, isi DATABASE_URL, lalu jalankan `npx prisma migrate deploy` dan `npx prisma generate`. Seluruh sembilan migrasi membangun schema terkini; hasilnya diperiksa dengan `prisma migrate diff` pada MySQL 8.0.30.
+Gunakan Node 24, `npm ci` di backend, isi DATABASE_URL, lalu jalankan `npx prisma migrate deploy` dan `npx prisma generate`. Seluruh migrasi di `prisma/migrations` membangun schema terkini; hasilnya diperiksa dengan `prisma migrate diff` pada MySQL 8.0.30.
 
 ## Database yang memiliki riwayat migrasi
 Backup dahulu dan uji pada salinan. Jalankan `npx prisma migrate status`; tinjau migration `20261019120000_complete_legacy_schema`, lalu deploy menggunakan proses rilis biasa. Migration ini menambahkan kolom/tabel yang hilang secara idempoten, memperlebar foto laporan menjadi LONGTEXT dan key laporan menjadi VARCHAR(50), menyamakan default/role petugas lama menjadi ppj, serta melengkapi foreign key manager.
@@ -17,7 +17,7 @@ Tidak ada tabel/baris yang dihapus. Foreign key manager dapat menolak data lama 
 4. Jalankan migration baru pada staging, cek diff menjadi kosong, lalu jalankan suite integrasi pada database khusus test.
 5. Terapkan prosedur yang sudah tervalidasi pada rilis database lama. Simpan backup dan catatan baseline.
 
-Helper pembuat tabel MAP/foto login tetap tersedia untuk kompatibilitas. Helper itu tidak menggantikan migrasi seluruh schema.
+Backend tidak lagi membuat tabel MAP/foto login saat runtime; kedua tabel berasal dari migrasi `20260718170000_add_map_locations` dan `20261014120000_add_login_photos`, sehingga user database produksi tidak memerlukan hak CREATE.
 
 ## Pengujian integrasi
 Suite hanya menerima AUDIT_DATABASE_URL dengan host 127.0.0.1 dan nama database berawalan ppj_audit. Suite membuat fixture; tidak menghapus data aplikasi lain. Jalankan hanya pada instance/database test yang dapat dibuang.
@@ -36,3 +36,9 @@ Pengujian lokal perbaikan ini memakai instance MySQL terpisah pada port 33467. D
 
 ## Telemetri kecepatan PPJ
 Migrasi `20261019150000_tracking_telemetry` bersifat additive: menambah tabel sampel/kejadian beserta indeks, FK cascade ke tracking, dan state/ringkasan serta waktu/accuracy posisi terakhir. Tidak mengubah `routePath` atau mengisi speed data historis. Deploy migrasi dan generate Prisma Client sebelum backend/frontend baru. Metode, API, retensi dan checklist perangkat ada di [TELEMETRY.md](TELEMETRY.md).
+
+## Hentikan paksa inspeksi
+Migrasi `20261115120000_tracking_forced_stop` bersifat additive: menambah kolom nullable `forced_stop_by` (FK ke users, SET NULL), `forced_stop_at`, dan `forced_stop_reason` pada `tracking`. Baris lama tetap bernilai NULL. Deploy migrasi dan generate Prisma Client sebelum backend baru, karena endpoint `POST /api/admin/tracking/:id/force-stop` dan PDF membaca kolom ini.
+
+## Tolak hasil, akhiri lebih awal, cabut token, log audit
+Migrasi `20261126120000_review_audit_token` bersifat additive: `users.token_version` (default 0), kolom nullable `rejected_by` (FK SET NULL), `rejected_at`, `rejection_reason`, `early_stop_reason` pada `tracking`, serta tabel baru `admin_audit_log`. Tidak ada data lama yang diubah; token yang sudah beredar tetap sah sampai password akun diganti. Deploy migrasi dan generate Prisma Client sebelum backend baru, karena login, middleware auth, approval, dan PDF membaca kolom ini.

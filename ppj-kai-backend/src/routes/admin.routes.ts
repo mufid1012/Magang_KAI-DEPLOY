@@ -2,16 +2,17 @@ import { validatePositiveParam } from '../middleware/params';
 import { getAdminTugasById } from '../controllers/assignment.controller';
 import { Router } from 'express';
 import multer from 'multer';
-import { requireAuth, requireAdmin, requireAdminLike, requireCanWrite } from '../middleware/auth.middleware';
+import { requireAuth, requireAdmin, requireAdminLike, requireCanWrite, requireRole } from '../middleware/auth.middleware';
+import { createQcNote, deleteQcNote, getQcNotes, getQcSummary } from '../controllers/qc.controller';
 import {
   getStats, getAllPetugas, getAvailablePetugas, addPetugasToManager,
-  removePetugasFromManager, getAllTugas, createTugas, deleteTugas, getAllEmergency,
-  getAllUsers, createUser, updateUser, deleteUser, getAllWilayah, getLivePositions,
+  removePetugasFromManager, getAllTugas, createTugas, deleteTugas, getAllEmergency, getEmergencyPhoto, updateEmergencyStatus,
+  getAllUsers, createUser, updateUser, deleteUser, getAllWilayah, getLivePositions, getAuditLog,
   downloadTugasTemplate, importTugasFromExcel,
   getKategoriTemuan, createKategoriTemuan, updateKategoriTemuan, deleteKategoriTemuan,
   reorderKategoriTemuan,
 } from '../controllers/admin.controller';
-import { approveTracking } from '../controllers/tracking.controller';
+import { approveTracking, forceStopTracking, rejectTracking } from '../controllers/tracking.controller';
 import { createTrainSchedule, deleteTrainSchedule, getTrainSchedules, updateTrainSchedule } from '../controllers/trainSchedule.controller';
 import { createMapLocation, deleteMapLocation, getMapLocations, searchMapLocations } from '../controllers/mapLocation.controller';
 import { uploadLimiter } from '../middleware/rateLimiter';
@@ -42,7 +43,14 @@ router.get('/stats', requireAuth, requireAdminLike, getStats);
 router.get('/petugas', requireAuth, requireAdminLike, getAllPetugas);
 router.get('/tugas', requireAuth, requireAdminLike, getAllTugas);
 router.get('/emergency', requireAuth, requireAdminLike, getAllEmergency);
+router.get('/emergency/:id/foto', requireAuth, requireAdminLike, getEmergencyPhoto);
 router.get('/live-positions', requireAuth, requireAdminLike, getLivePositions);
+router.get('/qc/summary', requireAuth, requireAdminLike, getQcSummary);
+router.get('/tugas/:id/qc-notes', requireAuth, requireAdminLike, getQcNotes);
+
+// ── Catatan QC — hanya QC yang menulis; pengelola membaca lewat GET di atas ──
+router.post('/tugas/:id/qc-notes', requireAuth, requireRole('qc'), createQcNote);
+router.delete('/qc-notes/:id', requireAuth, requireRole('qc'), deleteQcNote);
 
 // ── Write endpoints — admin + kupt only ──
 router.get('/petugas/available', requireAuth, requireCanWrite, getAvailablePetugas);
@@ -50,7 +58,12 @@ router.post('/petugas/add', requireAuth, requireCanWrite, addPetugasToManager);
 router.post('/petugas/remove', requireAuth, requireCanWrite, removePetugasFromManager);
 router.post('/tugas', requireAuth, requireCanWrite, createTugas);
 router.delete('/tugas/:id', requireAuth, requireCanWrite, deleteTugas);
-router.post('/tracking/:id/approve', requireAuth, requireAdmin, approveTracking);
+// Approval by the managing admin or KUPT; the controller scopes by managerId.
+router.post('/tracking/:id/approve', requireAuth, requireCanWrite, approveTracking);
+router.post('/tracking/:id/force-stop', requireAuth, requireCanWrite, forceStopTracking);
+router.post('/tracking/:id/reject', requireAuth, requireCanWrite, rejectTracking);
+// Status penanganan laporan temuan; controller membatasi ke petugas kelolaan (managerId).
+router.patch('/emergency/:id/status', requireAuth, requireCanWrite, updateEmergencyStatus);
 
 // ── CRUD jadwal kereta — admin only ──
 router.get('/train-schedules', requireAuth, requireAdmin, getTrainSchedules);
@@ -62,12 +75,12 @@ router.delete('/train-schedules/:id', requireAuth, requireAdmin, deleteTrainSche
 router.get('/tugas/template', requireAuth, requireCanWrite, downloadTugasTemplate);
 router.post('/tugas/import', requireAuth, requireCanWrite, uploadLimiter, upload.single('file'), importTugasFromExcel);
 
-// ── Kategori Temuan CRUD — admin + kupt ──
+// ── Kategori Temuan — global for every wilayah, so only the super admin changes it ──
 router.get('/kategori-temuan', requireAuth, requireAdminLike, getKategoriTemuan);
-router.post('/kategori-temuan', requireAuth, requireCanWrite, createKategoriTemuan);
-router.patch('/kategori-temuan/reorder', requireAuth, requireCanWrite, reorderKategoriTemuan);
-router.patch('/kategori-temuan/:id', requireAuth, requireCanWrite, updateKategoriTemuan);
-router.delete('/kategori-temuan/:id', requireAuth, requireCanWrite, deleteKategoriTemuan);
+router.post('/kategori-temuan', requireAuth, requireAdmin, createKategoriTemuan);
+router.patch('/kategori-temuan/reorder', requireAuth, requireAdmin, reorderKategoriTemuan);
+router.patch('/kategori-temuan/:id', requireAuth, requireAdmin, updateKategoriTemuan);
+router.delete('/kategori-temuan/:id', requireAuth, requireAdmin, deleteKategoriTemuan);
 
 // ── Account management — admin only ──
 router.get('/users', requireAuth, requireAdmin, getAllUsers);
@@ -75,6 +88,7 @@ router.post('/users', requireAuth, requireAdmin, createUser);
 router.patch('/users/:id', requireAuth, requireAdmin, updateUser);
 router.delete('/users/:id', requireAuth, requireAdmin, deleteUser);
 router.get('/wilayah', requireAuth, requireAdmin, getAllWilayah);
+router.get('/audit-log', requireAuth, requireAdmin, getAuditLog);
 
 // ── Admin custom map locations ──
 router.get('/map-locations', requireAuth, requireAdmin, getMapLocations);

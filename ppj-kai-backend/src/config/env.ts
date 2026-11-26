@@ -25,7 +25,24 @@ export function getAllowedOrigins(): string[] {
   return ['http://localhost:3000'];
 }
 
+/**
+ * Proxy hops in front of the API. The server binds to loopback behind nginx, so without this
+ * every client shares nginx's IP and one user's failed logins lock everybody out.
+ */
+export function getTrustProxyHops(): number {
+  const raw = process.env.TRUST_PROXY_HOPS;
+  const hops = Number(raw);
+  if (raw !== undefined && raw !== '' && (!Number.isSafeInteger(hops) || hops < 0)) {
+    throw new Error('FATAL: TRUST_PROXY_HOPS must be a whole number (0 without a reverse proxy, 1 behind nginx).');
+  }
+  if ((raw === undefined || raw === '') && process.env.NODE_ENV === 'production') {
+    throw new Error('FATAL: TRUST_PROXY_HOPS must be set in production (1 behind nginx, 0 without a reverse proxy).');
+  }
+  return raw ? hops : 0;
+}
+
 export function validateRuntimeEnvironment(): void {
   getJwtSecret();
   getAllowedOrigins();
+  getTrustProxyHops();
 }
