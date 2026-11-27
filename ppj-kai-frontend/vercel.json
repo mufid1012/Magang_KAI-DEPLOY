@@ -1,5 +1,5 @@
 {
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://princess-breakfast-introduce-dozen.trycloudflare.com/api/:path*" }
+    { "source": "/api/:path*", "destination": "https://hispanic-rarely-vermont-quite.trycloudflare.com/api/:path*" }
   ]
 }
