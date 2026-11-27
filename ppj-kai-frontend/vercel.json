@@ -1,5 +1,5 @@
 {
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://stock-communication-another-comply.trycloudflare.com/api/:path*" }
+    { "source": "/api/:path*", "destination": "https://ppjkai-mac.tailbd11ff.ts.net/api/:path*" }
   ]
 }
