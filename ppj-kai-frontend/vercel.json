@@ -1,5 +1,5 @@
 {
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://hispanic-rarely-vermont-quite.trycloudflare.com/api/:path*" }
+    { "source": "/api/:path*", "destination": "https://electrical-applications-possible-retreat.trycloudflare.com/api/:path*" }
   ]
 }
