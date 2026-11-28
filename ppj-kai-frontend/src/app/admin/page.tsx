@@ -21,7 +21,7 @@ import CollapsiblePanel from '../../components/map/CollapsiblePanel';
 import { useLivePositions } from '../../hooks/useLivePositions';
 import { usePolling } from '../../hooks/usePolling';
 import api from '../../lib/api';
-import { NotificationSound,playNotification,speakEmergencyAnnouncement,startLoopingNotification,stopLoopingNotification } from '../../lib/audio';
+import { NotificationSound,playNotification,speakEmergencyAnnouncement,startLoopingNotification,stopLoopingNotification,unlockNotificationAudio } from '../../lib/audio';
 import { showConfirm } from '../../lib/confirm';
 import { STATIONS } from '../../lib/stations';
 import { showToast } from '../../lib/toast';
@@ -230,6 +230,14 @@ export default function AdminPage() {
     if (isNotificationSound(savedSound)) {
       setAlertSound(savedSound);
     }
+  }, []);
+
+  // Browsers keep audio suspended until a user gesture; unlock on the first one so polled alarms can sound.
+  useEffect(() => {
+    const unlock = () => unlockNotificationAudio();
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('keydown', unlock, { once: true });
+    return () => { window.removeEventListener('pointerdown', unlock); window.removeEventListener('keydown', unlock); };
   }, []);
 
   // Cleanup looping alarm on unmount
