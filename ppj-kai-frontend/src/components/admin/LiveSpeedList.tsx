@@ -8,7 +8,7 @@ export default function LiveSpeedList({ positions, error }: { positions: LivePos
   const qualityLabels: Record<string,string> = {device: 'Kecepatan perangkat', coordinates: 'Estimasi koordinat', poor_accuracy: 'GPS lemah', jump: 'Loncatan GPS', gap: 'Data terputus', insufficient: 'Belum cukup data', stale: 'Data kedaluwarsa', unavailable: 'Belum tersedia'};
   return <section className="bg-white/95 p-3 rounded-xl text-xs text-slate-700 max-h-48 overflow-auto shadow" aria-label="Monitoring kecepatan">
     <p className="font-bold">Monitoring kecepatan</p>
-    <p className="text-[11px] text-slate-500">Pembaruan dapat terlambat mendekati 20 detik + jaringan. Tidak ada indikasi bukan bukti berjalan kaki.</p>
+    <p className="text-[11px] text-slate-500">Pembaruan dapat terlambat sekitar 10 detik + jaringan. Tidak ada indikasi bukan bukti berjalan kaki.</p>
     {error && <p className="text-amber-700">{error}</p>}
     {positions.map(p => {
       const fresh = p.speedAt !== null && now >= p.speedAt - TELEMETRY.FUTURE_MS && now - p.speedAt <= TELEMETRY.FRESH_MS;

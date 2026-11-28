@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import prisma from '../config/database';
 import { approveTracking, createNearbyWarning, getNearbyWarnings, stopTracking } from './tracking.controller';
+const signaturePng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAwS2OUAAAAABJRU5ErkJggg==';
 
 const route = { startPointLat: -7.8, startPointLong: 110.3, endPointLat: -7.8, endPointLong: 110.5, startPointName: 'Sta. Yogyakarta', endPointName: 'Sta. Lempuyangan' };
 const request = () => ({ user: { id: 7 }, query: { tugasId: '12', lat: '-7.8', lng: '110.37' }, body: { tugasId: 12, lat: -7.8, lng: 110.37 } } as any);
@@ -235,7 +236,7 @@ test('approving tracking atomically completes the assignment', async () => {
       },
     },
   }));
-  const req = { params: { id: '91' }, body: { safetyStatus: 'aman' }, user: { id: 7 } } as any;
+  const req = { params: { id: '91' }, body: { safetyStatus: 'aman', ttdApprover: signaturePng }, user: { id: 7 } } as any;
   const res = response();
   await approveTracking(req, res);
   assert.equal(res.statusCode, 200);

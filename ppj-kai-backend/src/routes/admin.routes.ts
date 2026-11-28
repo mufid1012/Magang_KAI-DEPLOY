@@ -4,6 +4,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { requireAuth, requireAdmin, requireAdminLike, requireCanWrite, requireRole } from '../middleware/auth.middleware';
 import { createQcNote, deleteQcNote, getQcNotes, getQcSummary } from '../controllers/qc.controller';
+import { getWarningReport } from '../controllers/warningReport.controller';
 import {
   getStats, getAllPetugas, getAvailablePetugas, addPetugasToManager,
   removePetugasFromManager, getAllTugas, createTugas, deleteTugas, getAllEmergency, getEmergencyPhoto, updateEmergencyStatus,
@@ -46,6 +47,7 @@ router.get('/emergency', requireAuth, requireAdminLike, getAllEmergency);
 router.get('/emergency/:id/foto', requireAuth, requireAdminLike, getEmergencyPhoto);
 router.get('/live-positions', requireAuth, requireAdminLike, getLivePositions);
 router.get('/qc/summary', requireAuth, requireAdminLike, getQcSummary);
+router.get('/warnings', requireAuth, requireAdminLike, getWarningReport);
 router.get('/tugas/:id/qc-notes', requireAuth, requireAdminLike, getQcNotes);
 
 // ── Catatan QC — hanya QC yang menulis; pengelola membaca lewat GET di atas ──

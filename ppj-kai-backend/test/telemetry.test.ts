@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { once } from 'node:events';
 import { writeFileSync } from 'node:fs';
 import { setTimeout as wait } from 'node:timers/promises';
+const signaturePng='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAwS2OUAAAAABJRU5ErkJggg==';
 
 const url = process.env.AUDIT_DATABASE_URL;
 if (!url || new URL(url).hostname !== '127.0.0.1' || !new URL(url).pathname.startsWith('/ppj_audit')) throw Error('Use isolated 127.0.0.1/ppj_audit* only');
@@ -52,11 +53,15 @@ test('MySQL telemetry: replay, quality, freshness, scopes, stop races, cascade a
       const row=await prisma.tracking.findUniqueOrThrow({where:{id:offline.id}});assert.equal(row.positionCapturedAt,null);assert.equal(row.endLat,null);
       const detail=await json(await request(`/tracking/${offline.id}/telemetry`));assert.equal(detail.summary.speedKmh,null);
     });
-    await t.test('poor accuracy clears current speed, keeps labelled previous position and records loss metadata',async()=>{
-      await json(await request(`/tracking/update/${tracking.id}`,ppj,{samples:[{...samples[24],id:'weak',capturedAt:Date.now(),accuracy:80}],reportedLoss:7}));
+    await t.test('poor accuracy clears current speed but still moves the live position; beyond 100 m it does not',async()=>{
+      const weakAt=Date.now();
+      await json(await request(`/tracking/update/${tracking.id}`,ppj,{samples:[{...samples[24],id:'weak',capturedAt:weakAt,accuracy:80}],reportedLoss:7}));
       const live=await json(await request('/admin/live-positions',admin));
       const pos=live.data.find((p:any)=>p.tugasId===tracking.tugasId);assert.equal(pos.speedKmh,null);assert.equal(pos.quality,'poor_accuracy');assert.equal(pos.reportedLoss,7);
-      assert.equal(pos.positionCapturedAt,epoch+120000);assert.equal(pos.accuracy,2);
+      assert.equal(pos.positionCapturedAt,weakAt);assert.equal(pos.accuracy,80);
+      await json(await request(`/tracking/update/${tracking.id}`,ppj,{samples:[{...samples[24],id:'useless',capturedAt:weakAt+5000,accuracy:150}]}));
+      const after=(await json(await request('/admin/live-positions',admin))).data.find((p:any)=>p.tugasId===tracking.tugasId);
+      assert.equal(after.positionCapturedAt,weakAt,'a fix worse than 100 m keeps the last usable position');
     });
     await t.test('scope: owner admin, manager KUPT, QC wilayah, own PPJ; guest is denied',async()=>{
       await json(await request(`/tracking/${tracking.id}/telemetry`,admin));await json(await request(`/tracking/${tracking.id}/telemetry`,qc));
@@ -75,7 +80,7 @@ test('MySQL telemetry: replay, quality, freshness, scopes, stop races, cascade a
       await json(await request(`/tracking/update/${tracking.id}`,ppj,{samples:[{...samples[0],id:'expired',capturedAt:Date.now()-90000000}]}));
     });
     await t.test('update/stop serialize; completed sessions reject late writes; optional final batch is atomic',async()=>{
-      const stopBody={lat:0,lng:0,fotoSelesai:'data:image/jpeg;base64,/9j/4AAQSkZJRg==',routePath:[[0,0],[0,0.001]]};
+      const stopBody={lat:0,lng:0,fotoSelesai:'data:image/jpeg;base64,/9j/4AAQSkZJRg==',ttdPetugas:signaturePng,routePath:[[0,0],[0,0.001]]};
       const results=await Promise.all([request(`/tracking/update/${tracking.id}`,ppj,{samples:[{...samples[24],id:'race',capturedAt:Date.now()+100}]}),request(`/tracking/stop/${tracking.id}`,ppj,stopBody)]);
       assert.ok([200,409].includes(results[0]!.status));await json(results[1]!);
       const before=await prisma.trackingSample.count({where:{trackingId:tracking.id}});

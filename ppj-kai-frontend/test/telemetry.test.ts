@@ -44,5 +44,7 @@ test('monitor polling pauses on hidden/closed/logout, backs off, and never overl
   visible=false;p.visibilityChanged();await a;t.mock.timers.tick(60000);assert.equal(calls,1);
   visible=true;p.visibilityChanged();assert.equal(calls,2);p.stop();resolve();await Promise.resolve();t.mock.timers.tick(60000);assert.equal(calls,2);
   let failures=0;const backoff=new VisiblePoller(()=>true,async()=>{failures++;throw Error('network')});
-  await backoff.poll();t.mock.timers.tick(10000);assert.equal(failures,1);t.mock.timers.tick(10000);assert.equal(failures,2);backoff.stop();
+  // One failure doubles the wait: the retry comes after 2 × the normal interval, not before.
+  const retry=TELEMETRY.LIVE_POLL_INTERVAL_MS*2;
+  await backoff.poll();t.mock.timers.tick(retry-1);assert.equal(failures,1);t.mock.timers.tick(1);assert.equal(failures,2);backoff.stop();
 });

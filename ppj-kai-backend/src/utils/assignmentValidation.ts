@@ -50,3 +50,14 @@ export function assignmentTimes(start: unknown, end: unknown) {
   const jamMulai = parseImportTime(start), jamSelesai = parseImportTime(end);
   return jamMulai.valid && jamSelesai.valid ? { jamMulai: jamMulai.value, jamSelesai: jamSelesai.value } : null;
 }
+
+type Slot = { jamMulai: string | null; jamSelesai: string | null };
+/**
+ * Two tasks of the same PPJ on one day collide when their hours intersect. A missing end time
+ * runs to the end of the day; a missing start (legacy rows) blocks the whole day.
+ */
+export function schedulesOverlap(a: Slot, b: Slot): boolean {
+  const span = (s: Slot) => [s.jamMulai ?? '00:00', s.jamMulai ? (s.jamSelesai ?? '23:59') : '23:59'] as const;
+  const [aStart, aEnd] = span(a), [bStart, bEnd] = span(b);
+  return aStart < bEnd && bStart < aEnd;
+}

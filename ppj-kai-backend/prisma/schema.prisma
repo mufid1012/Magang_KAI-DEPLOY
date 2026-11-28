@@ -123,6 +123,9 @@ model Tracking {
   status             String             @default("started") @db.VarChar(20)
   fotoAwal           String?            @map("foto_awal") @db.LongText
   fotoSelesai        String?            @map("foto_selesai") @db.LongText
+  /// Tanda tangan online (PNG data URL): PPJ saat selesai, penyetuju saat approval.
+  ttdPetugas         String?            @map("ttd_petugas") @db.LongText
+  ttdApprover        String?            @map("ttd_approver") @db.LongText
   routePath          String?            @map("route_path") @db.LongText // JSON: [[lat,lng], ...]
   approvalStatus     String             @default("not_approved") @map("approval_status") @db.VarChar(20) // not_approved | approved | rejected
   safetyStatus       String             @default("aman") @map("safety_status") @db.VarChar(20) // aman | tidak_aman
@@ -144,6 +147,7 @@ model Tracking {
   tugas              TugasPpj           @relation(fields: [tugasId], references: [id])
   laporan            Laporan[]
   warningRecipients  WarningRecipient[]
+  sentWarnings       WarningAlert[]     @relation("WarningSender")
   telemetrySamples   TrackingSample[]
   speedEvents        SpeedEvent[]
   telemetryState     Json?              @map("telemetry_state")
@@ -221,9 +225,13 @@ model WarningAlert {
   longitude      Float
   expiresAt      DateTime           @map("expires_at")
   createdAt      DateTime           @default(now()) @map("created_at")
+  /// Sesi tracking pengirim; null untuk warning lama atau bila tracking dihapus.
+  trackingId     Int?               @map("tracking_id")
+  tracking       Tracking?          @relation("WarningSender", fields: [trackingId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
   @@index([expiresAt])
+  @@index([trackingId])
   @@map("warning_alerts")
 }
 
@@ -240,15 +248,15 @@ model WarningRecipient {
 }
 
 model Laporan {
-  id          Int      @id @default(autoincrement())
-  trackingId  Int      @map("tracking_id")
-  jenisTemuan String   @map("jenis_temuan") @db.VarChar(50)
-  deskripsi   String   @db.Text
-  foto        String?  @db.LongText
-  latitude    Float
-  longitude   Float
-  tracking    Tracking @relation(fields: [trackingId], references: [id])
-  createdAt   DateTime @default(now()) @map("created_at")
+  id             Int       @id @default(autoincrement())
+  trackingId     Int       @map("tracking_id")
+  jenisTemuan    String    @map("jenis_temuan") @db.VarChar(50)
+  deskripsi      String    @db.Text
+  foto           String?   @db.LongText
+  latitude       Float
+  longitude      Float
+  tracking       Tracking  @relation(fields: [trackingId], references: [id])
+  createdAt      DateTime  @default(now()) @map("created_at")
   /// Penanganan oleh pengelola: baru -> ditangani -> selesai.
   handlingStatus String    @default("baru") @map("handling_status") @db.VarChar(20)
   handledBy      Int?      @map("handled_by")

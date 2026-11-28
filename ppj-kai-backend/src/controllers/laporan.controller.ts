@@ -2,6 +2,7 @@ import { taskScope } from '../lib/accessScope';
 import { Request, Response } from 'express';
 import prisma from '../config/database';
 import { checkPhoto, PHOTO_FORMAT_MESSAGE } from '../lib/photo';
+import { KENDALA_PPJ_KEY } from '../../../shared/display';
 
 export const createLaporan = async (req: Request, res: Response) => {
   try {
@@ -40,8 +41,11 @@ export const createLaporan = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Tracking aktif tidak ditemukan' });
     }
 
-    const category = await prisma.kategoriTemuan.findUnique({ where: { key: jenisTemuan.trim() }, select: { isActive: true } });
-    if (!category?.isActive) return res.status(400).json({ success: false, message: 'Kategori temuan tidak tersedia' });
+    // Kendala PPJ is a fixed report type, so admins cannot disable or delete it as a category.
+    if (jenisTemuan.trim() !== KENDALA_PPJ_KEY) {
+      const category = await prisma.kategoriTemuan.findUnique({ where: { key: jenisTemuan.trim() }, select: { isActive: true } });
+      if (!category?.isActive) return res.status(400).json({ success: false, message: 'Kategori temuan tidak tersedia' });
+    }
 
     const laporan = await prisma.laporan.create({
       data: {

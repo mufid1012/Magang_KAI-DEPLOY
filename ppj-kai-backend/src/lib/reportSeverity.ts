@@ -1,4 +1,5 @@
 import prisma from '../config/database';
+import { KENDALA_PPJ_KEY, KENDALA_PPJ_LABEL } from '../../../shared/display';
 
 const LEGACY_EMERGENCY_KEYS = ['emergency', 'berat'];
 
@@ -18,6 +19,7 @@ export async function categoryLookup(): Promise<(key: string) => CategoryInfo> {
   return key => {
     const category = byKey.get(key);
     if (category) return { label: category.label, emergency: category.color === 'error' };
+    if (key === KENDALA_PPJ_KEY) return { label: KENDALA_PPJ_LABEL, emergency: false };
     // Deleted category: the stored key is all that is left.
     return { label: key.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase()), emergency: LEGACY_EMERGENCY_KEYS.includes(key) };
   };

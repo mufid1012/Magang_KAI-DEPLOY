@@ -66,3 +66,21 @@ test('profile accepts a valid phone and alert sound', async () => {
   assert.equal(res.statusCode, 200);
   assert.deepEqual(written, { phone: '+62 812-3456', alertSound: 'beep' });
 });
+
+test('Kendala PPJ is accepted without a configurable category row', async () => {
+  mock(db.tracking, 'findFirst', async () => ({ id: 1 }));
+  mock(db.kategoriTemuan, 'findUnique', async () => null);
+  let saved: any;
+  mock(db.laporan, 'create', async (args: any) => { saved = args.data; return { id: 9, ...args.data }; });
+  const res = await call(createLaporan, { user: { id: 7, role: 'ppj' }, body: { trackingId: 1, jenisTemuan: 'kendala_ppj', deskripsi: 'Sakit / kondisi fisik: pusing', lat: -7.8, lng: 110.3 } });
+  assert.equal(res.statusCode, 200);
+  assert.equal(saved.jenisTemuan, 'kendala_ppj');
+});
+
+test('an unregistered report category is still refused', async () => {
+  mock(db.tracking, 'findFirst', async () => ({ id: 1 }));
+  mock(db.kategoriTemuan, 'findUnique', async () => null);
+  mock(db.laporan, 'create', async () => assert.fail('must not create'));
+  const res = await call(createLaporan, { user: { id: 7, role: 'ppj' }, body: { trackingId: 1, jenisTemuan: 'asal', lat: -7.8, lng: 110.3 } });
+  assert.equal(res.statusCode, 400);
+});

@@ -64,6 +64,9 @@ export interface ReportInput {
     approved: boolean;
     approvedAt: Date | null;
     approver: { nama: string; nipp: string } | null;
+    /** Online signatures (PNG data URL); null for older sessions. */
+    ttdPetugas?: string | null;
+    ttdApprover?: string | null;
     unsafe: boolean;
     testMode: boolean;
     /** Set when the managing admin/KUPT ended the session on the PPJ's behalf. */
@@ -497,10 +500,11 @@ function signOff(input: ReportInput) {
     });
     blocks.push({ columns: [photo('Foto petugas saat mulai', t.fotoAwal, t.startTime), photo('Foto petugas saat selesai', t.fotoSelesai, t.endTime)], columnGap: 20, margin: [0, 0, 0, 16] });
   }
-  const signer = (role: string, person: { nama: string; nipp: string } | null, note: string) => ({
+  const signer = (role: string, person: { nama: string; nipp: string } | null, note: string, signature: string | null | undefined) => ({
     stack: [
       label(role),
-      { text: '', margin: [0, 34, 0, 0] },
+      // Online signature above the line; without one the space stays free for a wet signature.
+      signature ? { image: signature, fit: [140, 50], margin: [0, 4, 0, 2] } : { text: '', margin: [0, 34, 0, 0] },
       { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 200, y2: 0, lineWidth: 0.6, lineColor: C.ink }] },
       { text: person?.nama ?? ' ', bold: true, fontSize: 10, margin: [0, 4, 0, 0] },
       { text: person ? `NIPP ${person.nipp}` : '', fontSize: 9, color: C.muted },
@@ -509,8 +513,8 @@ function signOff(input: ReportInput) {
   });
   blocks.push({
     columns: [
-      signer('Petugas pelaksana', input.petugas, t?.forcedStop ? 'Dihentikan paksa oleh pengelola' : t?.endTime ? `Selesai ${fmtShortDate(t.endTime)}, ${fmtClock(t.endTime)} WIB` : ''),
-      signer('Disetujui oleh', t?.approved ? t.approver : null, t?.approved && t.approvedAt ? `Disetujui ${fmtShortDate(t.approvedAt)}, ${fmtClock(t.approvedAt)} WIB` : 'Belum disetujui admin'),
+      signer('Petugas pelaksana', input.petugas, t?.forcedStop ? 'Dihentikan paksa oleh pengelola' : t?.endTime ? `Selesai ${fmtShortDate(t.endTime)}, ${fmtClock(t.endTime)} WIB` : '', t?.ttdPetugas),
+      signer('Disetujui oleh', t?.approved ? t.approver : null, t?.approved && t.approvedAt ? `Disetujui ${fmtShortDate(t.approvedAt)}, ${fmtClock(t.approvedAt)} WIB` : 'Belum disetujui admin', t?.approved ? t.ttdApprover : null),
     ],
     columnGap: 40,
   });

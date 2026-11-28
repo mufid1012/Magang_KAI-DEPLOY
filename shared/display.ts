@@ -15,3 +15,8 @@ export function petugasColor(nipp: string): string {
   }
   return `hsl(${(Math.abs(hash) * 137) % 360}, 65%, 42%)`;
 }
+
+/** Fixed report type for "Kendala PPJ" (the PPJ cannot continue normally). Not an editable finding category. */
+export const KENDALA_PPJ_KEY = 'kendala_ppj';
+export const KENDALA_PPJ_LABEL = 'Kendala PPJ';
+export const KENDALA_REASONS = ['Sakit / kondisi fisik', 'HP / baterai bermasalah', 'Cuaca / kondisi jalur', 'Lainnya'] as const;

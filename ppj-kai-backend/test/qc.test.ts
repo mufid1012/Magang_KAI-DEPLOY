@@ -71,6 +71,22 @@ test('real MySQL: QC summary flags, station scope, and QC notes permissions', as
     await json(await request(`/admin/qc-notes/${note.id}`, 'DELETE', undefined, otherQc.id), 404);
     await json(await request(`/admin/qc-notes/${note.id}`, 'DELETE'), 200);
     assert.equal(await prisma.qcNote.count({ where: { tugasId: quick.id } }), 0);
+
+    // Laporan warning: QC melihat warning di stasiun wilayahnya saja; pengelola melihat milik PPJ kelolaan.
+    const expiresAt = new Date(Date.now() - 60_000); // already expired: history must still be listed
+    const inside = await prisma.warningAlert.create({ data: { createdBy: ppj.id, trackingId: quickTracking.id, startPointName: 'Sta. Jenar', endPointName: 'Sta. Wojo', latitude: -7.8, longitude: 110.0, expiresAt,
+      recipients: { create: [{ trackingId: quickTracking.id }] } } });
+    const away = await prisma.warningAlert.create({ data: { createdBy: ppj.id, startPointName: 'Sta. Kutoarjo', endPointName: 'Sta. Butuh', latitude: -7.7, longitude: 109.9, expiresAt } });
+    const qcWarnings = (await json(await request('/admin/warnings?days=1'), 200)).data.filter((w: { id: number }) => [inside.id, away.id].includes(w.id));
+    assert.deepEqual(qcWarnings.map((w: { id: number }) => w.id), [inside.id]);
+    assert.equal(qcWarnings[0].creator.nipp, ppj.nipp);
+    assert.equal(qcWarnings[0].jalur, 'QC quick ' + suffix);
+    assert.deepEqual(qcWarnings[0].recipients, [{ nama: ppj.nama, nipp: ppj.nipp }]);
+    const otherQcWarnings = (await json(await request('/admin/warnings?days=1', 'GET', undefined, otherQc.id), 200)).data;
+    assert.equal(otherQcWarnings.some((w: { id: number }) => [inside.id, away.id].includes(w.id)), false);
+    const managerWarnings = (await json(await request('/admin/warnings?days=1', 'GET', undefined, admin.id), 200)).data;
+    assert.equal(managerWarnings.filter((w: { id: number }) => [inside.id, away.id].includes(w.id)).length, 2);
+    await prisma.warningAlert.deleteMany({ where: { id: { in: [inside.id, away.id] } } });
   } finally {
     await prisma.tracking.deleteMany({ where: { tugasId: { in: tugasIds } } });
     await prisma.tugasPpj.deleteMany({ where: { id: { in: tugasIds } } });

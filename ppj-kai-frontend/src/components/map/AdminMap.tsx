@@ -3,6 +3,7 @@ import { petugasColor } from '../../../../shared/display';
 
 import type { LivePosition } from '../admin/types';
 import LiveSpeedList from '../admin/LiveSpeedList';
+import CollapsiblePanel from './CollapsiblePanel';
 import { TELEMETRY, REVIEW_LABEL } from '../../../../shared/telemetry';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -203,13 +204,18 @@ export default function AdminMap({ emergencies, tasks, onEmergencyClick, livePos
     if (!livePositions || livePositions.length === 0) return;
 
     livePositions.forEach(pos => {
-      const color = petugasColor(pos.petugasNipp);
+      // No position for a while = screen off, app minimized or no signal. Show it grey, without pulse.
+      const lost = !pos.positionCapturedAt || Date.now() - pos.positionCapturedAt > TELEMETRY.GPS_GAP_MS;
+      const color = lost ? '#94a3b8' : petugasColor(pos.petugasNipp);
       const initials = pos.petugasNama.substring(0, 2).toUpperCase();
+      const lostSince = lost && pos.positionCapturedAt
+        ? `<br><span style="font-size:10px;color:#b45309;font-weight:600">GPS terputus sejak ${new Date(pos.positionCapturedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>`
+        : lost ? '<br><span style="font-size:10px;color:#b45309;font-weight:600">GPS belum terkirim</span>' : '';
 
       const icon = L.divIcon({
         className: '',
         html: `<div style="position:relative;display:flex;align-items:center;justify-content:center;">
-          <div style="position:absolute;width:40px;height:40px;background:${color}33;border-radius:50%;animation:livePulse 2s ease-in-out infinite"></div>
+          ${lost ? '' : `<div style="position:absolute;width:40px;height:40px;background:${color}33;border-radius:50%;animation:livePulse 2s ease-in-out infinite"></div>`}
           <div style="width:24px;height:24px;background:${color};border:3px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;z-index:10;font-size:9px;font-weight:bold;color:white;box-shadow:0 2px 8px rgba(0,0,0,0.35)">${initials}</div>
         </div><style>@keyframes livePulse{0%,100%{transform:scale(1);opacity:0.6}50%{transform:scale(1.5);opacity:0}}</style>`,
         iconSize: [40, 40],
@@ -224,7 +230,7 @@ export default function AdminMap({ emergencies, tasks, onEmergencyClick, livePos
             <b style="color:${color}">${pos.petugasNama}</b><br>
             <span>${fresh && pos.speedKmh !== null ? pos.speedKmh.toFixed(1) : "—"} km/jam · ${pos.quality}</span><br>
             <span>${pos.isTest ? "Data uji" : pos.reviewCount > 0 ? REVIEW_LABEL : ""}</span><br>
-            <span style="font-size:10px;color:#64748b">${pos.jalur}</span><br>
+            <span style="font-size:10px;color:#64748b">${pos.jalur}</span>${lostSince}<br>
             <span style="font-size:9px;color:#94a3b8">🕐 ${pos.positionCapturedAt ? new Date(pos.positionCapturedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'waktu tidak tersedia'}</span>
           </div>`; },
           { direction: 'top', offset: [0, -24] }
@@ -236,7 +242,11 @@ export default function AdminMap({ emergencies, tasks, onEmergencyClick, livePos
   return (
     <div className="w-full h-full relative">
       <div ref={containerRef} className="w-full h-full" />
-      {livePositions && <div className="absolute top-14 right-3 z-[1001] w-72 max-w-[75%]"><LiveSpeedList positions={livePositions} error={monitoringError ?? ''} /></div>}
+      {livePositions && (
+        <CollapsiblePanel title="Monitoring kecepatan" icon="speed" className="absolute top-14 right-3 z-[1001] w-auto md:w-72 max-w-[75%] flex justify-end md:block">
+          <div className="w-72 max-w-full"><LiveSpeedList positions={livePositions} error={monitoringError ?? ''} /></div>
+        </CollapsiblePanel>
+      )}
     </div>
   );
 }
