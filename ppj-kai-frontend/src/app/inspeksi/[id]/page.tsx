@@ -4,6 +4,12 @@ import { haversineMeters as haversineM } from '../../../../../shared/geo';
 
 import { TELEMETRY, type SpeedState } from '../../../../../shared/telemetry';
 import { TelemetryCard, type TelemetryHandle } from '../../../components/TelemetryCard';
+import ActionMenu from '../../../components/inspeksi/ActionMenu';
+import KendalaModal from '../../../components/inspeksi/KendalaModal';
+import SignaturePad from '../../../components/common/SignaturePad';
+import { useBackgroundGap } from '../../../hooks/useBackgroundGap';
+import { showConfirm } from '../../../lib/confirm';
+import { KENDALA_PPJ_KEY } from '../../../../../shared/display';
 import axios from 'axios';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
@@ -64,6 +70,9 @@ export default function TrackingPage() {
   const [trainAlert, setTrainAlert] = useState<TrainAlert | null>(null);
   const [nearbyWarning, setNearbyWarning] = useState<NearbyWarning | null>(null);
   const [sendingWarning, setSendingWarning] = useState(false);
+  const [isKendalaOpen, setIsKendalaOpen] = useState(false);
+  const [ttdPetugas, setTtdPetugas] = useState<string | null>(null);
+  const { lastGapMs, dismiss: dismissGap } = useBackgroundGap(status === 'active');
   const seenTrainAlerts = useRef<Set<number>>(new Set());
   const seenNearbyWarnings = useRef<Set<number>>(new Set());
   const gpsPosRef = useRef(gpsPos);
@@ -263,6 +272,8 @@ export default function TrackingPage() {
       showToast(message, 'error');
       return;
     }
+    // A web page cannot keep GPS running with the screen locked or the app in the background.
+    if (!(await showConfirm('Selama inspeksi, jangan kunci layar atau pindah aplikasi. Tracking GPS berhenti bila layar mati atau aplikasi diminimalkan.', 'Jaga layar tetap menyala'))) return;
 
     try {
       const startLat = gpsPos?.lat ?? tugas!.startPointLat;
@@ -312,7 +323,7 @@ export default function TrackingPage() {
       setIsStopping(true);
       if (!telemetryRef.current) throw new Error('Telemetri belum siap');
       const telemetryFinal = await telemetryRef.current.flush();
-      await api.post(`/tracking/stop/${trackingId}`, { lat: stopLat, lng: stopLng, fotoSelesai: endSelfieDataUrl, reportedLoss: telemetryFinal.reportedLoss, routePath: compactRoute([...trackPath, [stopLat, stopLng]]), bypassMode: testMode }, { timeout: 20000 });
+      await api.post(`/tracking/stop/${trackingId}`, { lat: stopLat, lng: stopLng, fotoSelesai: endSelfieDataUrl, ttdPetugas, reportedLoss: telemetryFinal.reportedLoss, routePath: compactRoute([...trackPath, [stopLat, stopLng]]), bypassMode: testMode }, { timeout: 20000 });
       if (timerRef.current) clearInterval(timerRef.current);
       localStorage.removeItem(STORAGE_KEY); // Clear persisted session
       router.push(`/inspeksi/${params.id}/selesai`);
@@ -347,6 +358,27 @@ export default function TrackingPage() {
       const message = axios.isAxiosError<{ message?: string }>(err) ? err.response?.data?.message : undefined;
       showToast(message || 'Gagal mengirim laporan darurat.', 'error');
     } finally { setIsSubmittingLaporan(false); }
+  };
+
+  const handleKirimKendala = async (reason: string, note: string): Promise<boolean> => {
+    if (!trackingId || !tugas) { showToast('Tracking belum aktif.', 'warning'); return false; }
+    // Without a GPS fix, report the task start point and say so, like the emergency report does.
+    const approx = !gpsPos;
+    try {
+      await api.post('/laporan', {
+        trackingId,
+        jenisTemuan: KENDALA_PPJ_KEY,
+        deskripsi: `${reason}${note ? `: ${note}` : ''}${approx ? ' (lokasi perkiraan: titik awal tugas, GPS belum tersedia)' : ''}`,
+        lat: gpsPos?.lat ?? tugas.startPointLat,
+        lng: gpsPos?.lng ?? tugas.startPointLong,
+      });
+      showToast('Kendala dikirim ke pengelola.', 'success');
+      return true;
+    } catch (err) {
+      const message = axios.isAxiosError<{ message?: string }>(err) ? err.response?.data?.message : undefined;
+      showToast(message || 'Gagal mengirim kendala.', 'error');
+      return false;
+    }
   };
 
   const handleSendNearbyWarning = async () => {
@@ -505,8 +537,18 @@ export default function TrackingPage() {
         <div className="w-10" />
       </header>
 
-      {(trainAlert || nearbyWarning) && (
+      {(trainAlert || nearbyWarning || lastGapMs !== null) && (
         <div className="absolute top-20 left-0 right-0 z-50 px-container-padding pointer-events-auto flex flex-col gap-2 items-center">
+          {lastGapMs !== null && (
+            <div role="alert" className="w-full max-w-xl bg-amber-50 border-2 border-amber-400 rounded-xl shadow-xl p-3 flex items-center gap-3">
+              <div className="w-11 h-11 rounded-full bg-amber-500 text-white flex items-center justify-center shrink-0"><span className="material-symbols-outlined">screen_lock_portrait</span></div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-amber-900">Tracking sempat terhenti ±{Math.max(1, Math.round(lastGapMs / 60_000))} menit</p>
+                <p className="text-xs text-amber-800">Layar mati atau aplikasi diminimalkan. Jejak pada rentang ini tidak terekam.</p>
+              </div>
+              <button onClick={dismissGap} aria-label="Tutup" className="text-amber-700"><span className="material-symbols-outlined">close</span></button>
+            </div>
+          )}
           {trainAlert && (
             <div className="w-full max-w-xl bg-amber-50 border-2 border-amber-400 rounded-xl shadow-xl p-3 flex items-center gap-3">
               <div className="w-11 h-11 rounded-full bg-amber-500 text-white flex items-center justify-center shrink-0"><span className="material-symbols-outlined">train</span></div>
@@ -719,20 +761,15 @@ export default function TrackingPage() {
             <div className="fixed top-24 left-container-padding right-container-padding z-40 max-w-sm mx-auto pointer-events-auto">
                 <TelemetryCard startedAt={telemetryStartedAt} ref={telemetryRef} trackingId={trackingId!} position={gpsPos} gpsError={gpsError} initialState={initialTelemetryState} isTest={testMode} />
             </div>
-            {/* Warning PPJ sekitar FAB */}
-            <div className="fixed left-container-padding bottom-[180px] z-40 pointer-events-auto">
-              <button onClick={handleSendNearbyWarning} disabled={sendingWarning || !gpsPos} className="w-16 h-16 bg-blue-600 text-white rounded-full shadow-[0px_8px_24px_rgba(37,99,235,0.35)] flex items-center justify-center hover:scale-105 transition-transform active:scale-95 disabled:opacity-50" title="Peringatkan PPJ terdekat di masing-masing arah pada jalur yang sama">
-                <span className="material-symbols-outlined text-[32px]" style={{ fontVariationSettings: "'FILL' 1" }}>{sendingWarning ? 'hourglass_empty' : 'campaign'}</span>
-              </button>
-              <p className="mt-1 bg-white/90 rounded-full px-2 py-0.5 text-[9px] font-bold text-blue-700 text-center shadow">ALERT KERETA</p>
-            </div>
-
-            {/* Emergency FAB */}
-            <div className="fixed right-container-padding bottom-[180px] z-40 pointer-events-auto">
-              <button onClick={() => setIsEmergencyModalOpen(true)} className="w-16 h-16 bg-error text-on-error rounded-full shadow-[0px_8px_24px_rgba(186,26,26,0.3)] flex items-center justify-center hover:scale-105 transition-transform active:scale-95">
-                <span className="material-symbols-outlined text-[32px]" style={{ fontVariationSettings: "'FILL' 1" }}>warning</span>
-              </button>
-            </div>
+            {/* Alert Kereta, Laporan Darurat, Kendala PPJ dan Ganti PPJ dalam satu menu */}
+            <ActionMenu
+              onAlertKereta={handleSendNearbyWarning}
+              onLaporanDarurat={() => setIsEmergencyModalOpen(true)}
+              onKendala={() => setIsKendalaOpen(true)}
+              sendingAlert={sendingWarning}
+              gpsReady={!!gpsPos}
+            />
+            <KendalaModal open={isKendalaOpen} onClose={() => setIsKendalaOpen(false)} onSubmit={handleKirimKendala} />
 
             {/* Active Tracking Panel */}
             <div className="fixed bottom-0 left-0 w-full px-container-padding pb-container-padding z-40 pointer-events-auto">
@@ -1023,6 +1060,9 @@ export default function TrackingPage() {
                 </div>
               </div>
 
+              {/* Tanda tangan online petugas; dicetak di blok pengesahan PDF */}
+              <SignaturePad label={`Tanda tangan petugas${testMode ? ' (opsional saat bypass)' : ''}`} onChange={setTtdPetugas} />
+
               {/* Temporary deployment testing bypass */}
               {bypassAvailable && (
                 <button
@@ -1052,9 +1092,9 @@ export default function TrackingPage() {
                     handleStopTracking();
                     return;
                   }
-                  if (endSelfieDataUrl) handleStopTracking();
+                  if (endSelfieDataUrl && ttdPetugas) handleStopTracking();
                 }}
-                disabled={(!testMode && (!endSelfieDataUrl || !withinEndGeofence)) || isStopping}
+                disabled={(!testMode && (!endSelfieDataUrl || !withinEndGeofence || !ttdPetugas)) || isStopping}
                 className="flex-[2] py-3 rounded-xl bg-error text-on-error font-label-sm flex items-center justify-center gap-sm shadow-sm disabled:opacity-50"
               >
                 <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>stop_circle</span>

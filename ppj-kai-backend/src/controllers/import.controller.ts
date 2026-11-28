@@ -1,5 +1,5 @@
 import { parseAssignmentDate, scheduleProblem } from '../utils/assignmentValidation';
-import { findDuplicateAssignment } from '../lib/taskGuards';
+import { findDuplicateAssignment, findOverlappingAssignment, lockPetugas, scheduleConflictMessage } from '../lib/taskGuards';
 import type { Response } from 'express';
 import prisma from '../config/database';
 import type { AuthRequest } from '../types/http';
@@ -279,11 +279,17 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
       // Create tugas
       try {
         await prisma.$transaction(async tx => {
+          // Lock first: two uploads of the same file would otherwise both pass the checks below.
+          await lockPetugas(tx, petugas.id);
           // Re-uploading the same file must not create the same assignment twice.
           if (await findDuplicateAssignment(tx, {
             assignedTo: petugas.id, tanggal: parsedDate, startPointName: startStation.name,
             endPointName: endStation.name, jamMulai: jamMulai.value,
           })) throw new Error('DUPLICATE_ASSIGNMENT');
+          const clash = await findOverlappingAssignment(tx, {
+            assignedTo: petugas.id, tanggal: parsedDate, jamMulai: jamMulai.value!, jamSelesai: jamSelesai.value,
+          });
+          if (clash) throw Object.assign(new Error('SCHEDULE_CONFLICT'), { clash });
 
           if (petugas.managerId === null) {
             const claimed = await tx.user.updateMany({
@@ -323,8 +329,10 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
           ? `NIPP "${rawNipp}" baru saja dikelola admin lain`
           : err.message === 'DUPLICATE_ASSIGNMENT'
             ? `Tugas yang sama untuk NIPP "${rawNipp}" pada tanggal dan jam ini sudah ada`
-            : 'Gagal menyimpan baris ini';
-        if (!['PETUGAS_ALREADY_MANAGED', 'DUPLICATE_ASSIGNMENT'].includes(err.message)) console.error(`Import row ${rowNum} error:`, err);
+            : err.message === 'SCHEDULE_CONFLICT'
+              ? `${scheduleConflictMessage(err.clash)} untuk NIPP "${rawNipp}"`
+              : 'Gagal menyimpan baris ini';
+        if (!['PETUGAS_ALREADY_MANAGED', 'DUPLICATE_ASSIGNMENT', 'SCHEDULE_CONFLICT'].includes(err.message)) console.error(`Import row ${rowNum} error:`, err);
         results.push({ row: rowNum, status: 'error', message });
       }
     }

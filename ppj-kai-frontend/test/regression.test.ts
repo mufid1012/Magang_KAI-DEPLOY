@@ -1,3 +1,4 @@
+import { gapOnReturn } from '../src/hooks/useBackgroundGap';
 import { legacyReplayUrl } from '../src/lib/legacyReplay';
 import { fetchRailwayGeometry } from '../src/lib/railway';
 import assert from 'node:assert/strict';
@@ -50,4 +51,10 @@ test('concurrent identical railway requests are deduplicated and retain the rout
   const first=fetchRailwayGeometry(-7.8,110,-7.802,110.002),second=fetchRailwayGeometry(-7.8,110,-7.802,110.002);
   assert.equal(first,second);assert.deepEqual(await first,[[[-7.8,110],[-7.801,110.001],[-7.802,110.002]]]);assert.equal(requests,1);
  } finally { globalThis.fetch=original; }
+});
+
+test('tracking gap after screen off is reported only when it lasted at least 30 s', () => {
+  assert.equal(gapOnReturn(null, 1000), null);
+  assert.equal(gapOnReturn(0, 29_999), null);
+  assert.equal(gapOnReturn(0, 120_000), 120_000);
 });

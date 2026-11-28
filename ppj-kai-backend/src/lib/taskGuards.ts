@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { schedulesOverlap } from '../utils/assignmentValidation';
 
 type Db = Pick<Prisma.TransactionClient, 'tugasPpj'>;
 
@@ -26,6 +27,28 @@ export function findDuplicateAssignment(db: Db, task: { assignedTo: number; tang
     where: { ...task, status: { not: 'cancelled' } },
     select: { id: true },
   });
+}
+
+/** Serializes assignment writes per PPJ: concurrent imports or clicks wait here instead of both inserting. */
+export async function lockPetugas(tx: Prisma.TransactionClient, petugasId: number): Promise<void> {
+  await tx.$queryRaw`SELECT id FROM users WHERE id = ${petugasId} FOR UPDATE`;
+}
+
+/**
+ * Another task of this PPJ on the same day whose hours intersect. Missed and rejected tasks no
+ * longer occupy the slot: a re-inspection after a rejection is a new task, often at the same hours.
+ */
+export async function findOverlappingAssignment(db: Db, task: { assignedTo: number; tanggal: Date; jamMulai: string; jamSelesai: string | null }) {
+  const sameDay = await db.tugasPpj.findMany({
+    where: { assignedTo: task.assignedTo, tanggal: task.tanggal, status: { notIn: ['cancelled', 'missed', 'rejected'] } },
+    select: { id: true, jalur: true, jamMulai: true, jamSelesai: true },
+  });
+  return sameDay.find(other => schedulesOverlap(task, other)) ?? null;
+}
+
+export function scheduleConflictMessage(clash: { jalur: string; jamMulai: string | null; jamSelesai: string | null }): string {
+  const hours = clash.jamMulai ? `${clash.jamMulai}–${clash.jamSelesai ?? 'selesai hari'}` : 'sepanjang hari';
+  return `Jadwal bentrok dengan tugas "${clash.jalur}" pukul ${hours}`;
 }
 
 export async function countUnfinishedTasks(db: Db, petugasIds: number[]): Promise<number> {

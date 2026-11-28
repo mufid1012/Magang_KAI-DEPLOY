@@ -22,6 +22,8 @@ type Position = { latitude: number; longitude: number };
 
 /** Umur maksimum bukti posisi yang masih boleh dipakai untuk memilih penerima warning. */
 export const WARNING_POSITION_TTL_MS = 120_000;
+/** Warning history kept for the QC report (covers its longest 30-day period with margin). */
+export const WARNING_RETENTION_MS = 90 * 86_400_000;
 /** Akurasi sampel terakhir yang masih masuk akal untuk penempatan (bukan untuk validasi kecepatan). */
 export const WARNING_SAMPLE_ACCURACY_M = 500;
 

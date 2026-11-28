@@ -98,3 +98,12 @@ test('laporan mencantumkan periode GPS terputus', () => {
   assert.ok(json.includes('Bagian jalur pada periode ini tidak terpantau'));
   assert.ok(JSON.stringify(buildInspectionReport(base)).includes('GPS terkirim terus'));
 });
+
+test('tanda tangan online tampil di blok pengesahan; tanpa tanda tangan tetap ruang kosong', async () => {
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAwS2OUAAAAABJRU5ErkJggg==';
+  const base = input().tracking!;
+  const signed = JSON.stringify(buildInspectionReport(input({ tracking: { ...base, approved: true, approvedAt: new Date('2026-11-14T03:00:00Z'), approver: { nama: 'Admin', nipp: '1' }, ttdPetugas: png, ttdApprover: png } })));
+  assert.equal(signed.split(png).length - 1, 2);
+  const unsigned = JSON.stringify(buildInspectionReport(input()));
+  assert.ok(!unsigned.includes('data:image/png'));
+});

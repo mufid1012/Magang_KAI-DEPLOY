@@ -5,6 +5,7 @@ import bcrypt from 'bcryptjs';
 import { createCanvas } from 'canvas';
 import ExcelJS from 'exceljs';
 import { execFileSync } from 'node:child_process';
+const signaturePng='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAwS2OUAAAAABJRU5ErkJggg==';
 
 // Explicit opt-in: this suite never accepts the application/production database URL.
 const url = process.env.AUDIT_DATABASE_URL;
@@ -102,16 +103,16 @@ test('real MySQL: roles, assignment, tracking, reports, approval, PDF, import, b
     });
     await t.test('8-hour high-frequency routes complete, need approval, then allow a real PDF',async()=>{
       const route=Array.from({length:28800},(_,i)=>[assignment.startPointLat+(assignment.endPointLat-assignment.startPointLat)*i/28799,assignment.startPointLong+(assignment.endPointLong-assignment.startPointLong)*i/28799]);
-      await json(await request(`/tracking/stop/${trackingId}`,'POST',{lat:0,lng:0,fotoSelesai:selfie},ppj.id),400);
-      await json(await request(`/tracking/stop/${trackingId}`,'POST',{lat:assignment.endPointLat,lng:assignment.endPointLong,fotoSelesai:selfie,routePath:route},ppj.id),200);
+      await json(await request(`/tracking/stop/${trackingId}`,'POST',{lat:0,lng:0,fotoSelesai:selfie,ttdPetugas:signaturePng},ppj.id),400);
+      await json(await request(`/tracking/stop/${trackingId}`,'POST',{lat:assignment.endPointLat,lng:assignment.endPointLong,fotoSelesai:selfie,ttdPetugas:signaturePng,routePath:route},ppj.id),200);
       const row=await prisma.tracking.findUniqueOrThrow({where:{id:trackingId},include:{tugas:true}});assert.equal(row.tugas.status,'need_approval');assert.equal(JSON.parse(row.routePath!).length,20000);
       assert.deepEqual(JSON.parse(row.routePath!)[0],route[0]);assert.deepEqual(JSON.parse(row.routePath!).at(-1),route.at(-1));
       await json(await request(`/tugas/${taskId}/report`,'GET',undefined,ppj.id),403);
-      await json(await request(`/admin/tracking/${trackingId}/approve`,'POST',{safetyStatus:'tidak_aman'},qc.id),403);
+      await json(await request(`/admin/tracking/${trackingId}/approve`,'POST',{safetyStatus:'tidak_aman',ttdApprover:signaturePng},qc.id),403);
       // KUPT may approve only PPJ it manages; this PPJ belongs to the admin.
-      await json(await request(`/admin/tracking/${trackingId}/approve`,'POST',{safetyStatus:'tidak_aman'},kupt.id),404);
+      await json(await request(`/admin/tracking/${trackingId}/approve`,'POST',{safetyStatus:'tidak_aman',ttdApprover:signaturePng},kupt.id),404);
       await json(await request(`/admin/tugas/${taskId}`,'DELETE'),409);
-      await json(await request(`/admin/tracking/${trackingId}/approve`,'POST',{safetyStatus:'tidak_aman'}),200);
+      await json(await request(`/admin/tracking/${trackingId}/approve`,'POST',{safetyStatus:'tidak_aman',ttdApprover:signaturePng}),200);
       // Omit external tile network from this integration check; the PDF fallback still executes.
       await prisma.tracking.update({where:{id:trackingId},data:{routePath:null,fotoAwal:null,fotoSelesai:null}});
       const pdf=await request(`/tugas/${taskId}/report`,'GET',undefined,ppj.id);assert.equal(pdf.status,200);assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0,4).toString(),'%PDF');
@@ -145,7 +146,7 @@ test('real MySQL: roles, assignment, tracking, reports, approval, PDF, import, b
       const late=await json(await request(`/tracking/update/${started.trackingId}`,'POST',{samples:[{...samples[1],id:'fs-late',capturedAt:Date.now()}]},ppj.id),409);assert.equal(late.code,'TRACKING_FORCE_STOPPED');
       const stop=await json(await request(`/tracking/stop/${started.trackingId}`,'POST',{lat:0,lng:0,bypassMode:true},ppj.id),409);assert.equal(stop.code,'TRACKING_FORCE_STOPPED');
       const detail=await json(await request(`/admin/tugas/${created.data.id}`),200);assert.equal(detail.data.tracking[0].forcedStopper.nama,admin.nama);
-      await json(await request(`/admin/tracking/${started.trackingId}/approve`,'POST',{safetyStatus:'aman'}),200);
+      await json(await request(`/admin/tracking/${started.trackingId}/approve`,'POST',{safetyStatus:'aman',ttdApprover:signaturePng}),200);
       await prisma.tracking.update({where:{id:started.trackingId},data:{routePath:null}});
       const pdf=await request(`/tugas/${created.data.id}/report`,'GET',undefined,ppj.id);assert.equal(pdf.status,200);assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0,4).toString(),'%PDF');
     });
@@ -154,6 +155,21 @@ test('real MySQL: roles, assignment, tracking, reports, approval, PDF, import, b
       const form=new FormData();form.append('file',new Blob([new Uint8Array(await workbook.xlsx.writeBuffer())],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),'audit.xlsx');
       const response=await fetch(base+'/admin/tugas/import',{method:'POST',headers:{Authorization:'Bearer '+tokens.get(admin.id)},body:form});const data=await json(response,200);assert.equal(data.data.created,1);assert.equal(data.data.failed,1);
       const imported=await prisma.tugasPpj.findFirstOrThrow({where:{assignedTo:ppj.id,tanggal:new Date('2099-10-23')}});assert.equal(imported.jamMulai,'08:00');assert.equal(imported.jamSelesai,'12:00');
+    });
+    await t.test('two concurrent uploads of the same Excel create the task once, and overlapping hours are refused',async()=>{
+      const upload=async(rows:unknown[][])=>{
+        const workbook=new ExcelJS.Workbook(),sheet=workbook.addWorksheet('Tugas');sheet.addRow(['NIPP','Nama','Awal','Akhir','Tanggal','Mulai','Selesai']);rows.forEach(r=>sheet.addRow(r));
+        const form=new FormData();form.append('file',new Blob([new Uint8Array(await workbook.xlsx.writeBuffer())],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),'race.xlsx');
+        return (await json(await fetch(base+'/admin/tugas/import',{method:'POST',headers:{Authorization:'Bearer '+tokens.get(admin.id)},body:form}),200)).data;
+      };
+      const row=[ppj.nipp,'PPJ','Jenar','Wojo','24-10-2099','08:00','10:00'];
+      const results=await Promise.all([upload([row]),upload([row])]);
+      assert.equal(results.reduce((sum,r)=>sum+r.created,0),1);
+      assert.equal(await prisma.tugasPpj.count({where:{assignedTo:ppj.id,tanggal:new Date('2099-10-24')}}),1);
+      const clash=await upload([[ppj.nipp,'PPJ','Wojo','Jenar','24-10-2099','09:00','11:00']]);
+      assert.equal(clash.created,0);assert.match(clash.details[0].message,/Jadwal bentrok dengan tugas "Sta. Jenar → Sta. Wojo" pukul 08:00–10:00/);
+      const free=await upload([[ppj.nipp,'PPJ','Wojo','Jenar','24-10-2099','10:00','12:00']]);
+      assert.equal(free.created,1);
     });
     await t.test('real scheduler catches up expired dates without changing completed assignments',async()=>{
       const {checkMissedTasks}=require('../src/lib/scheduler') as typeof import('../src/lib/scheduler');

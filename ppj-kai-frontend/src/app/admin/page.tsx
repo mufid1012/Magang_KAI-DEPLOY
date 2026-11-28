@@ -1,6 +1,6 @@
 'use client';
 import { formatDistanceKm as haversineKm } from '../../../../shared/geo';
-import { petugasColor } from '../../../../shared/display';
+import { KENDALA_PPJ_KEY,KENDALA_PPJ_LABEL,petugasColor } from '../../../../shared/display';
 import AdminAccounts from '../../components/admin/AdminAccounts';
 import AdminSettings from '../../components/admin/AdminSettings';
 import AssignmentEditor from '../../components/admin/AssignmentEditor';
@@ -16,6 +16,8 @@ import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import React,{ useCallback,useEffect,useState } from 'react';
 import TaskDetailModal from '../../components/admin/TaskDetailModal';
+import LiveStatusBadge from '../../components/map/LiveStatusBadge';
+import CollapsiblePanel from '../../components/map/CollapsiblePanel';
 import { useLivePositions } from '../../hooks/useLivePositions';
 import api from '../../lib/api';
 import { NotificationSound,playNotification,speakEmergencyAnnouncement,startLoopingNotification,stopLoopingNotification } from '../../lib/audio';
@@ -98,7 +100,7 @@ export default function AdminPage() {
   // Sidebar menu state
   const [activeMenu, setActiveMenu] = useState<'penugasan' | 'liveview' | 'locationmap' | 'akun' | 'settings'>('penugasan');
 
-  const { positions: livePositions, error: liveError } = useLivePositions(!!user && activeMenu === 'liveview');
+  const { positions: livePositions, error: liveError, lastUpdatedAt: liveUpdatedAt } = useLivePositions(!!user && activeMenu === 'liveview');
 
   // Role-derived permissions
   const userRole = user?.role || 'admin';
@@ -180,7 +182,7 @@ export default function AdminPage() {
 
   // Derived label/color maps from kategoriList
   const JENIS_LABEL: Record<string, string> = React.useMemo(() => {
-    const map: Record<string, string> = {};
+    const map: Record<string, string> = { [KENDALA_PPJ_KEY]: KENDALA_PPJ_LABEL };
     kategoriList.forEach(k => { map[k.key] = k.label; });
     return map;
   }, [kategoriList]);
@@ -666,7 +668,7 @@ export default function AdminPage() {
     }
   };
 
-  const handleApproveTracking = async (safetyStatus: 'aman' | 'tidak_aman') => {
+  const handleApproveTracking = async (safetyStatus: 'aman' | 'tidak_aman', ttdApprover: string) => {
     detailRequest.current++;
     const trackingId = selectedTugasDetail?.tracking?.[0]?.id;
     if (!trackingId) return;
@@ -674,7 +676,7 @@ export default function AdminPage() {
     if (!(await showConfirm(`Approve hasil tracking dengan status ${safetyLabel}?`))) return;
     try {
       setApprovingTrackingId(trackingId);
-      const res = await api.post(`/admin/tracking/${trackingId}/approve`, { safetyStatus });
+      const res = await api.post(`/admin/tracking/${trackingId}/approve`, { safetyStatus, ttdApprover });
       setSelectedTugasDetail(previous => previous ? {
         ...previous,
         status: res.data.tugasStatus ?? 'completed',
@@ -1198,7 +1200,8 @@ export default function AdminPage() {
             />
 
             {/* Legend */}
-            <div className="absolute bottom-6 left-6 bg-white/95 backdrop-blur-md rounded-xl p-3 shadow-md border border-slate-200 z-[1000]">
+            <CollapsiblePanel title="Legenda Visual" icon="legend_toggle" className="absolute bottom-6 left-6 z-[1000]">
+            <div className="bg-white/95 backdrop-blur-md rounded-xl p-3 pr-9 shadow-md border border-slate-200">
               <p className="text-slate-500 uppercase font-bold text-[9px] tracking-widest mb-2">Legenda Visual</p>
               <div className="flex flex-col gap-2">
                 {[['#005bac','Rute Tugas Aktif']].map(([c,l]) => (
@@ -1213,11 +1216,11 @@ export default function AdminPage() {
                 </div>
               </div>
             </div>
+            </CollapsiblePanel>
 
             {/* Live Indicator */}
-            <div className="absolute top-6 right-6 bg-white/95 backdrop-blur-md rounded-full px-3 py-1.5 shadow-sm border border-slate-200 flex items-center gap-2 z-[1000]">
-              <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-              <span className="text-slate-600 text-[10px] font-bold tracking-widest uppercase">Live Sync</span>
+            <div className="absolute top-6 right-6 z-[1000]">
+              <LiveStatusBadge lastUpdatedAt={liveUpdatedAt} error={liveError} />
             </div>
           </main>
         )}

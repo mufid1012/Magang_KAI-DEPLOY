@@ -3,6 +3,7 @@ import { afterEach, test } from 'node:test';
 import prisma from '../config/database';
 import { addPetugasToManager, createTugas, createUser, deleteTugas, removePetugasFromManager, reorderKategoriTemuan, updateKategoriTemuan, updateUser } from './admin.controller';
 import { approveTracking } from './tracking.controller';
+const signaturePng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAwS2OUAAAAABJRU5ErkJggg==';
 
 const db = prisma as any;
 const saved = new Map<string, unknown>();
@@ -44,7 +45,7 @@ test('approval is a conditional claim scoped to the approving manager (admin or 
     },
     tugasPpj: { updateMany: async (args: any) => { assert.deepEqual(args.where, { id: 5, status: { in: ['need_approval', 'completed'] } }); return { count: 1 }; } },
   }));
-  const res = await call(approveTracking, { params: { id: '40' }, user: { id: 9, role: 'kupt' }, body: { safetyStatus: 'aman' } });
+  const res = await call(approveTracking, { params: { id: '40' }, user: { id: 9, role: 'kupt' }, body: { safetyStatus: 'aman', ttdApprover: signaturePng } });
   assert.equal(res.statusCode, 200);
   assert.deepEqual(trackingClaim.where, { id: 40, status: 'stopped', approvalStatus: 'not_approved', tugas: { user: { managerId: 9 } } });
   assert.equal(trackingClaim.data.approvedBy, 9);
@@ -56,7 +57,7 @@ test('a concurrent second approval gets 409 instead of overwriting the first', a
     tracking: { updateMany: async () => ({ count: 0 }), findUniqueOrThrow: noWrites },
     tugasPpj: { updateMany: noWrites },
   }));
-  const res = await call(approveTracking, { params: { id: '40' }, user: { id: 1, role: 'admin' }, body: { safetyStatus: 'aman' } });
+  const res = await call(approveTracking, { params: { id: '40' }, user: { id: 1, role: 'admin' }, body: { safetyStatus: 'aman', ttdApprover: signaturePng } });
   assert.equal(res.statusCode, 409);
 });
 
@@ -131,9 +132,12 @@ test('user updates reject non-boolean status and deactivating a PPJ mid-inspecti
 test('manual assignments use catalog coordinates and reject points outside the list', async () => {
   const base = { jalur: 'Jenar → Wojo', tanggal: '2026-12-01', assignedTo: 20, jamMulai: '08:00', jamSelesai: '16:00' };
   mock('user', 'findFirst', async () => ({ id: 20 }));
-  mock('tugasPpj', 'findFirst', async () => null); // no duplicate
   let created: any;
-  mock('tugasPpj', 'create', async (args: any) => { created = args.data; return { id: 1 }; });
+  // No duplicate and no overlapping task; checks and insert run inside the PPJ-locked transaction.
+  mock('$', '$transaction', async (fn: any) => fn({ tugasPpj: {
+    findFirst: async () => null, findMany: async () => [],
+    create: async (args: any) => { created = args.data; return { id: 1 }; },
+  } }));
   const ok = await call(createTugas, { body: { ...base, startPointName: 'Sta. Jenar', endPointName: 'Sta. Wojo', startPointLat: 0, startPointLong: 0, endPointLat: 1, endPointLong: 1 }, user: { id: 1, role: 'admin' } });
   assert.equal(ok.statusCode, 201);
   assert.deepEqual([created.startPointLat, created.startPointLong], [-7.802037, 110.000797]);

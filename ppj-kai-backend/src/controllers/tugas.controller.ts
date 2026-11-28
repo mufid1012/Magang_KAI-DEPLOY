@@ -275,6 +275,8 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
         approved: latestTracking.approvalStatus === 'approved',
         approvedAt: latestTracking.approvedAt,
         approver: latestTracking.approver,
+        ttdPetugas: latestTracking.ttdPetugas,
+        ttdApprover: latestTracking.ttdApprover,
         unsafe: latestTracking.safetyStatus === 'tidak_aman',
         testMode: latestTracking.telemetryTest,
         forcedStop: latestTracking.forcedStopAt

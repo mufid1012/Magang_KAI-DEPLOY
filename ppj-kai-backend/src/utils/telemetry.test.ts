@@ -81,3 +81,16 @@ test('frequent GPS callbacks keep the calculation state bounded and can still es
   }
   assert.equal(state.speedKmh,0);
 });
+test('poor-accuracy sample still moves the live position but not the speed', () => {
+  const first = advanceSpeed(initialSpeedState(), sample(0, 0)).state;
+  const weak = sample(5, 30, null, 45);
+  const r = advanceSpeed(first, weak);
+  assert.equal(r.state.position?.id, weak.id);
+  assert.equal(r.state.speedKmh, null);
+  assert.equal(r.quality, 'poor_accuracy');
+});
+test('sample beyond the position accuracy limit does not move the live position', () => {
+  const first = advanceSpeed(initialSpeedState(), sample(0, 0)).state;
+  const r = advanceSpeed(first, sample(5, 30, null, TELEMETRY.MAX_POSITION_ACCURACY_M + 50));
+  assert.equal(r.state.position?.id, 's:0');
+});

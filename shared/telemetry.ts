@@ -2,9 +2,11 @@ import { haversineMeters } from './geo';
 
 // Initial field-test settings, NOT an official operational standard.
 export const TELEMETRY = {
-  TELEMETRY_SAMPLE_INTERVAL_MS: 5000, TRACKING_SYNC_INTERVAL_MS: 10000, LIVE_POLL_INTERVAL_MS: 10000,
+  TELEMETRY_SAMPLE_INTERVAL_MS: 5000, TRACKING_SYNC_INTERVAL_MS: 5000, LIVE_POLL_INTERVAL_MS: 5000,
   MAX_PAYLOAD_BYTES: 65536, WINDOW_BUCKET_MS: 1000, PAIR_MIN_MS: 5000,
-  MAX_ACCURACY_M: 20, MAX_REPORTED_ACCURACY_M: 100000, WINDOW_MS: 20000, MIN_WINDOW_MS: 15000, MIN_SAMPLES: 4,
+  MAX_ACCURACY_M: 20,
+  // Weaker fixes still move the live map marker; only speed needs MAX_ACCURACY_M.
+  MAX_POSITION_ACCURACY_M: 100, MAX_REPORTED_ACCURACY_M: 100000, WINDOW_MS: 20000, MIN_WINDOW_MS: 15000, MIN_SAMPLES: 4,
   MAX_GAP_MS: 12000, FRESH_MS: 30000, FUTURE_MS: 5000, MAX_OFFLINE_MS: 86400000,
   MAX_SPEED_MPS: 55, DEVICE_TOLERANCE_MPS: 0.75, SMOOTHING_ALPHA: 0.5,
   REVIEW_KMH: 12, REVIEW_DURATION_MS: 60000, MAX_BATCH: 120, MAX_QUEUE: 1440,
@@ -51,7 +53,10 @@ export function advanceSpeed(previous: SpeedState, sample: TelemetrySample, now 
     return { state, event: null, quality };
   };
   if (sample.capturedAt > now + TELEMETRY.FUTURE_MS || now - sample.capturedAt > TELEMETRY.FRESH_MS) return clear('stale');
-  if (sample.accuracy > TELEMETRY.MAX_ACCURACY_M) return clear('poor_accuracy');
+  if (sample.accuracy > TELEMETRY.MAX_ACCURACY_M) {
+    if (sample.accuracy <= TELEMETRY.MAX_POSITION_ACCURACY_M) state.position = sample;
+    return clear('poor_accuracy');
+  }
   if (gap) { state.window = []; state.anchor = null; state.speedKmh = null; state.streak = null; }
   const last = state.window.at(-1);
   if (last && Math.max(0, distance(last, sample) - last.accuracy - sample.accuracy) / ((sample.capturedAt - last.capturedAt) / 1000) > TELEMETRY.MAX_SPEED_MPS) {

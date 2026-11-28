@@ -1,5 +1,7 @@
 'use client';
+import { useState } from 'react';
 import TelemetryDetail from './TelemetryDetail';
+import SignaturePad from '../common/SignaturePad';
 import { formatDistanceKm as haversineKm } from '../../../../shared/geo';
 
 
@@ -50,7 +52,7 @@ interface Props {
   isAdmin: boolean;
   isApproving: boolean;
   onDownloadPdf: () => void;
-  onApprove: (safetyStatus: 'aman' | 'tidak_aman') => void;
+  onApprove: (safetyStatus: 'aman' | 'tidak_aman', ttdApprover: string) => void;
   onClose: () => void;
 }
 
@@ -81,6 +83,7 @@ function formatDuration(seconds: number | null | undefined) {
 
 export default function TaskDetailModal({ tugas, jenisLabel, jenisColor, isDownloading, isAdmin, isApproving, onDownloadPdf, onApprove, onClose }: Props) {
   const latestTracking = tugas.tracking?.[0] ?? null;
+  const [ttdApprover, setTtdApprover] = useState<string | null>(null);
   const laporan = latestTracking?.laporan ?? [];
   const completed = tugas.status === 'completed';
   const needsApproval = tugas.status === 'need_approval';
@@ -214,14 +217,19 @@ export default function TaskDetailModal({ tugas, jenisLabel, jenisColor, isDownl
           ) : null}
         </div>
 
+        {isAdmin && latestTracking?.status === 'stopped' && latestTracking.approvalStatus !== 'approved' && (
+          <div className="px-4 pt-3 border-t border-slate-200 bg-white shrink-0">
+            <SignaturePad label="Tanda tangan penyetuju" height={110} onChange={setTtdApprover} />
+          </div>
+        )}
         <div className="p-4 border-t border-slate-200 bg-white shrink-0 flex flex-col-reverse sm:flex-row gap-2">
           <button onClick={onClose} className="sm:w-1/3 py-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50">Tutup</button>
           {isAdmin && latestTracking?.status === 'stopped' && latestTracking.approvalStatus !== 'approved' && (
             <div className="flex-1 grid grid-cols-2 gap-2">
-              <button onClick={() => onApprove('aman')} disabled={isApproving} className="py-3 rounded-xl bg-emerald-600 text-white font-bold text-xs flex items-center justify-center gap-1 hover:bg-emerald-700 disabled:opacity-50">
+              <button onClick={() => ttdApprover && onApprove('aman', ttdApprover)} disabled={isApproving || !ttdApprover} className="py-3 rounded-xl bg-emerald-600 text-white font-bold text-xs flex items-center justify-center gap-1 hover:bg-emerald-700 disabled:opacity-50">
                 <span className="material-symbols-outlined text-[18px]">verified</span> Approve Aman
               </button>
-              <button onClick={() => onApprove('tidak_aman')} disabled={isApproving} className="py-3 rounded-xl bg-rose-600 text-white font-bold text-xs flex items-center justify-center gap-1 hover:bg-rose-700 disabled:opacity-50">
+              <button onClick={() => ttdApprover && onApprove('tidak_aman', ttdApprover)} disabled={isApproving || !ttdApprover} className="py-3 rounded-xl bg-rose-600 text-white font-bold text-xs flex items-center justify-center gap-1 hover:bg-rose-700 disabled:opacity-50">
                 <span className="material-symbols-outlined text-[18px]">gpp_bad</span> Approve Tidak Aman
               </button>
             </div>

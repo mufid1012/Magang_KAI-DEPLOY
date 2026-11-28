@@ -1,10 +1,13 @@
 'use client';
 import TelemetryDetail from '../../components/admin/TelemetryDetail';
-import { petugasColor } from '../../../../shared/display';
+import { KENDALA_PPJ_KEY,KENDALA_PPJ_LABEL,petugasColor } from '../../../../shared/display';
 
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { useCallback,useEffect,useMemo,useState } from 'react';
+import LiveStatusBadge from '../../components/map/LiveStatusBadge';
+import CollapsiblePanel from '../../components/map/CollapsiblePanel';
+import WarningReportPanel from '../../components/qc/WarningReportPanel';
 import { useLivePositions } from '../../hooks/useLivePositions';
 import api from '../../lib/api';
 import { STATIONS } from '../../lib/stations';
@@ -81,6 +84,7 @@ const DEFAULT_JENIS_LABEL: Record<string, string> = {
   gangguan_struktur: 'Gangguan Struktur Jalur',
   anjlokan_kecelakaan: 'Anjlokan atau Kecelakaan',
   lainnya: 'Lainnya',
+  [KENDALA_PPJ_KEY]: KENDALA_PPJ_LABEL,
 };
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -96,12 +100,14 @@ export default function QCPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [tugas, setTugas] = useState<Tugas[]>([]);
   const [emergencies, setEmergencies] = useState<Emergency[]>([]);
-  const { positions: livePositions, error: liveError } = useLivePositions(!!user);
+  const { positions: livePositions, error: liveError, lastUpdatedAt: liveUpdatedAt } = useLivePositions(!!user);
   const [telemetryId, setTelemetryId] = useState<number | null>(null);
   const [selectedJalur, setSelectedJalur] = useState<string>('__all__');
   const [selectedEmergency, setSelectedEmergency] = useState<Emergency | null>(null);
   const [loading, setLoading] = useState(true);
   const [jenisLabel, setJenisLabel] = useState<Record<string, string>>(DEFAULT_JENIS_LABEL);
+  const [showWarnings, setShowWarnings] = useState(false);
+  const closeWarnings = useCallback(() => setShowWarnings(false), []);
 
   // ─── Data Fetching ──────────────────────────────────────────────────────
   const fetchAll = useCallback(async () => {
@@ -122,7 +128,7 @@ export default function QCPage() {
       api.get('/auth/me', { signal: controller.signal }).then(res => setUser(res.data.user)),
       api.get('/kategori-temuan', { signal: controller.signal }).then(res => {
         const categories: {key:string;label:string}[] = res.data.data;
-        if (categories.length) setJenisLabel(Object.fromEntries(categories.map(category => [category.key, category.label])));
+        if (categories.length) setJenisLabel({ [KENDALA_PPJ_KEY]: KENDALA_PPJ_LABEL, ...Object.fromEntries(categories.map(category => [category.key, category.label])) });
       }),
     ]);
     return () => controller.abort();
@@ -287,12 +293,17 @@ export default function QCPage() {
             <span className="hidden md:block font-bold text-slate-700 text-sm">{user?.nama}</span>
           </div>
           <div className="w-px h-5 bg-slate-200"></div>
+          <button onClick={() => setShowWarnings(true)} title="Laporan warning PPJ" className="flex items-center gap-1 text-xs font-semibold text-blue-700 hover:text-blue-900">
+            <span className="material-symbols-outlined text-[18px]">campaign</span><span className="hidden sm:inline">Warning</span>
+          </button>
           <button disabled={refreshingDashboard} onClick={() => void fetchAll()} title="Segarkan tugas dan laporan" className="text-xs font-semibold text-slate-500 disabled:opacity-50">{refreshingDashboard ? 'Memuat…' : 'Segarkan'}</button>
           <button onClick={handleLogout} className="flex items-center gap-1.5 text-slate-400 hover:text-rose-600 transition-colors" title="Logout">
             <span className="material-symbols-outlined text-[20px]">logout</span>
           </button>
         </div>
       </header>
+
+      <WarningReportPanel open={showWarnings} onClose={closeWarnings} />
 
       {/* ── Main Map Area ───────────────────────────────────────────────── */}
       <main className="flex-1 overflow-hidden relative isolate">
@@ -391,13 +402,13 @@ export default function QCPage() {
         </div>
 
         {/* ── Overlay: Live Sync Indicator ───────────────────────────────── */}
-        <div className="absolute top-4 right-4 bg-white/95 backdrop-blur-md rounded-full px-3 py-1.5 shadow-sm border border-slate-200 flex items-center gap-2 z-[1000]">
-          <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-          <span className="text-slate-600 text-[10px] font-bold tracking-widest uppercase">Live Sync</span>
+        <div className="absolute top-4 right-4 z-[1000]">
+          <LiveStatusBadge lastUpdatedAt={liveUpdatedAt} error={liveError} />
         </div>
 
         {/* ── Overlay: Map Legend ────────────────────────────────────────── */}
-        <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-md rounded-xl p-3 shadow-md border border-slate-200 z-[1000]">
+        <CollapsiblePanel title="Legenda Visual" icon="legend_toggle" className="absolute bottom-4 left-4 z-[1000]">
+        <div className="bg-white/95 backdrop-blur-md rounded-xl p-3 pr-9 shadow-md border border-slate-200">
           <p className="text-slate-500 uppercase font-bold text-[9px] tracking-widest mb-2">Legenda Visual</p>
           <div className="flex flex-col gap-2">
             {[
@@ -422,6 +433,7 @@ export default function QCPage() {
             </div>
           </div>
         </div>
+        </CollapsiblePanel>
 
         {/* ── Overlay: Global KPI (bottom-right) ────────────────────────── */}
         <div className="absolute bottom-4 right-4 bg-white/95 backdrop-blur-md rounded-xl shadow-md border border-slate-200 z-[1000]">

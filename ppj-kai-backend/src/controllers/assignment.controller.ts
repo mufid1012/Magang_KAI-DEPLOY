@@ -1,6 +1,6 @@
 import { taskScope } from '../lib/accessScope';
 import { parseAssignmentDate, assignmentTimes, scheduleProblem } from '../utils/assignmentValidation';
-import { findDuplicateAssignment } from '../lib/taskGuards';
+import { findDuplicateAssignment, findOverlappingAssignment, lockPetugas, scheduleConflictMessage } from '../lib/taskGuards';
 import { audit } from '../lib/audit';
 import type { Response } from 'express';
 import prisma from '../config/database';
@@ -132,13 +132,18 @@ export const createTugas = async (req: AuthRequest, res: Response) => {
     });
 
     if (!petugasCheck) return res.status(403).json({ success: false, message: 'Petugas tidak ditemukan dalam daftar kelola Anda' });
-    if (await findDuplicateAssignment(prisma, {
-      assignedTo: Number(assignedTo), tanggal: parsedDate, startPointName: resolvedStart.name, endPointName: resolvedEnd.name, jamMulai: times.jamMulai,
-    })) {
-      return res.status(409).json({ success: false, message: 'Tugas yang sama untuk petugas ini pada tanggal dan jam tersebut sudah ada' });
-    }
+    const outcome = await prisma.$transaction(async tx => {
+      // Same lock as Excel import, so a double click or a parallel import cannot both insert.
+      await lockPetugas(tx, Number(assignedTo));
+      if (await findDuplicateAssignment(tx, {
+        assignedTo: Number(assignedTo), tanggal: parsedDate, startPointName: resolvedStart.name, endPointName: resolvedEnd.name, jamMulai: times.jamMulai,
+      })) return { error: 'Tugas yang sama untuk petugas ini pada tanggal dan jam tersebut sudah ada' };
+      const clash = await findOverlappingAssignment(tx, {
+        assignedTo: Number(assignedTo), tanggal: parsedDate, jamMulai: times.jamMulai!, jamSelesai: times.jamSelesai,
+      });
+      if (clash) return { error: `${scheduleConflictMessage(clash)} untuk petugas ini` };
 
-    const tugas = await prisma.tugasPpj.create({
+      const tugas = await tx.tugasPpj.create({
       data: {
         jalur,
         tanggal: parsedDate,
@@ -152,10 +157,13 @@ export const createTugas = async (req: AuthRequest, res: Response) => {
         assignedTo: Number(assignedTo),
         status: 'pending',
       },
-      include: { user: { select: { nama: true, nipp: true } } },
+        include: { user: { select: { nama: true, nipp: true } } },
+      });
+      return { tugas };
     });
+    if ('error' in outcome) return res.status(409).json({ success: false, message: outcome.error });
 
-    return res.status(201).json({ success: true, data: tugas });
+    return res.status(201).json({ success: true, data: outcome.tugas });
   } catch (error) {
     console.error('Create tugas error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });

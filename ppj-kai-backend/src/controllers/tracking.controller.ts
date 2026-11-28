@@ -6,9 +6,10 @@ import { haversineMeters as distanceMeters } from '../../../shared/geo';
 import { Request, Response } from 'express';
 import prisma from '../config/database';
 import { checkPhoto, PHOTO_FORMAT_MESSAGE } from '../lib/photo';
+import { parseSignature } from '../lib/signature';
 import { startWindow } from '../utils/schedule';
 import { audit } from '../lib/audit';
-import { hasWarningRoute, hasOverlappingWarningRoute, haversineMeters, resolveWarningPosition, selectWarningRecipients, WARNING_POSITION_TTL_MS } from '../utils/warningRoute';
+import { hasWarningRoute, hasOverlappingWarningRoute, haversineMeters, resolveWarningPosition, selectWarningRecipients, WARNING_POSITION_TTL_MS, WARNING_RETENTION_MS } from '../utils/warningRoute';
 
 // Keep the existing API fields while recipient storage supports any number of sessions.
 function warningResponse<T extends { recipients: { trackingId: number }[] }>(record: T) {
@@ -230,6 +231,11 @@ export const stopTracking = async (req: Request, res: Response) => {
     if (!photo.ok) {
       return res.status(photo.status).json({ success: false, message: photo.status === 413 ? 'Foto akhir terlalu besar' : PHOTO_FORMAT_MESSAGE });
     }
+    // Like the end photo, the PPJ's online signature is required in normal mode and optional in bypass.
+    const hasSignature = req.body.ttdPetugas !== undefined && req.body.ttdPetugas !== null && req.body.ttdPetugas !== '';
+    const signature = hasSignature ? parseSignature(req.body.ttdPetugas) : null;
+    if (signature && !signature.ok) return res.status(400).json({ success: false, message: signature.message });
+    if (!signature && !useBypass) return res.status(400).json({ success: false, message: 'Tanda tangan petugas wajib diisi' });
 
     const tracking = await prisma.tracking.findFirst({
       where: {
@@ -292,6 +298,7 @@ export const stopTracking = async (req: Request, res: Response) => {
           durasi: durasiDetik,
           status: 'stopped',
           fotoSelesai: photo.value,
+          ttdPetugas: signature?.ok ? signature.value : null,
           routePath: routePathStr,
           // Only recorded when it actually mattered: an end inside the geofence is a normal stop.
           earlyStopReason: earlyStopReason && !atEnd ? earlyStopReason : null,
@@ -333,6 +340,8 @@ export const approveTracking = async (req: Request, res: Response) => {
     if (!['aman', 'tidak_aman'].includes(safetyStatus)) {
       return res.status(400).json({ success: false, message: 'Status keselamatan harus aman atau tidak_aman' });
     }
+    const signature = parseSignature(req.body.ttdApprover);
+    if (!signature.ok) return res.status(400).json({ success: false, message: 'Tanda tangan penyetuju wajib diisi' });
 
     // Approver is the PPJ's manager: the super admin or KUPT that manages them.
     const tracking = await prisma.tracking.findFirst({
@@ -353,7 +362,7 @@ export const approveTracking = async (req: Request, res: Response) => {
     const data = await prisma.$transaction(async tx => {
       const claimed = await tx.tracking.updateMany({
         where: { id: trackingId, status: 'stopped', approvalStatus: 'not_approved', tugas: { user: { managerId: adminId } } },
-        data: { approvalStatus: 'approved', safetyStatus, approvedAt: new Date(), approvedBy: adminId },
+        data: { approvalStatus: 'approved', safetyStatus, approvedAt: new Date(), approvedBy: adminId, ttdApprover: signature.value },
       });
       if (claimed.count !== 1) throw new Error('APPROVAL_STATE_CHANGED');
       const task = await tx.tugasPpj.updateMany({
@@ -539,10 +548,12 @@ export const createNearbyWarning = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Tidak ada PPJ lain pada jalur terkait dengan tracking aktif dan GPS terbaru' });
     }
 
-    await prisma.warningAlert.deleteMany({ where: { expiresAt: { lt: now } } });
+    // Expired warnings stay as history for the QC warning report; only rows past retention go.
+    await prisma.warningAlert.deleteMany({ where: { createdAt: { lt: new Date(now.getTime() - WARNING_RETENTION_MS) } } });
     const data = await prisma.warningAlert.create({
       data: {
         createdBy: userId,
+        trackingId: activeTracking.id,
         startPointName,
         endPointName,
         recipients: { create: recipients.map(trackingId => ({ trackingId })) },

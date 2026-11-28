@@ -5,7 +5,8 @@ import { requireAuth } from '../middleware/auth.middleware';
 import { scheduleProblem } from '../utils/assignmentValidation';
 import { generateToken } from '../utils/jwt';
 import { createTugas } from './assignment.controller';
-import { rejectTracking, startTracking, stopTracking } from './tracking.controller';
+import { approveTracking, rejectTracking, startTracking, stopTracking } from './tracking.controller';
+const signaturePng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAwS2OUAAAAABJRU5ErkJggg==';
 
 process.env.JWT_SECRET = 'unit-test-jwt-secret-with-32-characters-minimum';
 const db = prisma as any;
@@ -43,7 +44,7 @@ test('reject needs a reason, is scoped to the manager and closes the task as rej
 test('normal stop outside the end geofence needs a reason, and keeps it', async () => {
   process.env.TRACKING_BYPASS_ENABLED = 'false';
   stub(db.tracking, 'findFirst', async () => ({ id: 40, tugasId: 5, startTime: new Date(Date.now() - 60_000), tugas: { endPointLat: -7.9, endPointLong: 110.1 } }));
-  const body = { lat: -7.8, lng: 110.0, fotoSelesai: photo, routePath: [[-7.8, 110], [-7.81, 110.01]] };
+  const body = { lat: -7.8, lng: 110.0, fotoSelesai: photo, ttdPetugas: signaturePng, routePath: [[-7.8, 110], [-7.81, 110.01]] };
   const refused = response();
   await stopTracking({ params: { id: '40' }, user: { id: 7 }, body } as any, refused);
   assert.equal(refused.statusCode, 400);
@@ -63,6 +64,7 @@ test('normal stop outside the end geofence needs a reason, and keeps it', async 
   delete process.env.TRACKING_BYPASS_ENABLED;
   assert.equal(res.statusCode, 200);
   assert.equal(stored.earlyStopReason, 'Jalur tertutup longsor KM 12');
+  assert.equal(stored.ttdPetugas, signaturePng);
 });
 
 test('a PPJ cannot start a second inspection while one is running', async () => {
@@ -99,9 +101,65 @@ test('schedule rules: start time required, end after start, start window not alr
 
 test('a manual assignment identical to an existing one is refused', async () => {
   stub(db.user, 'findFirst', async () => ({ id: 20 }));
-  stub(db.tugasPpj, 'findFirst', async () => ({ id: 3 }));
-  stub(db.tugasPpj, 'create', async () => assert.fail('must not create'));
+  let locked = false;
+  stub(db, '$transaction', async (fn: any) => fn({
+    $queryRaw: async () => { locked = true; return []; },
+    tugasPpj: { findFirst: async () => ({ id: 3 }), findMany: async () => [], create: async () => assert.fail('must not create') },
+  }));
   const res = response();
   await createTugas({ body: { jalur: 'Jenar → Wojo', tanggal: '2099-12-01', assignedTo: 20, startPointName: 'Sta. Jenar', endPointName: 'Sta. Wojo', jamMulai: '08:00' }, user: { id: 1, role: 'admin' } } as any, res);
   assert.equal(res.statusCode, 409);
+  assert.equal(locked, true, 'the PPJ row is locked before the duplicate check');
+});
+
+test('a manual assignment whose hours overlap another task of the same PPJ is refused', async () => {
+  stub(db.user, 'findFirst', async () => ({ id: 20 }));
+  stub(db, '$transaction', async (fn: any) => fn({
+    $queryRaw: async () => [],
+    tugasPpj: {
+      findFirst: async () => null,
+      findMany: async () => [{ id: 4, jalur: 'Sta. Yogyakarta → Sta. Lempuyangan', jamMulai: '09:00', jamSelesai: '11:00' }],
+      create: async () => assert.fail('must not create'),
+    },
+  }));
+  const res = response();
+  await createTugas({ body: { jalur: 'Jenar → Wojo', tanggal: '2099-12-01', assignedTo: 20, startPointName: 'Sta. Jenar', endPointName: 'Sta. Wojo', jamMulai: '08:00', jamSelesai: '10:00' }, user: { id: 1, role: 'admin' } } as any, res);
+  assert.equal(res.statusCode, 409);
+  assert.match(res.body.message, /Jadwal bentrok dengan tugas "Sta. Yogyakarta → Sta. Lempuyangan" pukul 09:00–11:00/);
+});
+
+test('normal stop without the PPJ signature is refused before any write', async () => {
+  process.env.TRACKING_BYPASS_ENABLED = 'false';
+  stub(db.tracking, 'findFirst', async () => assert.fail('must validate first'));
+  const res = response();
+  await stopTracking({ params: { id: '40' }, user: { id: 7 }, body: { lat: -7.8, lng: 110.0, fotoSelesai: photo } } as any, res);
+  delete process.env.TRACKING_BYPASS_ENABLED;
+  assert.equal(res.statusCode, 400);
+  assert.match(res.body.message, /Tanda tangan petugas wajib/);
+});
+
+test('approval without the approver signature is refused before any write', async () => {
+  stub(db.tracking, 'findFirst', async () => assert.fail('must validate first'));
+  for (const ttdApprover of [undefined, 'data:image/jpeg;base64,/9j/']) {
+    const res = response();
+    await approveTracking({ params: { id: '40' }, user: { id: 1 }, body: { safetyStatus: 'aman', ttdApprover } } as any, res);
+    assert.equal(res.statusCode, 400);
+  }
+});
+
+test('a rejected or missed task does not block re-assigning the same hours', async () => {
+  stub(db.user, 'findFirst', async () => ({ id: 20 }));
+  let where: any;
+  stub(db, '$transaction', async (fn: any) => fn({
+    $queryRaw: async () => [],
+    tugasPpj: {
+      findFirst: async () => null,
+      findMany: async (args: any) => { where = args.where; return []; },
+      create: async (args: any) => ({ id: 9, ...args.data }),
+    },
+  }));
+  const res = response();
+  await createTugas({ body: { jalur: 'Jenar → Wojo', tanggal: '2099-12-01', assignedTo: 20, startPointName: 'Sta. Jenar', endPointName: 'Sta. Wojo', jamMulai: '08:00', jamSelesai: '10:00' }, user: { id: 1, role: 'admin' } } as any, res);
+  assert.equal(res.statusCode, 201);
+  for (const status of ['rejected', 'missed', 'cancelled']) assert.ok(where.status.notIn.includes(status), status);
 });

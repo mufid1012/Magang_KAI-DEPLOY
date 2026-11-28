@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
-import { parseAssignmentDate, assignmentTimes } from './assignmentValidation';
+import { parseAssignmentDate, assignmentTimes, schedulesOverlap } from './assignmentValidation';
 import { scheduledStart } from './schedule';
 import { ExpiringCache } from '../lib/mapLocationCache';
 import prisma from '../config/database';
@@ -36,4 +36,10 @@ test('scope avoids unnecessary managed-user wilayah queries and fails closed on 
 test('dynamic emergency severity agrees with UI while known legacy keys can be reclassified',async()=>{
  prisma.kategoriTemuan.findMany=(async()=>[{key:'custom_emergency',color:'error'},{key:'berat',color:'primary'},{key:'light',color:'primary'}]) as any;
  assert.deepEqual(await emergencyCategoryKeys(),['custom_emergency','emergency']);
+});
+test('schedulesOverlap: PPJ yang sama tidak boleh punya jam tumpang tindih', () => {
+  assert.equal(schedulesOverlap({ jamMulai: '08:00', jamSelesai: '10:00' }, { jamMulai: '09:00', jamSelesai: '11:00' }), true);
+  assert.equal(schedulesOverlap({ jamMulai: '08:00', jamSelesai: '10:00' }, { jamMulai: '10:00', jamSelesai: '12:00' }), false);
+  assert.equal(schedulesOverlap({ jamMulai: '13:00', jamSelesai: null }, { jamMulai: '20:00', jamSelesai: '21:00' }), true);
+  assert.equal(schedulesOverlap({ jamMulai: '08:00', jamSelesai: '09:00' }, { jamMulai: null, jamSelesai: null }), true);
 });
