@@ -167,7 +167,8 @@ export default function AdminPage() {
   // Audio Notification State
   const [alertSound, setAlertSound] = useState<NotificationSound>('off');
   const [savingAlertSound, setSavingAlertSound] = useState(false);
-  const [isAlarmActive, setIsAlarmActive] = useState(false);
+  const [alarmReport, setAlarmReport] = useState<Emergency | null>(null);
+  const isAlarmActive = alarmReport !== null;
   const lastEmergencyId = React.useRef<number | null>(null); // null until the first fetch sets the baseline
 
   // Kategori Temuan State
@@ -269,7 +270,7 @@ export default function AdminPage() {
     if (!newestDarurat || alertSound === 'off') return;
 
     startLoopingNotification(alertSound);
-    setIsAlarmActive(true);
+    setAlarmReport(newestDarurat);
 
     const announcementTimer = window.setTimeout(() => {
       const petugasNama = newestDarurat.tracking?.tugas?.user?.nama || 'Petugas';
@@ -281,7 +282,7 @@ export default function AdminPage() {
 
   const handleStopAlarm = () => {
     stopLoopingNotification();
-    setIsAlarmActive(false);
+    setAlarmReport(null);
   };
 
   const handleAlertSoundChange = async (sound: NotificationSound) => {
@@ -727,7 +728,15 @@ export default function AdminPage() {
             </div>
             <div className="text-center">
               <h2 className="text-2xl md:text-3xl font-extrabold text-slate-800 mb-2">🚨 ALARM DARURAT</h2>
-              <p className="text-slate-500 text-sm md:text-base font-medium">Ada laporan darurat baru masuk!<br/>Segera periksa tab Insiden.</p>
+              <p className="text-slate-500 text-sm md:text-base font-medium">Ada laporan darurat baru masuk!</p>
+              {alarmReport && (
+                <div className="mt-4 text-left bg-rose-50 border border-rose-200 rounded-xl p-4 space-y-1.5 text-sm">
+                  <p><span className="text-slate-500">Kategori:</span> <span className="font-bold text-rose-700">{JENIS_LABEL[alarmReport.jenisTemuan] ?? alarmReport.jenisTemuan}</span></p>
+                  <p><span className="text-slate-500">Pengirim:</span> <span className="font-bold text-slate-800">{alarmReport.tracking?.tugas?.user?.nama || 'Petugas'}{alarmReport.tracking?.tugas?.user?.nipp ? ` (${alarmReport.tracking.tugas.user.nipp})` : ''}</span></p>
+                  <p><span className="text-slate-500">Jalur:</span> <span className="font-bold text-slate-800">{alarmReport.tracking?.tugas?.jalur || '-'}</span></p>
+                  {alarmReport.deskripsi && <p className="text-slate-600 line-clamp-3">{alarmReport.deskripsi}</p>}
+                </div>
+              )}
             </div>
             <button
               onClick={handleStopAlarm}
