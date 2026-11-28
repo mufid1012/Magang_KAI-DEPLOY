@@ -1,0 +1,10 @@
+{
+  "appId": "id.daop6.ppjkai",
+  "appName": "PPJ KAI",
+  "webDir": "www",
+  "server": {
+    "url": "https://ppjtracking.daop6.id",
+    "androidScheme": "https"
+  },
+  "android": { "allowMixedContent": false }
+}

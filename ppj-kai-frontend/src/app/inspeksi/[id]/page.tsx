@@ -17,7 +17,7 @@ import { useParams,useRouter } from 'next/navigation';
 import React,{ useCallback,useEffect,useMemo,useRef,useState } from 'react';
 import { compactRoute } from '../../../../../shared/route';
 import { useCamera } from '../../../hooks/useCamera';
-import { useGPS } from '../../../hooks/useGPS';
+import { isNativeApp, useGPS } from '../../../hooks/useGPS';
 import api from '../../../lib/api';
 import { playNotification,speakAnnouncement,unlockNotificationAudio } from '../../../lib/audio';
 import { showToast } from '../../../lib/toast';
@@ -72,7 +72,7 @@ export default function TrackingPage() {
   const [sendingWarning, setSendingWarning] = useState(false);
   const [isKendalaOpen, setIsKendalaOpen] = useState(false);
   const [ttdPetugas, setTtdPetugas] = useState<string | null>(null);
-  const { lastGapMs, dismiss: dismissGap } = useBackgroundGap(status === 'active');
+  const { lastGapMs, dismiss: dismissGap } = useBackgroundGap(status === 'active' && !isNativeApp()); // The app keeps GPS running in the background.
   const seenTrainAlerts = useRef<Set<number>>(new Set());
   const seenNearbyWarnings = useRef<Set<number>>(new Set());
   const gpsPosRef = useRef(gpsPos);
@@ -272,8 +272,8 @@ export default function TrackingPage() {
       showToast(message, 'error');
       return;
     }
-    // A web page cannot keep GPS running with the screen locked or the app in the background.
-    if (!(await showConfirm('Selama inspeksi, jangan kunci layar atau pindah aplikasi. Tracking GPS berhenti bila layar mati atau aplikasi diminimalkan.', 'Jaga layar tetap menyala'))) return;
+    // A web page cannot keep GPS running with the screen locked or the app in the background; the Android app can.
+    if (!isNativeApp() && !(await showConfirm('Selama inspeksi, jangan kunci layar atau pindah aplikasi. Tracking GPS berhenti bila layar mati atau aplikasi diminimalkan.', 'Jaga layar tetap menyala'))) return;
 
     try {
       const startLat = gpsPos?.lat ?? tugas!.startPointLat;

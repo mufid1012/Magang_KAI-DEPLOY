@@ -4,7 +4,7 @@ import { advanceSpeed, initialSpeedState, speedSummary, TELEMETRY, validSampleSh
 import type { SpeedState } from '../../../shared/telemetry';
 import api from '../lib/api';
 import { TelemetryQueue, TelemetryUploader } from '../lib/telemetryQueue';
-import type { GPSReading } from '../hooks/useGPS';
+import { isNativeApp, type GPSReading } from '../hooks/useGPS';
 
 export interface TelemetryHandle { flush: () => Promise<{ reportedLoss: number }>; resume: () => void }
 interface Props { startedAt: number; trackingId: number; position: GPSReading | null; gpsError: string | null; initialState: SpeedState | null; isTest: boolean }
@@ -57,7 +57,10 @@ export const TelemetryCard = forwardRef<TelemetryHandle, Props>(function Telemet
     if (!validSampleShape(sample) || sample.capturedAt <= engine.current.lastCapturedAt) return;
     const result = advanceSpeed(engine.current, sample, Date.now());
     engine.current = result.state;
-    queue.current?.append(sample, result.state); refresh();
+    const appended = queue.current?.append(sample, result.state); refresh();
+    // Screen off in the Android app: page timers stall after ~30 s but GPS callbacks keep coming,
+    // so upload from here to keep the admin live view and the server trail current.
+    if (appended && document.visibilityState === 'hidden' && navigator.onLine) void uploader.current?.upload().catch(() => {});
   }, [position, startedAt]);
 
   useImperativeHandle(ref, () => ({
@@ -103,6 +106,6 @@ export const TelemetryCard = forwardRef<TelemetryHandle, Props>(function Telemet
     <p className="text-xs mt-1">{gpsError || reasons[engine.current.quality] || (summary.speedKmh === null ? reasons.stale : `Estimasi GPS ±${position?.accuracy.toFixed(0) ?? '—'} m`)}{summary.quality === 'stale' && engine.current.speedAt ? ' · Data kedaluwarsa' : ''}</p>
     <p className="text-xs mt-1">{view.offline ? 'Offline' : 'Online'} · {view.pending ? `${view.pending} sampel belum tersinkron` : 'Antrean tersinkron'}{view.error && ` · ${view.error}`}</p>
     {(view.lost > 0 || view.storageError) && <p className="text-xs text-amber-700">Riwayat mungkin tidak lengkap: {view.lost} sampel tidak tersimpan (jumlah pasti bisa tidak diketahui bila data penyimpanan rusak). {view.storageError && 'Storage gagal; antrean hanya dalam memori hingga penyimpanan pulih.'}</p>}
-    <details className="text-[11px] mt-2 text-slate-500"><summary>Lokasi dan kecepatan direkam selama tugas aktif.</summary>Biarkan halaman terbuka. Tracking dapat terputus saat pindah aplikasi atau layar terkunci. {wakeStatus}. Wake Lock tidak menjamin tracking di background.</details>
+    <details className="text-[11px] mt-2 text-slate-500"><summary>Lokasi dan kecepatan direkam selama tugas aktif.</summary>{isNativeApp() ? 'Aplikasi PPJ KAI tetap merekam saat layar mati.' : 'Biarkan halaman terbuka. Tracking dapat terputus saat pindah aplikasi atau layar terkunci.'} {wakeStatus}. {!isNativeApp() && 'Wake Lock tidak menjamin tracking di background.'}</details>
   </section>;
 });
