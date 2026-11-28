@@ -19,8 +19,9 @@ import TaskDetailModal from '../../components/admin/TaskDetailModal';
 import LiveStatusBadge from '../../components/map/LiveStatusBadge';
 import CollapsiblePanel from '../../components/map/CollapsiblePanel';
 import { useLivePositions } from '../../hooks/useLivePositions';
+import { usePolling } from '../../hooks/usePolling';
 import api from '../../lib/api';
-import { NotificationSound,playNotification,speakEmergencyAnnouncement,startLoopingNotification,stopLoopingNotification } from '../../lib/audio';
+import { NotificationSound,playNotification,speakEmergencyAnnouncement,startLoopingNotification,stopLoopingNotification,unlockNotificationAudio } from '../../lib/audio';
 import { showConfirm } from '../../lib/confirm';
 import { STATIONS } from '../../lib/stations';
 import { showToast } from '../../lib/toast';
@@ -167,7 +168,7 @@ export default function AdminPage() {
   const [alertSound, setAlertSound] = useState<NotificationSound>('off');
   const [savingAlertSound, setSavingAlertSound] = useState(false);
   const [isAlarmActive, setIsAlarmActive] = useState(false);
-  const lastEmergencyId = React.useRef(0);
+  const lastEmergencyId = React.useRef<number | null>(null); // null until the first fetch sets the baseline
 
   // Kategori Temuan State
   const [kategoriList, setKategoriList] = useState<KategoriTemuan[]>([]);
@@ -231,6 +232,14 @@ export default function AdminPage() {
     }
   }, []);
 
+  // Browsers keep audio suspended until a user gesture; unlock on the first one so polled alarms can sound.
+  useEffect(() => {
+    const unlock = () => unlockNotificationAudio();
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('keydown', unlock, { once: true });
+    return () => { window.removeEventListener('pointerdown', unlock); window.removeEventListener('keydown', unlock); };
+  }, []);
+
   // Cleanup looping alarm on unmount
   useEffect(() => {
     return () => {
@@ -241,17 +250,14 @@ export default function AdminPage() {
   // Play looping sound + TTS only for new reports whose category is marked
   // Darurat (red/error). Ringan reports remain visible without sounding an alarm.
   useEffect(() => {
-    if (emergencies.length === 0 || kategoriList.length === 0) return;
+    const baseline = lastEmergencyId.current;
+    if (baseline === null || emergencies.length === 0 || kategoriList.length === 0) return;
 
     const latestId = Math.max(...emergencies.map(e => e.id));
-    if (lastEmergencyId.current === 0) {
-      lastEmergencyId.current = latestId;
-      return;
-    }
 
     const categorySeverity = new Map(kategoriList.map(category => [category.key, category.color]));
     const newestDarurat = emergencies
-      .filter(report => report.id > lastEmergencyId.current)
+      .filter(report => report.id > baseline)
       .filter(report => {
         const configuredSeverity = categorySeverity.get(report.jenisTemuan);
         if (configuredSeverity) return configuredSeverity === 'error';
@@ -259,7 +265,7 @@ export default function AdminPage() {
       })
       .sort((a, b) => b.id - a.id)[0];
 
-    lastEmergencyId.current = Math.max(lastEmergencyId.current, latestId);
+    lastEmergencyId.current = Math.max(baseline, latestId);
     if (!newestDarurat || alertSound === 'off') return;
 
     startLoopingNotification(alertSound);
@@ -306,17 +312,28 @@ export default function AdminPage() {
     }
   };
 
+  // Polled so new PPJ reports reach the admin (list, stats, alarm) without a manual refresh.
+  const fetchEmergencies = useCallback(async () => {
+    await Promise.all([
+      api.get('/admin/stats', { timeout: 12000 }).then(res => setStats(res.data.data)),
+      api.get('/admin/emergency', { timeout: 12000 }).then(res => {
+        const data: Emergency[] = Array.isArray(res.data.data) ? res.data.data : [];
+        if (lastEmergencyId.current === null) lastEmergencyId.current = data.reduce((max, e) => Math.max(max, e.id), 0);
+        setEmergencies(data);
+      }),
+    ]);
+  }, []);
+
   const fetchAll = useCallback(async () => {
     setRefreshingDashboard(true);
     const results = await Promise.allSettled([
-      api.get('/admin/stats', { timeout: 12000 }).then(res => setStats(res.data.data)),
+      fetchEmergencies(),
       api.get('/admin/petugas', { timeout: 12000 }).then(res => setPetugas(res.data.data)),
       api.get('/admin/tugas', { params: { summary: true }, timeout: 12000 }).then(res => setTugas((Array.isArray(res.data.data) ? res.data.data : []).map(resolveTugasStatus))),
-      api.get('/admin/emergency', { timeout: 12000 }).then(res => setEmergencies(res.data.data)),
     ]);
     for (const result of results) if (result.status === 'rejected') console.error('Dashboard refresh failed:', result.reason);
     setRefreshingDashboard(false);
-  }, []);
+  }, [fetchEmergencies]);
 
   const detailRequest = React.useRef(0);
   const openTugasDetail = async (task: Tugas) => {
@@ -412,6 +429,7 @@ export default function AdminPage() {
   }, [fetchKategori]);
 
   useEffect(() => { void fetchAll(); }, [fetchAll]);
+  usePolling(fetchEmergencies, 15000);
 
   const handleLogout = () => { setUser(null); localStorage.removeItem('token'); localStorage.removeItem('user'); router.replace('/login'); };
 
